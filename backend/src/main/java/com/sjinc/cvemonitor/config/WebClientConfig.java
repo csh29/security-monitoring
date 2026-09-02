@@ -1,4 +1,4 @@
-package com.sai.cvemonitor.config;
+package com.sjinc.cvemonitor.config;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -14,5 +14,10 @@ public class WebClientConfig {
                 .baseUrl("https://services.nvd.nist.gov/rest/json/cves/2.0")
                 .defaultHeader("apiKey", apiKey)
                 .build();
+    }
+
+    @Bean
+    public WebClient osvWebClient(WebClient.Builder builder) {
+        return builder.baseUrl("https://api.osv.dev").build();
     }
 }

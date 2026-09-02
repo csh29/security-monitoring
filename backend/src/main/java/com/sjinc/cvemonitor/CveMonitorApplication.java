@@ -1,4 +1,4 @@
-package com.sai.cvemonitor;
+package com.sjinc.cvemonitor;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
