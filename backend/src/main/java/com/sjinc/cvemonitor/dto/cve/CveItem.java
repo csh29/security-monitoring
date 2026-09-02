@@ -48,10 +48,22 @@ public class CveItem {
      * 필요하면 Metrics 쪽에 v31 필드도 함께 매핑해야 한다.
      */
     public double getBaseScore() {
-        if (metrics == null || metrics.getCvssMetricV3() == null || metrics.getCvssMetricV3().isEmpty()) {
-            return 0.0;
-        }
-        return metrics.getCvssMetricV3().get(0).getCvssData().getBaseScore();
+        if (metrics == null) return 0.0;
+
+        CvssData data = findPrimaryScore(metrics.getCvssMetricV31());
+        if (data == null) data = findPrimaryScore(metrics.getCvssMetricV3());
+        if (data == null) data = findPrimaryScore(metrics.getCvssMetricV2());
+
+        return data != null ? data.getBaseScore() : 0.0;
+    }
+
+    private CvssData findPrimaryScore(List<CvssMetric> metricList) {
+        if (metricList == null || metricList.isEmpty()) return null;
+        return metricList.stream()
+                .filter(m -> "Primary".equals(m.getType()))
+                .map(CvssMetric::getCvssData)
+                .findFirst()
+                .orElse(metricList.get(0).getCvssData()); // Primary가 없으면 첫 번째라도 사용
     }
 
     /**

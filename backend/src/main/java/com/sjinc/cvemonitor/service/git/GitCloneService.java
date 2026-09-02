@@ -23,11 +23,11 @@ public class GitCloneService {
      * @param token   PAT(Personal Access Token) 또는 GitHub App installation token
      * @return        clone된 로컬 디렉터리 (사용 후 반드시 cleanup 호출)
      */
-    public File cloneRepository(String repoUrl, String branch, String token) throws IOException {
+    public File cloneRepository(String repoUrl, String branch, String gitUserName, String token) throws IOException {
         Path targetDir = Files.createTempDirectory("cve-scan-");
 
         // GitHub HTTPS 인증 방식: PAT를 username 자리에, password는 빈 문자열로
-        CredentialsProvider credentials = new UsernamePasswordCredentialsProvider(token, "");
+        CredentialsProvider credentials = new UsernamePasswordCredentialsProvider(gitUserName, token);
 
         try (Git git = Git.cloneRepository()
                 .setURI(repoUrl)

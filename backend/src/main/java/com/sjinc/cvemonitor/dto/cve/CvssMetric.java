@@ -10,10 +10,14 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class CvssMetric {
-
-    /** 실제 CVSS 점수/심각도 데이터. */
+    private String source;
+    private String type;      // "Primary" 또는 "Secondary"
     private CvssData cvssData;
 
+    public String getSource() { return source; }
+    public void setSource(String source) { this.source = source; }
+    public String getType() { return type; }
+    public void setType(String type) { this.type = type; }
     public CvssData getCvssData() { return cvssData; }
     public void setCvssData(CvssData cvssData) { this.cvssData = cvssData; }
 }

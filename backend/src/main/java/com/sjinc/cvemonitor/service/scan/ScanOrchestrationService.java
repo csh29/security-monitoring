@@ -5,6 +5,7 @@ import com.sjinc.cvemonitor.dto.cve.OsvBatchResultItem;
 import com.sjinc.cvemonitor.dto.cve.OsvVulnRef;
 import com.sjinc.cvemonitor.dto.git.ScanResult;
 import com.sjinc.cvemonitor.dto.git.ScanResult.DependencyFinding;
+import com.sjinc.cvemonitor.service.maven.MavenDependencyExtractor;
 import com.sjinc.cvemonitor.dto.osv.OsvVulnDetail;
 import com.sjinc.cvemonitor.service.osv.OsvClient;
 import com.sjinc.cvemonitor.service.git.GitCloneService;
@@ -23,16 +24,22 @@ import java.util.Map;
 public class ScanOrchestrationService {
 
     private final GitCloneService gitCloneService;
-    private final com.sjinc.cvemonitor.service.maven.MavenDependencyExtractor dependencyExtractor;
+    private final MavenDependencyExtractor dependencyExtractor;
     private final OsvClient osvClient;
 
     @Value("${git.access.token}")
     private String gitAccessToken;
 
+    @Value("${git.user.name}")
+    private String gitUserName;
+
+    @Value("${maven.home}")
+    private String mavenHome;
+
     public ScanResult scanRepository(String repoUrl, String branch) throws Exception {
-        File projectDir = gitCloneService.cloneRepository(repoUrl, branch, gitAccessToken);
+        File projectDir = gitCloneService.cloneRepository(repoUrl, branch, gitUserName, gitAccessToken);
         try {
-            List<MavenDependency> dependencies = dependencyExtractor.extract(projectDir);
+            List<MavenDependency> dependencies = dependencyExtractor.extract(projectDir, mavenHome);
             List<OsvBatchResultItem> results = osvClient.queryBatch(dependencies).getResults();
 
             List<DependencyFinding> findings = new ArrayList<>();

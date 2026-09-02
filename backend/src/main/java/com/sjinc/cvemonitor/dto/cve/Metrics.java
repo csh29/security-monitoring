@@ -16,10 +16,14 @@ import java.util.List;
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class Metrics {
+    private List<CvssMetric> cvssMetricV31;
+    private List<CvssMetric> cvssMetricV3;  // 일부 구형 CVE는 여전히 이 필드로 옴
+    private List<CvssMetric> cvssMetricV2;  // v3 계열이 아예 없는 아주 오래된 CVE용 폴백
 
-    /** CVSS v3.0 기준 메트릭 목록 (보통 1개만 들어있음). */
-    private List<CvssMetric> cvssMetricV3;
-
+    public List<CvssMetric> getCvssMetricV31() { return cvssMetricV31; }
+    public void setCvssMetricV31(List<CvssMetric> cvssMetricV31) { this.cvssMetricV31 = cvssMetricV31; }
     public List<CvssMetric> getCvssMetricV3() { return cvssMetricV3; }
     public void setCvssMetricV3(List<CvssMetric> cvssMetricV3) { this.cvssMetricV3 = cvssMetricV3; }
+    public List<CvssMetric> getCvssMetricV2() { return cvssMetricV2; }
+    public void setCvssMetricV2(List<CvssMetric> cvssMetricV2) { this.cvssMetricV2 = cvssMetricV2; }
 }

@@ -24,7 +24,7 @@ public class MavenDependencyExtractor {
     private static final Pattern GAV_PATTERN =
             Pattern.compile("^([\\w.\\-]+):([\\w.\\-]+):([\\w.\\-]+):(?:([\\w.\\-]+):)?([\\w.\\-]+):(\\w+)$");
 
-    public List<MavenDependency> extract(File projectDir) throws Exception {
+    public List<MavenDependency> extract(File projectDir, String mavenHome) throws Exception {
         Path outputFile = Files.createTempFile("dependency-list-", ".txt");
         try {
             InvocationRequest request = new DefaultInvocationRequest();
@@ -34,6 +34,7 @@ public class MavenDependencyExtractor {
             request.setBatchMode(true); // 인터랙티브 프롬프트 방지
 
             Invoker invoker = new DefaultInvoker();
+            invoker.setMavenHome(new File(mavenHome));
             InvocationResult result = invoker.execute(request);
 
             if (result.getExitCode() != 0) {
@@ -42,16 +43,19 @@ public class MavenDependencyExtractor {
             }
 
             return parse(Files.readAllLines(outputFile));
-        } finally {
+        } catch(Exception e ) {
+            System.out.println(e);
+        }finally {
             Files.deleteIfExists(outputFile);
         }
+        return null;
     }
 
     private Properties outputProperties(Path outputFile) {
         Properties props = new Properties();
         props.setProperty("outputFile", outputFile.toAbsolutePath().toString());
         props.setProperty("outputAbsoluteArtifactFilename", "false");
-        props.setProperty("includeScope", "compile,runtime"); // test 스코프 제외 (필요시 조정)
+        props.setProperty("includeScope", "runtime"); // compile,runtime → runtime 하나로 수정 (runtime이 compile을 포함함)
         return props;
     }
 
@@ -59,7 +63,13 @@ public class MavenDependencyExtractor {
         List<MavenDependency> dependencies = new ArrayList<>();
         for (String rawLine : lines) {
             String line = rawLine.trim();
-            Matcher matcher = GAV_PATTERN.matcher(line);
+            if (line.isEmpty()) continue;
+
+            // 줄 끝의 "(optional)", "-- module xxx [auto]" 같은 JPMS 모듈 정보는 무시하고
+            // 맨 앞 GAV:scope 토큰만 취한다.
+            String gavToken = line.split("\\s+", 2)[0];
+
+            Matcher matcher = GAV_PATTERN.matcher(gavToken);
             if (matcher.matches()) {
                 dependencies.add(new MavenDependency(
                         matcher.group(1),  // groupId
