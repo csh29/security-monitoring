@@ -1,4 +1,4 @@
-package com.sjinc.cvemonitor.dto.git;
+package com.sjinc.cvemonitor.dto.scan;
 
 import java.util.List;
 

@@ -1,6 +1,6 @@
 package com.sjinc.cvemonitor.service.nvd;
 
-import com.sjinc.cvemonitor.dto.cve.NvdResponse;
+import com.sjinc.cvemonitor.dto.nvd.NvdResponse;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;

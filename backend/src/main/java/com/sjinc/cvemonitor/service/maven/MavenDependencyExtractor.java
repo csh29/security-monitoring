@@ -81,4 +81,30 @@ public class MavenDependencyExtractor {
         }
         return dependencies;
     }
+
+    public String findDependencyPath(File projectDir, String groupId, String artifactId, String mavenHome) throws Exception {
+        Path outputFile = Files.createTempFile("dependency-tree-", ".txt");
+        try {
+            InvocationRequest request = new DefaultInvocationRequest();
+            request.setPomFile(new File(projectDir, "pom.xml"));
+            request.setGoals(List.of("dependency:tree"));
+
+            Properties props = new Properties();
+            props.setProperty("outputFile", outputFile.toAbsolutePath().toString());
+            props.setProperty("includes", groupId + ":" + artifactId); // 이 의존성만 필터링
+            request.setProperties(props);
+            request.setBatchMode(true);
+
+            Invoker invoker = new DefaultInvoker();
+            invoker.setMavenHome(new File(mavenHome));
+            InvocationResult result = invoker.execute(request);
+
+            if (result.getExitCode() != 0) {
+                throw new IllegalStateException("dependency:tree 실행 실패: " + projectDir);
+            }
+            return Files.readString(outputFile);
+        } finally {
+            Files.deleteIfExists(outputFile);
+        }
+    }
 }

@@ -1,10 +1,10 @@
 package com.sjinc.cvemonitor.service.scan;
 
 import com.sjinc.cvemonitor.domain.MavenDependency;
-import com.sjinc.cvemonitor.dto.cve.OsvBatchResultItem;
-import com.sjinc.cvemonitor.dto.cve.OsvVulnRef;
-import com.sjinc.cvemonitor.dto.git.ScanResult;
-import com.sjinc.cvemonitor.dto.git.ScanResult.DependencyFinding;
+import com.sjinc.cvemonitor.dto.osv.OsvBatchResultItem;
+import com.sjinc.cvemonitor.dto.osv.OsvVulnRef;
+import com.sjinc.cvemonitor.dto.scan.ScanResult;
+import com.sjinc.cvemonitor.dto.scan.ScanResult.DependencyFinding;
 import com.sjinc.cvemonitor.service.maven.MavenDependencyExtractor;
 import com.sjinc.cvemonitor.dto.osv.OsvVulnDetail;
 import com.sjinc.cvemonitor.service.osv.OsvClient;

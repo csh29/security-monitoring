@@ -1,4 +1,4 @@
-package com.sjinc.cvemonitor.dto.cve;
+package com.sjinc.cvemonitor.dto.osv;
 
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;

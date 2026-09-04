@@ -1,7 +1,7 @@
 package com.sjinc.cvemonitor.controller;
 
-import com.sjinc.cvemonitor.dto.git.ScanRequest;
-import com.sjinc.cvemonitor.dto.git.ScanResult;
+import com.sjinc.cvemonitor.dto.scan.ScanRequest;
+import com.sjinc.cvemonitor.dto.scan.ScanResult;
 import com.sjinc.cvemonitor.service.scan.ScanOrchestrationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;

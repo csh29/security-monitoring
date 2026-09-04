@@ -1,7 +1,6 @@
 package com.sjinc.cvemonitor.dto.osv;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.sjinc.cvemonitor.dto.cve.OsvBatchResultItem;
 
 import java.util.List;
 
