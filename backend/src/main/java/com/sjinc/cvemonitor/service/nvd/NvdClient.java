@@ -34,4 +34,14 @@ public class NvdClient {
                 .bodyToMono(NvdResponse.class)
                 .block();
     }
+
+    public NvdResponse getCveById(String cveId) {
+        return nvdWebClient.get()
+                .uri(uriBuilder -> uriBuilder
+                        .queryParam("cveId", cveId)
+                        .build())
+                .retrieve()
+                .bodyToMono(NvdResponse.class)
+                .block();
+    }
 }
