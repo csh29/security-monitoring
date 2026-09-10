@@ -1,9 +1,11 @@
 package com.sjinc.cvemonitor.controller;
 
 import com.sjinc.cvemonitor.dto.ai.AiAssessmentRequest;
+import com.sjinc.cvemonitor.dto.ai.AiBatchStatus;
 import com.sjinc.cvemonitor.dto.ai.AppFixPlanTarget;
 import com.sjinc.cvemonitor.dto.ai.FixPlanRequest;
 import com.sjinc.cvemonitor.dto.vulnerability.VulnerabilityInfo;
+import com.sjinc.cvemonitor.service.ai.AiAssessmentTriggerService;
 import com.sjinc.cvemonitor.service.ai.FixPlanService;
 import com.sjinc.cvemonitor.service.vulnerability.VulnerabilityService;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +35,7 @@ public class AiAssessmentController {
 
     private final VulnerabilityService vulnerabilityService;
     private final FixPlanService fixPlanService;
+    private final AiAssessmentTriggerService aiAssessmentTriggerService;
 
     @Value("${ai.internal.token}")
     private String internalToken;
@@ -63,6 +66,12 @@ public class AiAssessmentController {
                                @RequestBody FixPlanRequest request) {
         verifyToken(token);
         fixPlanService.saveFixPlan(appId, request);
+    }
+
+    @GetMapping("/status")
+    public AiBatchStatus getStatus(@RequestHeader("X-Internal-Token") String token) {
+        verifyToken(token);
+        return aiAssessmentTriggerService.getStatus();
     }
 
     private void verifyToken(String token) {

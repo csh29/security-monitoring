@@ -18,6 +18,8 @@ from typing import Optional
 import anthropic
 import requests
 
+from prompt_rules import ASSESS_SYSTEM, FIX_PLAN_SYSTEM, load_prompt
+
 MODEL = "claude-sonnet-5"
 
 # 자바 백엔드 접속 정보. SecurityConfig에서 /api/ai/**는 세션 로그인 없이
@@ -25,6 +27,40 @@ MODEL = "claude-sonnet-5"
 # ai.internal.token과 반드시 같은 값을 CVE_MONITOR_AI_TOKEN에 넣어줘야 한다.
 BASE_URL = os.environ.get("CVE_MONITOR_BASE_URL", "http://localhost:8080")
 AI_TOKEN = os.environ.get("CVE_MONITOR_AI_TOKEN", "")
+
+# Structured Outputs 스키마. output_config.format 으로 넘기면 응답이 이 스키마를
+# 만족하는 JSON 텍스트임이 보장되므로 코드펜스를 벗겨낼 필요가 없다.
+ASSESSMENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "is_vulnerable": {"type": "boolean"},
+        # 수정 버전을 모르면 null 이어야 하므로 nullable 로 둔다.
+        "fixed_version": {"type": ["string", "null"]},
+        "reasoning": {"type": "string"},
+        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+    },
+    "required": ["is_vulnerable", "fixed_version", "reasoning", "confidence"],
+    "additionalProperties": False,
+}
+
+FIX_PLAN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "strategy": {
+            "type": "string",
+            "enum": ["PARENT_UPGRADE", "PROPERTY_OVERRIDE", "MIXED"],
+        },
+        "pom_xml": {"type": "string"},
+        "unresolved_cves": {"type": "string"},
+        "reasoning": {"type": "string"},
+    },
+    "required": ["strategy", "pom_xml", "unresolved_cves", "reasoning"],
+    "additionalProperties": False,
+}
+
+# pom.xml 전문을 그대로 받아야 해서 출력이 길다. 8192로는 큰 pom에서 잘린다.
+ASSESS_MAX_TOKENS = 4096
+FIX_PLAN_MAX_TOKENS = 32000
 
 
 @dataclass
@@ -118,8 +154,22 @@ class FixPlan:
     reasoning: str
 
 
+def _reject_if_truncated(response, max_tokens: int) -> None:
+    """max_tokens에서 잘린 응답은 저장하면 안 된다.
+
+    특히 fix-plan은 pom.xml 전문이 오기 때문에, 잘린 걸 그대로 저장하면
+    깨진 XML이 수정안으로 남는다. 파싱이 우연히 통과하는 경우도 있어
+    stop_reason을 직접 확인한다.
+    """
+    if response.stop_reason == "max_tokens":
+        raise ValueError(
+            f"응답이 max_tokens({max_tokens})에서 잘렸습니다. "
+            "내용이 불완전하므로 저장하지 않습니다."
+        )
+
+
 def _strip_code_fence(raw_text: str) -> str:
-    """지시해도 ```json ... ``` 코드펜스로 감싸서 답하는 경우가 있어 벗겨낸다."""
+    """코드펜스 제거. Structured Outputs를 쓰므로 지금은 안전망 역할만 한다."""
     text = raw_text.strip()
     fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
     return fenced.group(1) if fenced else text
@@ -197,28 +247,30 @@ class VulnAssessorClient:
     def assess(self, ctx: DependencyContext) -> VulnAssessment:
         response = self._client.messages.create(
             model=self._model,
-            max_tokens=1024,
+            # 확장 사고가 붙으면 답이 나오기 전에 토큰을 다 쓸 수 있어 여유 있게 잡는다.
+            max_tokens=ASSESS_MAX_TOKENS,
+            # 판정 룰은 prompts/assess.system.md 에 있다. CVE 건마다 같은 내용이
+            # 반복되므로 캐시를 붙여 둔다(두 번째 요청부터 입력 토큰 값이 1/10).
+            system=[{
+                "type": "text",
+                "text": load_prompt(ASSESS_SYSTEM),
+                "cache_control": {"type": "ephemeral"},
+            }],
+            output_config={
+                "format": {"type": "json_schema", "schema": ASSESSMENT_SCHEMA},
+            },
             messages=[{"role": "user", "content": self._build_prompt(ctx)}],
         )
+        _reject_if_truncated(response, ASSESS_MAX_TOKENS)
         return self._parse_response(_extract_text(response))
 
     def _build_prompt(self, ctx: DependencyContext) -> str:
-        # TODO: 근거 자료(NVD/OSV 상세, changelog 등) 추가, few-shot 예시 보강
-        return f"""다음 오픈소스 의존성이 아래 CVE에 실제로 취약한지 판단해줘.
-
-- CVE ID: {ctx.cve_id}
+        # 판정 룰은 전부 시스템 프롬프트(prompts/)로 갔다. 여기는 데이터만 담는다.
+        return f"""- CVE ID: {ctx.cve_id}
 - 심각도: {ctx.severity}
 - 설명: {ctx.description}
 - 의존성: {ctx.group_id}:{ctx.artifact_id}:{ctx.version}
 - 최상위 원인 의존성(직접 의존성): {ctx.brought_in_by}
-
-반드시 아래 JSON 스키마 형식으로만 답해. 다른 텍스트는 출력하지 마.
-{{
-  "is_vulnerable": true|false,
-  "fixed_version": "취약점이 수정된 최소 버전 (모르면 null)",
-  "reasoning": "판단 근거를 한국어로 간단히",
-  "confidence": "high|medium|low"
-}}
 """
 
     def _parse_response(self, raw_text: str) -> VulnAssessment:
@@ -239,11 +291,24 @@ class FixPlanGeneratorClient:
         self._model = model
 
     def generate(self, target: AppFixPlanTarget) -> FixPlan:
-        response = self._client.messages.create(
+        # 출력이 길어서 큰 max_tokens가 필요하고, 큰 max_tokens는 비스트리밍에서
+        # HTTP 타임아웃에 걸릴 수 있어 스트리밍으로 받는다.
+        with self._client.messages.stream(
             model=self._model,
-            max_tokens=8192,
+            max_tokens=FIX_PLAN_MAX_TOKENS,
+            system=[{
+                "type": "text",
+                "text": load_prompt(FIX_PLAN_SYSTEM),
+                "cache_control": {"type": "ephemeral"},
+            }],
+            output_config={
+                "format": {"type": "json_schema", "schema": FIX_PLAN_SCHEMA},
+            },
             messages=[{"role": "user", "content": self._build_prompt(target)}],
-        )
+        ) as stream:
+            response = stream.get_final_message()
+
+        _reject_if_truncated(response, FIX_PLAN_MAX_TOKENS)
         return self._parse_response(_extract_text(response))
 
     def _build_prompt(self, target: AppFixPlanTarget) -> str:
@@ -253,8 +318,7 @@ class FixPlanGeneratorClient:
             for f in target.cve_findings
         )
 
-        return f"""다음은 "{target.system_name}" 프로젝트의 pom.xml이고, 그 아래는 mvn dependency:tree 결과다.
-그 아래는 이 프로젝트에서 실제로 취약하다고 이미 확인된 CVE 목록이다(컴포넌트별 권장 최소 버전 포함).
+        return f"""[대상 프로젝트] {target.system_name}
 
 [pom.xml]
 {target.pom_xml}
@@ -262,23 +326,8 @@ class FixPlanGeneratorClient:
 [dependency:tree]
 {target.dependency_tree}
 
-[취약점 목록] (CVE ID / groupId:artifactId / 현재 버전 / 권장 최소 버전)
+[취약점 목록] (CVE ID / groupId:artifactId / 현재 버전 / 권장 최소 버전 / 신뢰도)
 {findings_text}
-
-요청사항:
-1. 같은 아티팩트에 CVE가 여러 개 걸려 있으면, 그 아티팩트의 권장 최소 버전 중 가장 높은 걸 최종 목표 버전으로 잡아라.
-2. 이 프로젝트가 Spring Boot 등 parent BOM을 쓰고 있다면, parent 버전 업그레이드로 자연스럽게 해결되는지,
-   아니면 <netty.version> 같은 개별 property override가 필요한지 판단하고, 더 안전하고 diff가 작은 쪽을 선택해라.
-3. 선택한 전략을 반영한 pom.xml 전체를 출력해라.
-4. 버전을 올려도 해결이 안 되는 CVE가 있으면(예: 코드/설정 변경이 필요한 경우) 별도로 표시해라.
-
-반드시 아래 JSON 스키마 형식으로만 답해. 다른 텍스트는 출력하지 마.
-{{
-  "strategy": "PARENT_UPGRADE|PROPERTY_OVERRIDE|MIXED",
-  "pom_xml": "수정이 반영된 pom.xml 전체 내용",
-  "unresolved_cves": "버전 업그레이드만으론 해결 안 되는 CVE와 이유 (없으면 빈 문자열)",
-  "reasoning": "판단 근거를 한국어로 간단히"
-}}
 """
 
     def _parse_response(self, raw_text: str) -> FixPlan:
@@ -299,22 +348,43 @@ def main() -> None:
     pending = backend.fetch_pending_vulnerabilities()
     print(f"판단할 취약점 {len(pending)}건")
 
+    skipped_cves: list[tuple[str, str]] = []
     for ctx in pending:
-        assessment = ai_client.assess(ctx)
-        backend.submit_assessment(ctx.id, assessment)
-        print(f"[{ctx.cve_id}] vulnerable={assessment.is_vulnerable} "
-              f"fixed_version={assessment.fixed_version} confidence={assessment.confidence}")
+        try:
+            assessment = ai_client.assess(ctx)
+            backend.submit_assessment(ctx.id, assessment)
+            print(f"[{ctx.cve_id}] vulnerable={assessment.is_vulnerable} "
+                  f"fixed_version={assessment.fixed_version} confidence={assessment.confidence}")
+        except Exception as e:
+            # 한 건 실패했다고 나머지 CVE 판단까지 통째로 포기하지 않는다.
+            skipped_cves.append((ctx.cve_id, str(e)))
+            print(f"[{ctx.cve_id}] 판단 실패, 건너뜀: {e}")
 
     # stage 2: 앱 단위로 취합해서 pom.xml 수정안 생성
     fix_plan_client = FixPlanGeneratorClient()
     fix_plan_targets = backend.fetch_pending_fix_plans()
     print(f"fix-plan 생성할 앱 {len(fix_plan_targets)}건")
 
+    skipped_apps: list[tuple[str, str]] = []
     for target in fix_plan_targets:
-        plan = fix_plan_client.generate(target)
-        backend.submit_fix_plan(target.app_id, plan)
-        print(f"[{target.system_name}] strategy={plan.strategy} "
-              f"unresolved={'있음' if plan.unresolved_cves else '없음'}")
+        try:
+            plan = fix_plan_client.generate(target)
+            backend.submit_fix_plan(target.app_id, plan)
+            print(f"[{target.system_name}] strategy={plan.strategy} "
+                  f"unresolved={'있음' if plan.unresolved_cves else '없음'}")
+        except Exception as e:
+            skipped_apps.append((target.system_name, str(e)))
+            print(f"[{target.system_name}] fix-plan 생성 실패, 건너뜀: {e}")
+
+    # 한 화면 가득 스크롤한 로그 사이에서 실패 건만 놓치지 않도록 끝에 다시 요약해서 보여준다.
+    print()
+    print("=== 요약 ===")
+    print(f"CVE 판단: 성공 {len(pending) - len(skipped_cves)}건 / 건너뜀 {len(skipped_cves)}건")
+    for cve_id, reason in skipped_cves:
+        print(f"  - {cve_id}: {reason}")
+    print(f"fix-plan 생성: 성공 {len(fix_plan_targets) - len(skipped_apps)}건 / 건너뜀 {len(skipped_apps)}건")
+    for system_name, reason in skipped_apps:
+        print(f"  - {system_name}: {reason}")
 
 
 if __name__ == "__main__":

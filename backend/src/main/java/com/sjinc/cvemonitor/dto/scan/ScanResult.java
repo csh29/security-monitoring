@@ -8,6 +8,9 @@ public record ScanResult(
         String branch,
         String systemName,
         int totalDependenciesScanned,
+        // findings는 (의존성, 식별자) 조합별 원시 목록이라 같은 CVE가 여러 의존성에 걸리면 중복 집계된다.
+        // 실제로 DB에 저장되는(=고유 CVE 기준) 건수는 totalVulnerabilitiesFound를 써야 한다.
+        int totalVulnerabilitiesFound,
         List<DependencyFinding> findings
 ) {
     public record DependencyFinding(

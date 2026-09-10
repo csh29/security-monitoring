@@ -120,7 +120,7 @@ public class ScanOrchestrationService {
                 aiAssessmentTriggerService.triggerAsync();
             }
 
-            return new ScanResult(repoUrl, branch, systemName, dependencies.size(), findings);
+            return new ScanResult(repoUrl, branch, systemName, dependencies.size(), cveFindings.size(), findings);
         } finally {
             gitCloneService.cleanup(projectDir);
         }
