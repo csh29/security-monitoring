@@ -45,7 +45,10 @@ public class AiAssessmentTriggerService {
 
     public void triggerAsync() {
         try {
-            ProcessBuilder processBuilder = new ProcessBuilder(pythonCommand, assessorScriptPath);
+            // -u(unbuffered): 표준출력이 터미널이 아니라 파일로 리다이렉트되면 파이썬이 기본적으로
+            // 블록 버퍼링을 해서, 프로세스가 끝나거나 버퍼가 다 찰 때까지 ai-assessor.log에 아무것도
+            // 안 쌓인 것처럼 보인다. 실시간으로 로그를 확인할 수 있도록 무버퍼 모드로 띄운다.
+            ProcessBuilder processBuilder = new ProcessBuilder(pythonCommand, "-u", assessorScriptPath);
             processBuilder.environment().put("ANTHROPIC_API_KEY", claudeApiKey);
             processBuilder.environment().put("CVE_MONITOR_AI_TOKEN", internalToken);
             processBuilder.environment().put("CVE_MONITOR_BASE_URL", "http://localhost:" + serverPort);

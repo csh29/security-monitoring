@@ -183,6 +183,31 @@ def _extract_text(response) -> str:
     raise ValueError("Claude 응답에 텍스트 블록이 없습니다.")
 
 
+@dataclass
+class TokenUsageTracker:
+    """호출별 토큰 사용량을 누적한다. 캐시가 실제로 적중하는지, 어떤 건이 유난히
+    토큰을 많이 쓰는지 디버깅할 때 쓴다."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+
+    def record(self, label: str, usage) -> None:
+        cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+        cache_creation = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        self.input_tokens += usage.input_tokens
+        self.output_tokens += usage.output_tokens
+        self.cache_read_tokens += cache_read
+        self.cache_creation_tokens += cache_creation
+        print(f"  [tokens] {label}: input={usage.input_tokens} output={usage.output_tokens} "
+              f"cache_read={cache_read} cache_creation={cache_creation}")
+
+    def summary(self) -> str:
+        return (f"input={self.input_tokens} output={self.output_tokens} "
+                f"cache_read={self.cache_read_tokens} cache_creation={self.cache_creation_tokens}")
+
+
 class CveMonitorClient:
     """자바 백엔드의 /api/ai/** 와 통신하는 클라이언트."""
 
@@ -243,6 +268,7 @@ class VulnAssessorClient:
     def __init__(self, api_key: Optional[str] = None, model: str = MODEL):
         self._client = anthropic.Anthropic(api_key=api_key or os.environ["ANTHROPIC_API_KEY"])
         self._model = model
+        self.usage = TokenUsageTracker()
 
     def assess(self, ctx: DependencyContext) -> VulnAssessment:
         response = self._client.messages.create(
@@ -261,6 +287,7 @@ class VulnAssessorClient:
             },
             messages=[{"role": "user", "content": self._build_prompt(ctx)}],
         )
+        self.usage.record(ctx.cve_id, response.usage)
         _reject_if_truncated(response, ASSESS_MAX_TOKENS)
         return self._parse_response(_extract_text(response))
 
@@ -289,6 +316,7 @@ class FixPlanGeneratorClient:
     def __init__(self, api_key: Optional[str] = None, model: str = MODEL):
         self._client = anthropic.Anthropic(api_key=api_key or os.environ["ANTHROPIC_API_KEY"])
         self._model = model
+        self.usage = TokenUsageTracker()
 
     def generate(self, target: AppFixPlanTarget) -> FixPlan:
         # 출력이 길어서 큰 max_tokens가 필요하고, 큰 max_tokens는 비스트리밍에서
@@ -308,6 +336,7 @@ class FixPlanGeneratorClient:
         ) as stream:
             response = stream.get_final_message()
 
+        self.usage.record(target.system_name, response.usage)
         _reject_if_truncated(response, FIX_PLAN_MAX_TOKENS)
         return self._parse_response(_extract_text(response))
 
@@ -385,6 +414,17 @@ def main() -> None:
     print(f"fix-plan 생성: 성공 {len(fix_plan_targets) - len(skipped_apps)}건 / 건너뜀 {len(skipped_apps)}건")
     for system_name, reason in skipped_apps:
         print(f"  - {system_name}: {reason}")
+
+    print()
+    print("=== 토큰 사용량 ===")
+    print(f"CVE 판단: {ai_client.usage.summary()}")
+    print(f"fix-plan: {fix_plan_client.usage.summary()}")
+    total_input = ai_client.usage.input_tokens + fix_plan_client.usage.input_tokens
+    total_output = ai_client.usage.output_tokens + fix_plan_client.usage.output_tokens
+    total_cache_read = ai_client.usage.cache_read_tokens + fix_plan_client.usage.cache_read_tokens
+    total_cache_creation = ai_client.usage.cache_creation_tokens + fix_plan_client.usage.cache_creation_tokens
+    print(f"합계: input={total_input} output={total_output} "
+          f"cache_read={total_cache_read} cache_creation={total_cache_creation}")
 
 
 if __name__ == "__main__":
