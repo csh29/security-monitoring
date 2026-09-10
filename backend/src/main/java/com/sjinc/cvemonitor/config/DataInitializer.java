@@ -161,6 +161,36 @@ public class DataInitializer implements CommandLineRunner {
                 .cvssBaseSeverity("HIGH")
                 .build());
 
+        // LOW/MEDIUM 등급 샘플 — ai.assessment.severities(HIGH,CRITICAL)에서 제외되고 fix-plan의
+        // lowSeverityNote로만 요약되는지 확인하기 위한 시드.
+        vulnerabilityRepository.save(Vulnerability.builder()
+                .app(crmBack)
+                .cveId("CVE-2020-9488")
+                .groupId("org.apache.logging.log4j")
+                .artifactId("log4j-core")
+                .version("2.14.1")
+                .broughtInBy("com.sjinc:crm-back")
+                .description("Log4j 1.2.x부터 2.13.1 이전 SMTPAppender가 SMTP 서버 인증서를 제대로 " +
+                        "검증하지 않아, 중간자 공격자가 SMTPS 연결의 로그 이벤트를 가로챌 수 있다.")
+                .severity("LOW")
+                .cvssBaseScore(3.7)
+                .cvssBaseSeverity("LOW")
+                .build());
+
+        vulnerabilityRepository.save(Vulnerability.builder()
+                .app(crmBack)
+                .cveId("CVE-2020-36518")
+                .groupId("com.fasterxml.jackson.core")
+                .artifactId("jackson-databind")
+                .version("2.9.8")
+                .broughtInBy("com.sjinc:crm-back")
+                .description("jackson-databind는 대규모/깊게 중첩된 JSON 입력을 처리할 때 " +
+                        "StackOverflowError가 발생할 수 있어 서비스 거부로 이어질 수 있다.")
+                .severity("MEDIUM")
+                .cvssBaseScore(5.9)
+                .cvssBaseSeverity("MEDIUM")
+                .build());
+
         // fix-plan 배치(stage 2) 동작 확인용 pom.xml/dependency:tree 샘플. 실제 스캔이 남기는 스냅샷을 흉내낸 것.
         ScanSnapshot snapshot = ScanSnapshot.builder().app(crmBack).build();
         snapshot.updateSnapshot(

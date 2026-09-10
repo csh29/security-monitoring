@@ -46,6 +46,11 @@ public class FixPlan {
     @Column(columnDefinition = "CLOB")
     private String reasoning;
 
+    // AI 판단 대상(HIGH/CRITICAL)에서 제외된 LOW/MEDIUM CVE 요약. AI가 아니라 자바가 DB 조회로 채운다.
+    @Lob
+    @Column(columnDefinition = "CLOB")
+    private String lowSeverityNote;
+
     @Builder.Default
     private String status = "PENDING_REVIEW"; // 사람이 검토해서 적용/반려하기 전까지는 항상 이 상태
 
@@ -58,5 +63,9 @@ public class FixPlan {
         this.reasoning = reasoning;
         this.status = "PENDING_REVIEW";
         this.createdAt = LocalDateTime.now();
+    }
+
+    public void attachLowSeverityNote(String lowSeverityNote) {
+        this.lowSeverityNote = lowSeverityNote;
     }
 }
