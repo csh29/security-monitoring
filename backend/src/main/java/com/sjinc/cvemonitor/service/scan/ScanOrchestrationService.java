@@ -2,13 +2,16 @@ package com.sjinc.cvemonitor.service.scan;
 
 import com.sjinc.cvemonitor.domain.App;
 import com.sjinc.cvemonitor.domain.MavenDependency;
+import com.sjinc.cvemonitor.domain.ScanSnapshot;
 import com.sjinc.cvemonitor.dto.osv.OsvBatchResultItem;
 import com.sjinc.cvemonitor.dto.osv.OsvVulnRef;
 import com.sjinc.cvemonitor.dto.scan.ScanResult;
 import com.sjinc.cvemonitor.dto.scan.ScanResult.DependencyFinding;
 import com.sjinc.cvemonitor.repository.AppRepository;
+import com.sjinc.cvemonitor.repository.ScanSnapshotRepository;
 import com.sjinc.cvemonitor.service.ai.AiAssessmentTriggerService;
 import com.sjinc.cvemonitor.service.maven.MavenDependencyExtractor;
+import com.sjinc.cvemonitor.service.maven.MavenDependencyExtractor.DependencyTreeResult;
 import com.sjinc.cvemonitor.dto.osv.OsvVulnDetail;
 import com.sjinc.cvemonitor.service.osv.OsvClient;
 import com.sjinc.cvemonitor.service.git.GitCloneService;
@@ -19,6 +22,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -36,6 +40,7 @@ public class ScanOrchestrationService {
     private final OsvClient osvClient;
     private final VulnerabilityService vulnerabilityService;
     private final AppRepository appRepository;
+    private final ScanSnapshotRepository scanSnapshotRepository;
     private final AiAssessmentTriggerService aiAssessmentTriggerService;
 
     @Value("${git.access.token}")
@@ -89,9 +94,10 @@ public class ScanOrchestrationService {
                     .collect(Collectors.joining(", ")));
 
             // CVE 건수만큼 mvn dependency:tree를 반복 실행하지 않도록, 트리를 한 번만 떠서 맵으로 미리 만들어둔다.
-            Map<String, String> topLevelCauseByCoordinate = cveFindings.isEmpty()
-                    ? Map.of()
+            DependencyTreeResult treeResult = cveFindings.isEmpty()
+                    ? new DependencyTreeResult(Map.of(), "")
                     : dependencyExtractor.buildTopLevelCauseMap(projectDir, mavenHome);
+            Map<String, String> topLevelCauseByCoordinate = treeResult.topLevelCauseByCoordinate();
 
             cveFindings.forEach(finding -> {
                 String coordinate = finding.groupId() + ":" + finding.artifactId();
@@ -100,8 +106,17 @@ public class ScanOrchestrationService {
                         finding.identifier(), appId, finding.groupId(), finding.artifactId(), finding.version(), broughtInBy);
             });
 
-            // 새로 저장된 CVE가 있을 때만 AI 판단 배치를 깨운다.
             if (!cveFindings.isEmpty()) {
+                // fix-plan 배치가 나중에 pom.xml/tree를 참고할 수 있도록, clone 디렉터리를 지우기 전에 스냅샷으로 남겨둔다.
+                if (app != null) {
+                    String pomXml = Files.readString(new File(projectDir, "pom.xml").toPath());
+                    ScanSnapshot snapshot = scanSnapshotRepository.findByAppId(appId)
+                            .orElseGet(() -> ScanSnapshot.builder().app(app).build());
+                    snapshot.updateSnapshot(pomXml, treeResult.rawText());
+                    scanSnapshotRepository.save(snapshot);
+                }
+
+                // 새로 저장된 CVE가 있을 때만 AI 판단 배치를 깨운다.
                 aiAssessmentTriggerService.triggerAsync();
             }
 

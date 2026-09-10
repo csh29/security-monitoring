@@ -2,11 +2,13 @@ package com.sjinc.cvemonitor.config;
 
 import com.sjinc.cvemonitor.domain.App;
 import com.sjinc.cvemonitor.domain.Program;
+import com.sjinc.cvemonitor.domain.ScanSnapshot;
 import com.sjinc.cvemonitor.domain.User;
 import com.sjinc.cvemonitor.domain.UserProgramPermission;
 import com.sjinc.cvemonitor.domain.Vulnerability;
 import com.sjinc.cvemonitor.repository.AppRepository;
 import com.sjinc.cvemonitor.repository.ProgramRepository;
+import com.sjinc.cvemonitor.repository.ScanSnapshotRepository;
 import com.sjinc.cvemonitor.repository.UserProgramPermissionRepository;
 import com.sjinc.cvemonitor.repository.UserRepository;
 import com.sjinc.cvemonitor.repository.VulnerabilityRepository;
@@ -25,6 +27,7 @@ public class DataInitializer implements CommandLineRunner {
     private final UserProgramPermissionRepository userProgramPermissionRepository;
     private final AppRepository appRepository;
     private final VulnerabilityRepository vulnerabilityRepository;
+    private final ScanSnapshotRepository scanSnapshotRepository;
     private final PasswordEncoder passwordEncoder;
 
     @Override
@@ -112,5 +115,34 @@ public class DataInitializer implements CommandLineRunner {
                 .cvssBaseScore(10.0)
                 .cvssBaseSeverity("CRITICAL")
                 .build());
+
+        // fix-plan 배치(stage 2) 동작 확인용 pom.xml/dependency:tree 샘플. 실제 스캔이 남기는 스냅샷을 흉내낸 것.
+        ScanSnapshot snapshot = ScanSnapshot.builder().app(crmBack).build();
+        snapshot.updateSnapshot(
+                """
+                <project>
+                    <modelVersion>4.0.0</modelVersion>
+                    <groupId>com.sjinc</groupId>
+                    <artifactId>crm-back</artifactId>
+                    <version>1.0.0</version>
+                    <properties>
+                        <maven.compiler.source>17</maven.compiler.source>
+                        <maven.compiler.target>17</maven.compiler.target>
+                    </properties>
+                    <dependencies>
+                        <dependency>
+                            <groupId>org.apache.logging.log4j</groupId>
+                            <artifactId>log4j-core</artifactId>
+                            <version>2.14.1</version>
+                        </dependency>
+                    </dependencies>
+                </project>
+                """,
+                """
+                com.sjinc:crm-back:jar:1.0.0
+                +- org.apache.logging.log4j:log4j-core:jar:2.14.1:compile
+                """
+        );
+        scanSnapshotRepository.save(snapshot);
     }
 }

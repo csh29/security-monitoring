@@ -112,11 +112,11 @@ public class MavenDependencyExtractor {
 
     /**
      * dependency:tree를 프로젝트당 딱 한 번만 실행해서, "groupId:artifactId" → 이를 끌고 들어온
-     * 최상위(depth 1) 직접 의존성의 "groupId:artifactId" 매핑을 전부 만들어 반환한다.
+     * 최상위(depth 1) 직접 의존성의 "groupId:artifactId" 매핑과, fix-plan 배치가 참고할 원문 텍스트를 함께 반환한다.
      * CVE 건수만큼 매번 mvn 프로세스를 새로 띄우던 것(findDependencyPath 반복 호출)을 대체한다.
-     * 직접 의존성 자신은 스스로를 가리킨다. 실패하면 빈 맵을 반환한다(스캔 자체를 실패시키지 않음).
+     * 직접 의존성 자신은 스스로를 가리킨다. 실패하면 빈 결과를 반환한다(스캔 자체를 실패시키지 않음).
      */
-    public Map<String, String> buildTopLevelCauseMap(File projectDir, String mavenHome) {
+    public DependencyTreeResult buildTopLevelCauseMap(File projectDir, String mavenHome) {
         Path outputFile = null;
         try {
             outputFile = Files.createTempFile("dependency-tree-full-", ".txt");
@@ -135,12 +135,13 @@ public class MavenDependencyExtractor {
             InvocationResult result = invoker.execute(request);
 
             if (result.getExitCode() != 0) {
-                return Map.of();
+                return new DependencyTreeResult(Map.of(), "");
             }
 
-            return parseTopLevelCauseMap(Files.readAllLines(outputFile));
+            List<String> lines = Files.readAllLines(outputFile);
+            return new DependencyTreeResult(parseTopLevelCauseMap(lines), String.join("\n", lines));
         } catch (Exception e) {
-            return Map.of();
+            return new DependencyTreeResult(Map.of(), "");
         } finally {
             if (outputFile != null) {
                 try {
@@ -151,6 +152,8 @@ public class MavenDependencyExtractor {
             }
         }
     }
+
+    public record DependencyTreeResult(Map<String, String> topLevelCauseByCoordinate, String rawText) {}
 
     /**
      * dependency:tree 텍스트 전체를 한 줄씩 훑으면서, depth 1(직접 의존성) 줄을 만날 때마다

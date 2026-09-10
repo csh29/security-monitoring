@@ -1,7 +1,10 @@
 package com.sjinc.cvemonitor.controller;
 
 import com.sjinc.cvemonitor.dto.ai.AiAssessmentRequest;
+import com.sjinc.cvemonitor.dto.ai.AppFixPlanTarget;
+import com.sjinc.cvemonitor.dto.ai.FixPlanRequest;
 import com.sjinc.cvemonitor.dto.vulnerability.VulnerabilityInfo;
+import com.sjinc.cvemonitor.service.ai.FixPlanService;
 import com.sjinc.cvemonitor.service.vulnerability.VulnerabilityService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -29,6 +32,7 @@ import java.util.List;
 public class AiAssessmentController {
 
     private final VulnerabilityService vulnerabilityService;
+    private final FixPlanService fixPlanService;
 
     @Value("${ai.internal.token}")
     private String internalToken;
@@ -45,6 +49,20 @@ public class AiAssessmentController {
                                   @RequestBody AiAssessmentRequest request) {
         verifyToken(token);
         vulnerabilityService.applyAiAssessment(id, request);
+    }
+
+    @GetMapping("/fix-plans/pending")
+    public List<AppFixPlanTarget> getPendingFixPlans(@RequestHeader("X-Internal-Token") String token) {
+        verifyToken(token);
+        return fixPlanService.getPendingFixPlanTargets();
+    }
+
+    @PostMapping("/apps/{appId}/fix-plan")
+    public void submitFixPlan(@PathVariable Long appId,
+                               @RequestHeader("X-Internal-Token") String token,
+                               @RequestBody FixPlanRequest request) {
+        verifyToken(token);
+        fixPlanService.saveFixPlan(appId, request);
     }
 
     private void verifyToken(String token) {
