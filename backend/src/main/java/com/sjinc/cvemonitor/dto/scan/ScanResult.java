@@ -6,6 +6,7 @@ import java.util.List;
 public record ScanResult(
         String repoUrl,
         String branch,
+        String systemName,
         int totalDependenciesScanned,
         List<DependencyFinding> findings
 ) {

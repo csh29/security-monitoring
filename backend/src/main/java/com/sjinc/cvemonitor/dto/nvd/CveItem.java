@@ -27,6 +27,7 @@ public class CveItem {
     /** CVSS 등 취약점 심각도 점수 정보. 버전에 따라 v2/v3/v3.1 metric이 섞여 내려올 수 있다. */
     private Metrics metrics;
 
+
     /**
      * descriptions 중 언어가 "en"인 설명 하나를 찾아 반환한다.
      * 일치하는 항목이 없으면 빈 문자열을 반환한다(설명 없음으로 처리).
@@ -39,22 +40,27 @@ public class CveItem {
                 .orElse("");
     }
 
-    /**
-     * CVSS v3(또는 v3.1) 기준 base score(0.0 ~ 10.0)를 반환한다.
-     * metrics 정보가 없거나 v3 점수가 없는 경우(구형 CVE 등) 0.0을 반환한다.
-     *
-     * <p>주의: NVD는 CVSS 버전에 따라 필드명이 {@code cvssMetricV3}가 아니라
-     * {@code cvssMetricV31}로 내려오는 경우도 있다. 실제 응답을 확인해서
-     * 필요하면 Metrics 쪽에 v31 필드도 함께 매핑해야 한다.
-     */
+    private static final List<String> CVSS_VERSION_PRIORITY = List.of(
+            "cvssMetricV40", "cvssMetricV31", "cvssMetricV30", "cvssMetricV3", "cvssMetricV2"
+    );
+
+    public CvssData findBestCvssData() {
+        if (metrics == null) return null;
+        for (String versionKey : CVSS_VERSION_PRIORITY) {
+            CvssData data = findPrimaryScore(metrics.get(versionKey));
+            if (data != null) return data;
+        }
+        return null;
+    }
+
     public double getBaseScore() {
-        if (metrics == null) return 0.0;
-
-        CvssData data = findPrimaryScore(metrics.getCvssMetricV31());
-        if (data == null) data = findPrimaryScore(metrics.getCvssMetricV3());
-        if (data == null) data = findPrimaryScore(metrics.getCvssMetricV2());
-
+        CvssData data = findBestCvssData();
         return data != null ? data.getBaseScore() : 0.0;
+    }
+
+    public String getBaseSeverity() {
+        CvssData data = findBestCvssData();
+        return data != null ? data.getBaseSeverity() : null;
     }
 
     private CvssData findPrimaryScore(List<CvssMetric> metricList) {
@@ -62,27 +68,24 @@ public class CveItem {
         return metricList.stream()
                 .filter(m -> "Primary".equals(m.getType()))
                 .map(CvssMetric::getCvssData)
+                .filter(cvssData -> cvssData != null) // ssvcV203처럼 cvssData가 없는 항목 걸러냄
                 .findFirst()
-                .orElse(metricList.get(0).getCvssData()); // Primary가 없으면 첫 번째라도 사용
+                .orElse(metricList.get(0).getCvssData());
     }
 
-    /**
-     * CVSS v3(또는 v3.1) 기준 심각도 등급("LOW"/"MEDIUM"/"HIGH"/"CRITICAL")을 반환한다.
-     * metrics 정보가 없는 경우 null을 반환한다.
-     */
-    public String getBaseSeverity() {
-        if (metrics == null || metrics.getCvssMetricV3() == null || metrics.getCvssMetricV3().isEmpty()) {
-            return null;
-        }
-        return metrics.getCvssMetricV3().get(0).getCvssData().getBaseSeverity();
+    public String getId() {
+        return id;
     }
 
-    public String getId() { return id; }
-    public void setId(String id) { this.id = id; }
-    public String getLastModified() { return lastModified; }
-    public void setLastModified(String lastModified) { this.lastModified = lastModified; }
-    public List<Description> getDescriptions() { return descriptions; }
-    public void setDescriptions(List<Description> descriptions) { this.descriptions = descriptions; }
-    public Metrics getMetrics() { return metrics; }
-    public void setMetrics(Metrics metrics) { this.metrics = metrics; }
+    public String getLastModified() {
+        return lastModified;
+    }
+
+    public List<Description> getDescriptions() {
+        return descriptions;
+    }
+
+    public Metrics getMetrics() {
+        return metrics;
+    }
 }

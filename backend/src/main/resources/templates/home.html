@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>보안취약점 모니터링 대시보드</title>
+    <style>
+        :root{
+            --bg:            #f2f2f8;
+            --card:          #ffffff;
+            --navy:          #191940;
+            --accent:        #f43f68;
+            --accent-soft:   #ffe4ec;
+            --text:          #191940;
+            --text-sub:      #8b8ba7;
+            --line:          #e8e8f2;
+
+            --radius-md: 14px;
+
+            --left-w:  220px;
+            --top-h:   64px;
+        }
+
+        *{ box-sizing:border-box; margin:0; padding:0; }
+        html, body{ height:100%; }
+        body{
+            font-family:"Pretendard","Malgun Gothic",system-ui,sans-serif;
+            background:var(--bg); color:var(--text);
+        }
+
+        .app-shell{
+            width:100%; height:100vh;
+            display:grid;
+            grid-template-columns: var(--left-w) 1fr;
+            grid-template-rows:    var(--top-h)  1fr;
+            grid-template-areas:
+                "left top"
+                "left main";
+        }
+
+        .area-left{ grid-area:left; background:var(--card); border-right:1px solid var(--line); overflow-y:auto; }
+        .area-top { grid-area:top;  background:var(--card); border-bottom:1px solid var(--line); }
+        .area-main{ grid-area:main; overflow-y:auto; }
+
+        @media (max-width:760px){
+            .app-shell{
+                grid-template-columns:1fr;
+                grid-template-rows:auto auto 1fr;
+                grid-template-areas:"left" "top" "main";
+                height:auto; min-height:100vh;
+            }
+        }
+
+        .area-main{ padding:24px; display:flex; flex-direction:column; gap:20px; }
+
+        /* KPI 3열 */
+        .kpi-row{ display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+        .kpi{
+            background:var(--navy); color:#fff;
+            border-radius:var(--radius-md); padding:20px 22px;
+        }
+        .kpi .val{ font-size:30px; font-weight:800; color:var(--accent); line-height:1; }
+        .kpi .lbl{ font-size:12px; color:#c9c9dd; margin-top:10px; }
+
+        /* 가로 막대 차트 */
+        .panel-title{ font-size:13px; font-weight:700; color:var(--text-sub); }
+        .bars{ display:flex; flex-direction:column; gap:8px; margin-top:12px; }
+        .bar-row{ display:grid; grid-template-columns:110px 1fr; align-items:center; gap:12px; }
+        .bar-row .cap{ font-size:12px; text-align:right; }
+        .bar-row .track{ display:flex; align-items:center; gap:8px; }
+        .bar-row .fill{ height:12px; border-radius:3px; background:var(--accent); }
+        .bar-row .num{ font-size:11px; color:var(--text-sub); }
+
+        /* 검색 바 */
+        .search{
+            display:flex; align-items:center; gap:10px;
+            border:1px solid var(--line); border-radius:var(--radius-md);
+            padding:13px 16px; background:#fafafd;
+            font-size:13px; color:#b6b6cc;
+        }
+
+        /* 결과 박스 */
+        .result{ border:1px solid var(--line); border-radius:var(--radius-md); padding:16px 18px; }
+        .result p{ font-size:13px; line-height:1.7; }
+        .result .src{
+            display:inline-block; margin-top:12px;
+            background:var(--navy); color:#fff;
+            font-size:11px; padding:6px 12px; border-radius:6px;
+        }
+
+        @media (max-width:760px){
+            .kpi-row{ grid-template-columns:1fr; }
+        }
+    </style>
+</head>
+<body>
+<div class="app-shell">
+    <div th:replace="~{fragments/sidebar :: sidebar}"></div>
+    <div th:replace="~{fragments/topbar :: topbar}"></div>
+    <div th:replace="~{fragments/loading-overlay :: overlay}"></div>
+
+    <main class="area-main">
+        <section class="kpi-row">
+            <div class="kpi"><div class="val">12건</div><div class="lbl">이번주 신규 취약점</div></div>
+            <div class="kpi"><div class="val">95%</div><div class="lbl">크리티컬 알림 확인율</div></div>
+            <div class="kpi"><div class="val">78%</div><div class="lbl">평균 조치 완료율</div></div>
+        </section>
+
+        <section>
+            <div class="panel-title">프로젝트별 미해결 취약점 TOP 5 (건수)</div>
+            <div class="bars">
+                <div class="bar-row"><span class="cap">관리자 시스템</span>
+                    <span class="track"><i class="fill" style="width:33%"></i><span class="num">6</span></span></div>
+                <div class="bar-row"><span class="cap">결제 시스템</span>
+                    <span class="track"><i class="fill" style="width:50%"></i><span class="num">9</span></span></div>
+                <div class="bar-row"><span class="cap">사내 포털</span>
+                    <span class="track"><i class="fill" style="width:61%"></i><span class="num">11</span></span></div>
+                <div class="bar-row"><span class="cap">ERP 연동</span>
+                    <span class="track"><i class="fill" style="width:78%"></i><span class="num">14</span></span></div>
+                <div class="bar-row"><span class="cap">CRM 시스템</span>
+                    <span class="track"><i class="fill" style="width:100%"></i><span class="num">18</span></span></div>
+            </div>
+        </section>
+
+        <div class="search"><span>⌕</span><span>이번주 크리티컬 등급 취약점은?</span></div>
+
+        <div class="result">
+            <p>CRM 프로젝트의 lodash 4.17.15가 CVE-2021-23337(CVSS 7.2)에 해당하며 즉시 조치가 필요합니다.</p>
+            <span class="src">출처 · NVD·OSV.dev 2026.08</span>
+        </div>
+    </main>
+</div>
+</body>
+</html>

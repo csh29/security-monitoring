@@ -1,24 +1,32 @@
 package com.sjinc.cvemonitor.service.scan;
 
+import com.sjinc.cvemonitor.domain.App;
 import com.sjinc.cvemonitor.domain.MavenDependency;
 import com.sjinc.cvemonitor.dto.osv.OsvBatchResultItem;
 import com.sjinc.cvemonitor.dto.osv.OsvVulnRef;
 import com.sjinc.cvemonitor.dto.scan.ScanResult;
 import com.sjinc.cvemonitor.dto.scan.ScanResult.DependencyFinding;
+import com.sjinc.cvemonitor.repository.AppRepository;
+import com.sjinc.cvemonitor.service.ai.AiAssessmentTriggerService;
 import com.sjinc.cvemonitor.service.maven.MavenDependencyExtractor;
 import com.sjinc.cvemonitor.dto.osv.OsvVulnDetail;
 import com.sjinc.cvemonitor.service.osv.OsvClient;
 import com.sjinc.cvemonitor.service.git.GitCloneService;
+import com.sjinc.cvemonitor.service.vulnerability.VulnerabilityService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ScanOrchestrationService {
@@ -26,6 +34,9 @@ public class ScanOrchestrationService {
     private final GitCloneService gitCloneService;
     private final MavenDependencyExtractor dependencyExtractor;
     private final OsvClient osvClient;
+    private final VulnerabilityService vulnerabilityService;
+    private final AppRepository appRepository;
+    private final AiAssessmentTriggerService aiAssessmentTriggerService;
 
     @Value("${git.access.token}")
     private String gitAccessToken;
@@ -37,6 +48,10 @@ public class ScanOrchestrationService {
     private String mavenHome;
 
     public ScanResult scanRepository(String repoUrl, String branch) throws Exception {
+        App app = appRepository.findByRepoUrlAndBranch(repoUrl, branch).orElse(null);
+        String systemName = app != null ? app.getSystemName() : null;
+        Long appId = app != null ? app.getId() : null;
+
         File projectDir = gitCloneService.cloneRepository(repoUrl, branch, gitUserName, gitAccessToken);
         try {
             List<MavenDependency> dependencies = dependencyExtractor.extract(projectDir, mavenHome);
@@ -59,8 +74,38 @@ public class ScanOrchestrationService {
                         identifier, detail.getSummary())));
             }
 
-            // TODO: findings를 VulnerabilityFinding 엔티티로 저장 (상태=미확인) + 담당자 알림 트리거
-            return new ScanResult(repoUrl, branch, dependencies.size(), findings);
+            // CVE ID당 1건만 저장하므로(cveId unique), 같은 CVE를 유발한 의존성이 여럿이면 그중 하나만 대표로 남긴다.
+            Collection<DependencyFinding> cveFindings = findings.stream()
+                    .filter(finding -> isCveId(finding.identifier()))
+                    .collect(Collectors.toMap(
+                            DependencyFinding::identifier,
+                            finding -> finding,
+                            (first, second) -> first,
+                            LinkedHashMap::new))
+                    .values();
+
+            log.info("동기화 대상 CVE ID: {}", cveFindings.stream()
+                    .map(DependencyFinding::identifier)
+                    .collect(Collectors.joining(", ")));
+
+            // CVE 건수만큼 mvn dependency:tree를 반복 실행하지 않도록, 트리를 한 번만 떠서 맵으로 미리 만들어둔다.
+            Map<String, String> topLevelCauseByCoordinate = cveFindings.isEmpty()
+                    ? Map.of()
+                    : dependencyExtractor.buildTopLevelCauseMap(projectDir, mavenHome);
+
+            cveFindings.forEach(finding -> {
+                String coordinate = finding.groupId() + ":" + finding.artifactId();
+                String broughtInBy = topLevelCauseByCoordinate.get(coordinate);
+                vulnerabilityService.syncCveById(
+                        finding.identifier(), appId, finding.groupId(), finding.artifactId(), finding.version(), broughtInBy);
+            });
+
+            // 새로 저장된 CVE가 있을 때만 AI 판단 배치를 깨운다.
+            if (!cveFindings.isEmpty()) {
+                aiAssessmentTriggerService.triggerAsync();
+            }
+
+            return new ScanResult(repoUrl, branch, systemName, dependencies.size(), findings);
         } finally {
             gitCloneService.cleanup(projectDir);
         }
@@ -72,5 +117,10 @@ public class ScanOrchestrationService {
                 .filter(a -> a.startsWith("CVE-"))
                 .findFirst()
                 .orElse(detail.getId());
+    }
+
+    /** GHSA 등 CVE 별칭이 없는 식별자는 NVD에서 조회할 수 없으므로 제외한다. */
+    private boolean isCveId(String identifier) {
+        return identifier != null && identifier.startsWith("CVE-");
     }
 }

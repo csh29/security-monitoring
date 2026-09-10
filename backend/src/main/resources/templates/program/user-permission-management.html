@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>사용자별 권한관리 · 보안취약점 모니터링 대시보드</title>
+    <style>
+        :root{
+            --bg:            #f2f2f8;
+            --card:          #ffffff;
+            --navy:          #191940;
+            --accent:        #f43f68;
+            --accent-soft:   #ffe4ec;
+            --text:          #191940;
+            --text-sub:      #8b8ba7;
+            --line:          #e8e8f2;
+
+            --radius-md: 14px;
+
+            --left-w:  220px;
+            --top-h:   64px;
+        }
+
+        *{ box-sizing:border-box; margin:0; padding:0; }
+        html, body{ height:100%; }
+        body{
+            font-family:"Pretendard","Malgun Gothic",system-ui,sans-serif;
+            background:var(--bg); color:var(--text);
+        }
+
+        .app-shell{
+            width:100%; height:100vh;
+            display:grid;
+            grid-template-columns: var(--left-w) 1fr;
+            grid-template-rows:    var(--top-h)  1fr;
+            grid-template-areas:
+                "left top"
+                "left main";
+        }
+
+        .area-left{ grid-area:left; background:var(--card); border-right:1px solid var(--line); overflow-y:auto; }
+        .area-top { grid-area:top;  background:var(--card); border-bottom:1px solid var(--line); }
+        .area-main{ grid-area:main; overflow-y:auto; }
+
+        @media (max-width:760px){
+            .app-shell{
+                grid-template-columns:1fr;
+                grid-template-rows:auto auto 1fr;
+                grid-template-areas:"left" "top" "main";
+                height:auto; min-height:100vh;
+            }
+        }
+
+        .area-main{ padding:24px; display:flex; flex-direction:column; gap:20px; }
+        .panel-head{ display:flex; align-items:center; justify-content:space-between; }
+        .panel-title{ font-size:13px; font-weight:700; color:var(--text-sub); }
+
+        .btn-group{ display:flex; gap:8px; }
+        .btn{
+            padding:7px 16px; border-radius:8px; border:1px solid var(--line);
+            background:var(--card); font-size:12.5px; font-weight:700;
+            color:var(--text); cursor:pointer;
+        }
+        .btn:hover{ background:#fafafd; }
+        .btn.primary{ background:var(--navy); color:#fff; border-color:var(--navy); }
+        .btn.primary:hover{ opacity:.9; }
+
+        .form-row{
+            display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;
+            background:var(--card); border:1px solid var(--line);
+            border-radius:var(--radius-md); padding:16px;
+        }
+        .form-field{ display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--text-sub); }
+        .form-field select{
+            padding:8px 10px; border:1px solid var(--line); border-radius:8px;
+            font-size:12.5px; min-width:220px; font-family:inherit; color:var(--text);
+        }
+
+        .grid{ width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-md); overflow:hidden; }
+        .grid th, .grid td{ padding:12px 14px; font-size:12.5px; text-align:left; border-bottom:1px solid var(--line); }
+        .grid th{ background:#fafafd; color:var(--text-sub); font-weight:700; }
+        .grid tbody tr:last-child td{ border-bottom:none; }
+        .grid th.chk, .grid td.chk{ width:36px; text-align:center; }
+        .grid .empty{ text-align:center; color:var(--text-sub); }
+    </style>
+</head>
+<body>
+<div class="app-shell">
+    <div th:replace="~{fragments/sidebar :: sidebar}"></div>
+    <div th:replace="~{fragments/topbar :: topbar}"></div>
+    <div th:replace="~{fragments/loading-overlay :: overlay}"></div>
+
+    <main class="area-main">
+        <section class="panel-head">
+            <div class="panel-title">사용자별 권한관리</div>
+            <div class="btn-group">
+                <button type="button" id="btnSearch" class="btn">조회</button>
+                <button type="button" id="btnSave" class="btn primary">저장</button>
+                <button type="button" id="btnReset" class="btn">초기화</button>
+            </div>
+        </section>
+
+        <section class="form-row">
+            <div class="form-field">
+                <label for="fldUser">사용자</label>
+                <select id="fldUser"></select>
+            </div>
+        </section>
+
+        <section>
+            <table class="grid" id="permissionGrid">
+                <thead>
+                    <tr>
+                        <th class="chk">권한</th>
+                        <th>프로그램ID</th>
+                        <th>이름</th>
+                        <th>URL</th>
+                    </tr>
+                </thead>
+                <tbody id="permissionGridBody">
+                    <tr><td class="empty" colspan="4">사용자를 선택하고 조회하세요.</td></tr>
+                </tbody>
+            </table>
+        </section>
+    </main>
+</div>
+
+<script th:inline="javascript">
+    (function () {
+        const USERS_URL = '/api/users';
+        const PROGRAMS_URL = '/api/programs';
+        const PERMISSIONS_URL = '/api/permissions';
+
+        const fldUser = document.getElementById('fldUser');
+        const gridBody = document.getElementById('permissionGridBody');
+
+        function renderMessage(message) {
+            gridBody.innerHTML = '';
+            const row = document.createElement('tr');
+            row.innerHTML = '<td class="empty" colspan="4"></td>';
+            row.querySelector('td').textContent = message;
+            gridBody.appendChild(row);
+        }
+
+        function renderPrograms(programs, grantedIds) {
+            gridBody.innerHTML = '';
+
+            if (!programs || programs.length === 0) {
+                renderMessage('등록된 프로그램이 없습니다.');
+                return;
+            }
+
+            const granted = new Set(grantedIds || []);
+
+            programs.forEach(function (program) {
+                const tr = document.createElement('tr');
+                tr.dataset.id = program.programId;
+
+                const chkCell = document.createElement('td');
+                chkCell.className = 'chk';
+                const chk = document.createElement('input');
+                chk.type = 'checkbox';
+                chk.checked = granted.has(program.programId);
+                chkCell.appendChild(chk);
+
+                const codeCell = document.createElement('td');
+                codeCell.textContent = program.programId;
+                const nameCell = document.createElement('td');
+                nameCell.textContent = program.name;
+                const urlCell = document.createElement('td');
+                urlCell.textContent = program.url;
+
+                tr.appendChild(chkCell);
+                tr.appendChild(codeCell);
+                tr.appendChild(nameCell);
+                tr.appendChild(urlCell);
+                gridBody.appendChild(tr);
+            });
+        }
+
+        function loadUsers() {
+            return fetch(USERS_URL)
+                .then(function (res) {
+                    if (!res.ok) throw new Error('사용자 목록 조회에 실패했습니다.');
+                    return res.json();
+                })
+                .then(function (users) {
+                    fldUser.innerHTML = '';
+                    const placeholder = document.createElement('option');
+                    placeholder.value = '';
+                    placeholder.textContent = '선택하세요';
+                    fldUser.appendChild(placeholder);
+
+                    users.forEach(function (user) {
+                        const option = document.createElement('option');
+                        option.value = user.id;
+                        option.textContent = user.username + ' (' + user.role + ')';
+                        fldUser.appendChild(option);
+                    });
+                })
+                .catch(function (err) {
+                    alert(err.message);
+                });
+        }
+
+        function searchPermissions() {
+            const userId = fldUser.value;
+            if (!userId) {
+                renderMessage('사용자를 선택하고 조회하세요.');
+                return;
+            }
+
+            Promise.all([
+                fetch(PROGRAMS_URL).then(function (res) {
+                    if (!res.ok) throw new Error('프로그램 목록 조회에 실패했습니다.');
+                    return res.json();
+                }),
+                fetch(PERMISSIONS_URL + '/' + userId).then(function (res) {
+                    if (!res.ok) throw new Error('권한 조회에 실패했습니다.');
+                    return res.json();
+                })
+            ])
+                .then(function (results) {
+                    renderPrograms(results[0], results[1]);
+                })
+                .catch(function (err) {
+                    alert(err.message);
+                });
+        }
+
+        function savePermissions() {
+            const userId = fldUser.value;
+            if (!userId) {
+                alert('사용자를 선택하세요.');
+                return;
+            }
+
+            const programIds = Array.from(gridBody.querySelectorAll('tr[data-id]'))
+                .filter(function (tr) { return tr.querySelector('input[type="checkbox"]').checked; })
+                .map(function (tr) { return tr.dataset.id; });
+
+            fetch(PERMISSIONS_URL + '/' + userId, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ programIds: programIds })
+            })
+                .then(function (res) {
+                    if (!res.ok) throw new Error('저장에 실패했습니다.');
+                    alert('저장되었습니다.');
+                    searchPermissions();
+                })
+                .catch(function (err) {
+                    alert(err.message);
+                });
+        }
+
+        document.getElementById('btnSearch').addEventListener('click', searchPermissions);
+        document.getElementById('btnSave').addEventListener('click', savePermissions);
+        document.getElementById('btnReset').addEventListener('click', searchPermissions);
+        fldUser.addEventListener('change', searchPermissions);
+
+        loadUsers().then(function () {
+            renderMessage('사용자를 선택하고 조회하세요.');
+        });
+    })();
+</script>
+</body>
+</html>

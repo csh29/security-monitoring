@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>앱 관리 · 보안취약점 모니터링 대시보드</title>
+    <style>
+        :root{
+            --bg:            #f2f2f8;
+            --card:          #ffffff;
+            --navy:          #191940;
+            --accent:        #f43f68;
+            --accent-soft:   #ffe4ec;
+            --text:          #191940;
+            --text-sub:      #8b8ba7;
+            --line:          #e8e8f2;
+
+            --radius-md: 14px;
+
+            --left-w:  220px;
+            --top-h:   64px;
+        }
+
+        *{ box-sizing:border-box; margin:0; padding:0; }
+        html, body{ height:100%; }
+        body{
+            font-family:"Pretendard","Malgun Gothic",system-ui,sans-serif;
+            background:var(--bg); color:var(--text);
+        }
+
+        .app-shell{
+            width:100%; height:100vh;
+            display:grid;
+            grid-template-columns: var(--left-w) 1fr;
+            grid-template-rows:    var(--top-h)  1fr;
+            grid-template-areas:
+                "left top"
+                "left main";
+        }
+
+        .area-left{ grid-area:left; background:var(--card); border-right:1px solid var(--line); overflow-y:auto; }
+        .area-top { grid-area:top;  background:var(--card); border-bottom:1px solid var(--line); }
+        .area-main{ grid-area:main; overflow-y:auto; }
+
+        @media (max-width:760px){
+            .app-shell{
+                grid-template-columns:1fr;
+                grid-template-rows:auto auto 1fr;
+                grid-template-areas:"left" "top" "main";
+                height:auto; min-height:100vh;
+            }
+        }
+
+        .area-main{ padding:24px; display:flex; flex-direction:column; gap:20px; }
+        .panel-head{ display:flex; align-items:center; justify-content:space-between; }
+        .panel-title{ font-size:13px; font-weight:700; color:var(--text-sub); }
+
+        .btn-group{ display:flex; gap:8px; }
+        .btn{
+            padding:7px 16px; border-radius:8px; border:1px solid var(--line);
+            background:var(--card); font-size:12.5px; font-weight:700;
+            color:var(--text); cursor:pointer;
+        }
+        .btn:hover{ background:#fafafd; }
+        .btn.primary{ background:var(--navy); color:#fff; border-color:var(--navy); }
+        .btn.primary:hover{ opacity:.9; }
+        .btn.danger{ background:var(--accent-soft); color:var(--accent); border-color:transparent; }
+        .btn.danger:hover{ background:var(--accent); color:#fff; }
+
+        .grid{ width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-md); overflow:hidden; }
+        .grid th, .grid td{ padding:8px 10px; font-size:12.5px; text-align:left; border-bottom:1px solid var(--line); }
+        .grid th{ padding:12px 10px; background:#fafafd; color:var(--text-sub); font-weight:700; }
+        .grid tbody tr:last-child td{ border-bottom:none; }
+        .grid tbody tr.selected{ background:var(--accent-soft); }
+        .grid th.chk, .grid td.chk{ width:36px; text-align:center; }
+        .grid .empty{ text-align:center; color:var(--text-sub); }
+
+        .grid td input{
+            width:100%; box-sizing:border-box; border:1px solid transparent; background:transparent;
+            padding:6px 8px; border-radius:6px; font-size:12.5px; font-family:inherit; color:var(--text);
+        }
+        .grid td input:focus{ outline:none; border-color:var(--accent); background:#fff; }
+    </style>
+</head>
+<body>
+<div class="app-shell">
+    <div th:replace="~{fragments/sidebar :: sidebar}"></div>
+    <div th:replace="~{fragments/topbar :: topbar}"></div>
+    <div th:replace="~{fragments/loading-overlay :: overlay}"></div>
+
+    <main class="area-main">
+        <section class="panel-head">
+            <div class="panel-title">앱 목록</div>
+            <div class="btn-group">
+                <button type="button" id="btnSearch" class="btn">조회</button>
+                <button type="button" id="btnAdd" class="btn">추가</button>
+                <button type="button" id="btnSave" class="btn primary">저장</button>
+                <button type="button" id="btnDelete" class="btn danger">삭제</button>
+                <button type="button" id="btnReset" class="btn">초기화</button>
+            </div>
+        </section>
+
+        <section>
+            <table class="grid" id="appGrid">
+                <thead>
+                    <tr>
+                        <th class="chk"></th>
+                        <th>Repository URL</th>
+                        <th>Branch</th>
+                        <th>시스템명</th>
+                        <th>설명</th>
+                    </tr>
+                </thead>
+                <tbody id="appGridBody">
+                    <tr><td class="empty" colspan="5">조회 중입니다...</td></tr>
+                </tbody>
+            </table>
+        </section>
+    </main>
+</div>
+
+<script th:inline="javascript">
+    (function () {
+        const API_URL = '/api/apps';
+        const gridBody = document.getElementById('appGridBody');
+
+        function createInput(value) {
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = (value === null || value === undefined) ? '' : value;
+            return input;
+        }
+
+        function wrapCell(input) {
+            const td = document.createElement('td');
+            td.appendChild(input);
+            return td;
+        }
+
+        function buildRow(app) {
+            const tr = document.createElement('tr');
+            if (app && app.id) {
+                tr.dataset.id = app.id;
+            }
+
+            const chkCell = document.createElement('td');
+            chkCell.className = 'chk';
+            const chk = document.createElement('input');
+            chk.type = 'checkbox';
+            chk.addEventListener('change', function () {
+                tr.classList.toggle('selected', chk.checked);
+            });
+            chkCell.appendChild(chk);
+
+            const repoUrlInput = createInput(app ? app.repoUrl : '');
+            const branchInput = createInput(app ? app.branch : '');
+            const systemNameInput = createInput(app ? app.systemName : '');
+            const descriptionInput = createInput(app ? app.description : '');
+
+            tr.appendChild(chkCell);
+            tr.appendChild(wrapCell(repoUrlInput));
+            tr.appendChild(wrapCell(branchInput));
+            tr.appendChild(wrapCell(systemNameInput));
+            tr.appendChild(wrapCell(descriptionInput));
+
+            tr._fields = { repoUrl: repoUrlInput, branch: branchInput, systemName: systemNameInput, description: descriptionInput };
+            return tr;
+        }
+
+        function renderRows(apps) {
+            gridBody.innerHTML = '';
+
+            if (!apps || apps.length === 0) {
+                const emptyRow = document.createElement('tr');
+                emptyRow.innerHTML = '<td class="empty" colspan="5">등록된 앱이 없습니다.</td>';
+                gridBody.appendChild(emptyRow);
+                return;
+            }
+
+            apps.forEach(function (app) {
+                gridBody.appendChild(buildRow(app));
+            });
+        }
+
+        function searchApps() {
+            fetch(API_URL)
+                .then(function (res) {
+                    if (!res.ok) throw new Error('조회에 실패했습니다.');
+                    return res.json();
+                })
+                .then(renderRows)
+                .catch(function (err) {
+                    alert(err.message);
+                });
+        }
+
+        function addRow() {
+            const emptyRow = gridBody.querySelector('.empty');
+            if (emptyRow) {
+                emptyRow.closest('tr').remove();
+            }
+            const tr = buildRow(null);
+            gridBody.insertBefore(tr, gridBody.firstChild);
+            tr._fields.repoUrl.focus();
+        }
+
+        function saveAll() {
+            const rows = Array.from(gridBody.querySelectorAll('tr')).filter(function (tr) {
+                return !!tr._fields;
+            });
+            const requests = [];
+
+            for (const tr of rows) {
+                const repoUrl = tr._fields.repoUrl.value.trim();
+                const branch = tr._fields.branch.value.trim();
+                const systemName = tr._fields.systemName.value.trim();
+                const description = tr._fields.description.value.trim();
+
+                if (!repoUrl && !branch && !systemName && !description) {
+                    continue;
+                }
+                if (!repoUrl || !branch || !systemName) {
+                    alert('Repository URL, Branch, 시스템명은 필수입니다.');
+                    return;
+                }
+
+                const payload = {
+                    id: tr.dataset.id ? Number(tr.dataset.id) : null,
+                    repoUrl: repoUrl,
+                    branch: branch,
+                    systemName: systemName,
+                    description: description
+                };
+
+                requests.push(fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                }));
+            }
+
+            if (requests.length === 0) {
+                return;
+            }
+
+            Promise.all(requests)
+                .then(function (results) {
+                    if (results.some(function (res) { return !res.ok; })) {
+                        throw new Error('저장에 실패했습니다.');
+                    }
+                    searchApps();
+                })
+                .catch(function (err) {
+                    alert(err.message);
+                });
+        }
+
+        function deleteSelected() {
+            const rows = Array.from(gridBody.querySelectorAll('tr.selected'));
+            if (rows.length === 0) {
+                alert('삭제할 앱을 목록에서 선택하세요.');
+                return;
+            }
+            if (!confirm('선택한 앱을 삭제하시겠습니까?')) {
+                return;
+            }
+
+            const requests = rows
+                .filter(function (tr) { return !!tr.dataset.id; })
+                .map(function (tr) { return fetch(API_URL + '/' + tr.dataset.id, { method: 'DELETE' }); });
+
+            rows.forEach(function (tr) {
+                if (!tr.dataset.id) {
+                    tr.remove();
+                }
+            });
+
+            if (requests.length === 0) {
+                return;
+            }
+
+            Promise.all(requests)
+                .then(function (results) {
+                    if (results.some(function (res) { return !res.ok; })) {
+                        throw new Error('삭제에 실패했습니다.');
+                    }
+                    searchApps();
+                })
+                .catch(function (err) {
+                    alert(err.message);
+                });
+        }
+
+        document.getElementById('btnSearch').addEventListener('click', searchApps);
+        document.getElementById('btnAdd').addEventListener('click', addRow);
+        document.getElementById('btnSave').addEventListener('click', saveAll);
+        document.getElementById('btnDelete').addEventListener('click', deleteSelected);
+        document.getElementById('btnReset').addEventListener('click', searchApps);
+
+        searchApps();
+    })();
+</script>
+</body>
+</html>

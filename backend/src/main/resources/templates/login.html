@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>로그인 - CVE Monitoring</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: "Segoe UI", "맑은 고딕", sans-serif;
+            background: #f4f5f7;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .login-box {
+            background: #fff;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, .08);
+            width: 320px;
+        }
+        .login-box h1 {
+            font-size: 20px;
+            margin: 0 0 24px;
+            text-align: center;
+            color: #222;
+        }
+        .login-box label {
+            display: block;
+            font-size: 13px;
+            color: #555;
+            margin-bottom: 4px;
+        }
+        .login-box input {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 16px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .login-box button {
+            width: 100%;
+            padding: 10px;
+            background: #2563eb;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .login-box button:hover {
+            background: #1d4ed8;
+        }
+        .message {
+            font-size: 13px;
+            margin-bottom: 16px;
+            padding: 8px 10px;
+            border-radius: 4px;
+        }
+        .message.error {
+            background: #fdecea;
+            color: #b3261e;
+        }
+        .message.info {
+            background: #eef6ff;
+            color: #1a56db;
+        }
+    </style>
+</head>
+<body>
+<div class="login-box">
+    <h1>CVE Monitoring</h1>
+    <div class="message error" th:if="${param.error}">아이디 또는 비밀번호가 올바르지 않습니다.</div>
+    <div class="message info" th:if="${param.logout}">로그아웃되었습니다.</div>
+    <form th:action="@{/login}" method="post">
+        <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
+        <label for="username">아이디</label>
+        <input type="text" id="username" name="username" autofocus required>
+        <label for="password">비밀번호</label>
+        <input type="password" id="password" name="password" required>
+        <button type="submit">로그인</button>
+    </form>
+</div>
+</body>
+</html>
+<script>
+        document.getElementById("username").value = "admin"
+        document.getElementById("password").value = "admin1234!"
+</script>

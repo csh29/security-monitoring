@@ -1,0 +1,52 @@
+<th:block xmlns:th="http://www.thymeleaf.org" th:fragment="overlay">
+    <div id="globalLoadingOverlay" class="global-loading-overlay">
+        <style>
+            .global-loading-overlay{
+                display:none; position:fixed; inset:0; z-index:9999;
+                background:rgba(255,255,255,0.6);
+                align-items:center; justify-content:center;
+                cursor:wait;
+            }
+            .global-loading-overlay.active{ display:flex; }
+            .global-loading-overlay .spinner{
+                width:44px; height:44px;
+                border:5px solid #e8e8f2; border-top-color:#f43f68;
+                border-radius:50%;
+                animation:global-loading-spin .8s linear infinite;
+            }
+            @keyframes global-loading-spin{ to{ transform:rotate(360deg); } }
+        </style>
+        <div class="spinner"></div>
+    </div>
+
+    <script>
+        (function () {
+            var overlay = document.getElementById('globalLoadingOverlay');
+            if (!overlay || overlay.dataset.wired) return;
+            overlay.dataset.wired = 'true';
+
+            var pending = 0;
+
+            function show() {
+                pending++;
+                overlay.classList.add('active');
+            }
+
+            function hide() {
+                pending = Math.max(0, pending - 1);
+                if (pending === 0) {
+                    overlay.classList.remove('active');
+                }
+            }
+
+            // 화면의 조회/저장/삭제 버튼은 전부 fetch로 API를 호출하므로,
+            // fetch 자체를 감싸서 어떤 화면이든 API 호출 중에는 전체 화면에 스피너를 띄우고
+            // 오버레이가 클릭/키 이벤트를 가로채 아래 화면과의 상호작용을 막는다.
+            var originalFetch = window.fetch;
+            window.fetch = function () {
+                show();
+                return originalFetch.apply(this, arguments).finally(hide);
+            };
+        })();
+    </script>
+</th:block>

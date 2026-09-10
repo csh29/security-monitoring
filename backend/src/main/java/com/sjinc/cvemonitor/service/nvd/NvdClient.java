@@ -24,17 +24,6 @@ public class NvdClient {
         this.nvdWebClient = nvdWebClient;
     }
 
-    public NvdResponse getRecentCves(String lastModStart, String lastModEnd) {
-        return nvdWebClient.get()
-                .uri(uriBuilder -> uriBuilder
-                        .queryParam("lastModStartDate", lastModStart)
-                        .queryParam("lastModEndDate", lastModEnd)
-                        .build())
-                .retrieve()
-                .bodyToMono(NvdResponse.class)
-                .block();
-    }
-
     public NvdResponse getCveById(String cveId) {
         return nvdWebClient.get()
                 .uri(uriBuilder -> uriBuilder
