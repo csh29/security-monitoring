@@ -18,6 +18,8 @@ public record ScanResult(
             String artifactId,
             String version,
             String identifier, // CVE-xxxx 또는 GHSA-xxxx (CVE 별칭 없을 때)
-            String summary
+            String summary,
+            // OSV가 알려주는 수정 버전 후보(쉼표 구분, 여러 브랜치 패치 시 여러 개). 없으면 null.
+            String knownFixedVersions
     ) {}
 }

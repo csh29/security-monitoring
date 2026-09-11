@@ -75,6 +75,8 @@ class DependencyContext:
     artifact_id: str
     version: str
     brought_in_by: Optional[str] = None
+    # OSV가 알려주는 수정 버전 후보(쉼표 구분). 있으면 설명을 다시 해석해서 유추할 필요가 없다.
+    known_fixed_versions: Optional[str] = None
 
     @staticmethod
     def from_json(data: dict) -> "DependencyContext":
@@ -87,6 +89,7 @@ class DependencyContext:
             artifact_id=data.get("artifactId") or "",
             version=data.get("version") or "",
             brought_in_by=data.get("broughtInBy"),
+            known_fixed_versions=data.get("knownFixedVersions"),
         )
 
 
@@ -300,6 +303,7 @@ class VulnAssessorClient:
 - 설명: {ctx.description}
 - 의존성: {ctx.group_id}:{ctx.artifact_id}:{ctx.version}
 - 최상위 원인 의존성(직접 의존성): {ctx.brought_in_by}
+- OSV 수정 버전 후보: {ctx.known_fixed_versions or "(없음)"}
 """
 
     def _parse_response(self, raw_text: str) -> VulnAssessment:

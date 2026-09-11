@@ -76,7 +76,7 @@ public class ScanOrchestrationService {
 
                 dedupedByCve.forEach((identifier, detail) -> findings.add(new DependencyFinding(
                         dependency.groupId(), dependency.artifactId(), dependency.version(),
-                        identifier, detail.getSummary())));
+                        identifier, detail.getSummary(), joinFixedVersions(detail))));
             }
 
             // CVE ID당 1건만 저장하므로(cveId unique), 같은 CVE를 유발한 의존성이 여럿이면 그중 하나만 대표로 남긴다.
@@ -103,7 +103,8 @@ public class ScanOrchestrationService {
                 String coordinate = finding.groupId() + ":" + finding.artifactId();
                 String broughtInBy = topLevelCauseByCoordinate.get(coordinate);
                 vulnerabilityService.syncCveById(
-                        finding.identifier(), appId, finding.groupId(), finding.artifactId(), finding.version(), broughtInBy);
+                        finding.identifier(), appId, finding.groupId(), finding.artifactId(), finding.version(), broughtInBy,
+                        finding.knownFixedVersions());
             });
 
             if (!cveFindings.isEmpty()) {
@@ -124,6 +125,11 @@ public class ScanOrchestrationService {
         } finally {
             gitCloneService.cleanup(projectDir);
         }
+    }
+
+    private String joinFixedVersions(OsvVulnDetail detail) {
+        List<String> fixedVersions = detail.getFixedVersions();
+        return fixedVersions.isEmpty() ? null : String.join(", ", fixedVersions);
     }
 
     private String extractCveOrId(OsvVulnDetail detail) {
