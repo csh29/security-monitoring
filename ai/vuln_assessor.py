@@ -110,6 +110,7 @@ class CveFinding:
     installed_version: str
     ai_fixed_version: Optional[str]
     ai_confidence: Optional[str]
+    brought_in_by: Optional[str]  # 이 아티팩트를 끌고 들어온 최상위 직접 의존성. 직접 의존성 자신이면 스스로를 가리킴.
 
     @staticmethod
     def from_json(data: dict) -> "CveFinding":
@@ -120,6 +121,7 @@ class CveFinding:
             installed_version=data.get("installedVersion") or "",
             ai_fixed_version=data.get("aiFixedVersion"),
             ai_confidence=data.get("aiConfidence"),
+            brought_in_by=data.get("broughtInBy"),
         )
 
 
@@ -343,7 +345,8 @@ class FixPlanGeneratorClient:
     def _build_prompt(self, target: AppFixPlanTarget) -> str:
         findings_text = "\n".join(
             f"- {f.cve_id} / {f.group_id}:{f.artifact_id} / 현재 {f.installed_version} "
-            f"/ 권장 최소 {f.ai_fixed_version} (신뢰도 {f.ai_confidence})"
+            f"/ 권장 최소 {f.ai_fixed_version} (신뢰도 {f.ai_confidence}) "
+            f"/ 끌고 들어온 직접 의존성: {f.brought_in_by}"
             for f in target.cve_findings
         )
 
@@ -355,8 +358,11 @@ class FixPlanGeneratorClient:
 [dependency:tree]
 {target.dependency_tree}
 
-[취약점 목록] (CVE ID / groupId:artifactId / 현재 버전 / 권장 최소 버전 / 신뢰도)
+[취약점 목록] (CVE ID / groupId:artifactId / 현재 버전 / 권장 최소 버전 / 신뢰도 / 끌고 들어온 직접 의존성)
 {findings_text}
+
+"끌고 들어온 직접 의존성"이 아티팩트 자신과 다르면, 이 아티팩트는 pom.xml에 직접 선언되지 않은
+전이 의존성이라는 뜻이다. reasoning에 이 관계를 명시하라(예: "X는 Y가 끌고 들어오는 전이 의존성").
 """
 
     def _parse_response(self, raw_text: str) -> FixPlan:

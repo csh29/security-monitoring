@@ -66,7 +66,8 @@ public class FixPlanService {
                 vulnerability.getArtifactId(),
                 vulnerability.getVersion(),
                 vulnerability.getAiFixedVersion(),
-                vulnerability.getAiConfidence()
+                vulnerability.getAiConfidence(),
+                vulnerability.getBroughtInBy()
         );
     }
 

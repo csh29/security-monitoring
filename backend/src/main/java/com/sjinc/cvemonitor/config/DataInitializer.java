@@ -161,6 +161,22 @@ public class DataInitializer implements CommandLineRunner {
                 .cvssBaseSeverity("HIGH")
                 .build());
 
+        // 전이 의존성 시나리오 확인용: logback-classic은 pom.xml에 직접 선언돼 있지 않고
+        // logstash-logback-encoder가 끌고 들어온다(broughtInBy가 아티팩트 자신과 다름).
+        vulnerabilityRepository.save(Vulnerability.builder()
+                .app(crmBack)
+                .cveId("CVE-2024-12798")
+                .groupId("ch.qos.logback")
+                .artifactId("logback-classic")
+                .version("1.4.14")
+                .broughtInBy("net.logstash.logback:logstash-logback-encoder")
+                .description("Logback의 JaninoEventEvaluator가 공격자가 작성한 설정을 통해 임의 코드를 " +
+                        "실행할 수 있다.")
+                .severity("HIGH")
+                .cvssBaseScore(7.1)
+                .cvssBaseSeverity("HIGH")
+                .build());
+
         // LOW/MEDIUM 등급 샘플 — ai.assessment.severities(HIGH,CRITICAL)에서 제외되고 fix-plan의
         // lowSeverityNote로만 요약되는지 확인하기 위한 시드.
         vulnerabilityRepository.save(Vulnerability.builder()
@@ -197,6 +213,12 @@ public class DataInitializer implements CommandLineRunner {
                 """
                 <project>
                     <modelVersion>4.0.0</modelVersion>
+                    <parent>
+                        <groupId>org.springframework.boot</groupId>
+                        <artifactId>spring-boot-starter-parent</artifactId>
+                        <version>3.2.6</version>
+                        <relativePath/>
+                    </parent>
                     <groupId>com.sjinc</groupId>
                     <artifactId>crm-back</artifactId>
                     <version>1.0.0</version>
@@ -215,6 +237,11 @@ public class DataInitializer implements CommandLineRunner {
                             <artifactId>jackson-databind</artifactId>
                             <version>2.9.8</version>
                         </dependency>
+                        <dependency>
+                            <groupId>net.logstash.logback</groupId>
+                            <artifactId>logstash-logback-encoder</artifactId>
+                            <version>7.4</version>
+                        </dependency>
                     </dependencies>
                 </project>
                 """,
@@ -222,6 +249,9 @@ public class DataInitializer implements CommandLineRunner {
                 com.sjinc:crm-back:jar:1.0.0
                 +- org.apache.logging.log4j:log4j-core:jar:2.14.1:compile
                 +- com.fasterxml.jackson.core:jackson-databind:jar:2.9.8:compile
+                +- net.logstash.logback:logstash-logback-encoder:jar:7.4:compile
+                |  \\- ch.qos.logback:logback-classic:jar:1.4.14:compile
+                |     \\- ch.qos.logback:logback-core:jar:1.4.14:compile
                 """
         );
         scanSnapshotRepository.save(snapshot);
