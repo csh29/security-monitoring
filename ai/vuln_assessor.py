@@ -173,6 +173,25 @@ def _reject_if_truncated(response, max_tokens: int) -> None:
         )
 
 
+def _shorten_description(description: str, max_len: int = 240) -> str:
+    """OSV 수정 버전 후보가 있어 설명 프로즈를 다시 해석할 필요가 없을 때, 컴포넌트 동일성
+    확인용으로 앞부분만 남긴다. 문장 단위로 max_len 안에 들어가는 만큼 이어붙인다 — 첫 문장만
+    자르면 "Netty is a network framework." 처럼 실제 영향 버전 정보가 없는 상투적 문장만
+    남는 경우가 있어서, 예산이 허락하는 한 다음 문장까지 포함시킨다."""
+    if len(description) <= max_len:
+        return description
+
+    result = ""
+    for sentence in description.split(". "):
+        candidate = result + sentence + ". "
+        if len(candidate) > max_len:
+            if not result:  # 첫 문장 자체가 너무 길면 강제로 자른다.
+                return sentence[:max_len].rstrip() + "..."
+            break
+        result = candidate
+    return result.rstrip()
+
+
 def _strip_code_fence(raw_text: str) -> str:
     """코드펜스 제거. Structured Outputs를 쓰므로 지금은 안전망 역할만 한다."""
     text = raw_text.strip()
@@ -298,9 +317,12 @@ class VulnAssessorClient:
 
     def _build_prompt(self, ctx: DependencyContext) -> str:
         # 판정 룰은 전부 시스템 프롬프트(prompts/)로 갔다. 여기는 데이터만 담는다.
+        # OSV 수정 버전 후보가 있으면 assess.system.md 규칙상 설명 프로즈를 다시 해석할 필요가
+        # 없으므로(컴포넌트 동일성 확인 용도로만 쓰면 됨), 첫 문장만 남겨 입력 토큰을 아낀다.
+        description = _shorten_description(ctx.description) if ctx.known_fixed_versions else ctx.description
         return f"""- CVE ID: {ctx.cve_id}
 - 심각도: {ctx.severity}
-- 설명: {ctx.description}
+- 설명: {description}
 - 의존성: {ctx.group_id}:{ctx.artifact_id}:{ctx.version}
 - 최상위 원인 의존성(직접 의존성): {ctx.brought_in_by}
 - OSV 수정 버전 후보: {ctx.known_fixed_versions or "(없음)"}

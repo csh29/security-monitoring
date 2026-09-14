@@ -12,8 +12,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * 대상 프로젝트의 pom.xml을 기준으로 mvn dependency:list를 실행하고,
@@ -176,6 +179,39 @@ public class MavenDependencyExtractor {
             }
         }
         return causeByCoordinate;
+    }
+
+    /**
+     * dependency:tree 원문에서 targetCoordinates(groupId:artifactId)로 가는 경로에 해당하는 줄만 남긴다.
+     * fix-plan 프롬프트에 CVE와 무관한 나머지 서브트리(수십~수백 줄)까지 통째로 넣지 않기 위한 용도라,
+     * 토큰 절감이 목적이지 정확한 트리 재현이 목적이 아니다 — 매칭되는 게 없으면 원문을 그대로 반환한다.
+     */
+    public String pruneToPaths(String rawText, Set<String> targetCoordinates) {
+        if (rawText == null || rawText.isBlank() || targetCoordinates.isEmpty()) return rawText;
+
+        List<String> lines = rawText.lines().toList();
+        if (lines.isEmpty()) return rawText;
+
+        TreeSet<Integer> keepIndices = new TreeSet<>();
+        keepIndices.add(0); // 0번째 줄은 루트 프로젝트 자신이라 항상 포함한다.
+
+        List<Integer> ancestorIndices = new ArrayList<>(); // depth 순서로 쌓인 현재 조상 줄의 인덱스
+        for (int i = 1; i < lines.size(); i++) {
+            ParsedTreeLine parsed = parseTreeLine(lines.get(i));
+            if (parsed == null) continue;
+
+            while (ancestorIndices.size() >= parsed.depth()) {
+                ancestorIndices.remove(ancestorIndices.size() - 1);
+            }
+            ancestorIndices.add(i);
+
+            if (targetCoordinates.contains(parsed.coordinate())) {
+                keepIndices.addAll(ancestorIndices);
+            }
+        }
+
+        if (keepIndices.size() <= 1) return rawText; // 하나도 못 찾았으면 원문을 그대로 넘긴다(안전망).
+        return keepIndices.stream().map(lines::get).collect(Collectors.joining("\n"));
     }
 
     /** "|  " 또는 "   " 3글자 단위 들여쓰기 뒤에 오는 "+- "/"\- " 마커를 걷어내고 depth와 좌표를 뽑는다. */

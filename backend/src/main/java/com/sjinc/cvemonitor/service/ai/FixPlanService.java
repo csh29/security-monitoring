@@ -11,6 +11,7 @@ import com.sjinc.cvemonitor.repository.AppRepository;
 import com.sjinc.cvemonitor.repository.FixPlanRepository;
 import com.sjinc.cvemonitor.repository.ScanSnapshotRepository;
 import com.sjinc.cvemonitor.repository.VulnerabilityRepository;
+import com.sjinc.cvemonitor.service.maven.MavenDependencyExtractor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -21,6 +22,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -31,6 +33,7 @@ public class FixPlanService {
     private final VulnerabilityRepository vulnerabilityRepository;
     private final FixPlanRepository fixPlanRepository;
     private final AppRepository appRepository;
+    private final MavenDependencyExtractor mavenDependencyExtractor;
 
     /** VulnerabilityService와 같은 기준. 이 등급 밖의 CVE들을 "낮은 등급 코멘트"로 요약해서 남긴다. */
     @Value("#{'${ai.assessment.severities:HIGH,CRITICAL}'.split(',')}")
@@ -50,11 +53,18 @@ public class FixPlanService {
                 .map(this::toCveFinding)
                 .toList();
 
+        Set<String> targetCoordinates = findings.stream()
+                .map(f -> f.groupId() + ":" + f.artifactId())
+                .collect(Collectors.toSet());
+        // CVE와 무관한 나머지 서브트리까지 통째로 프롬프트에 넣지 않도록, 해당 아티팩트로 가는
+        // 경로만 추린다. 매칭이 하나도 없으면(파싱 실패 등) pruneToPaths가 원문을 그대로 돌려준다.
+        String prunedDependencyTree = mavenDependencyExtractor.pruneToPaths(snapshot.getDependencyTree(), targetCoordinates);
+
         return new AppFixPlanTarget(
                 appId,
                 snapshot.getApp().getSystemName(),
                 snapshot.getPomXml(),
-                snapshot.getDependencyTree(),
+                prunedDependencyTree,
                 findings
         );
     }
