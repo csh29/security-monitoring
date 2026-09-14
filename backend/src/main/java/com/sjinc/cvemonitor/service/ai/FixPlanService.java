@@ -49,16 +49,24 @@ public class FixPlanService {
 
     private AppFixPlanTarget toTarget(ScanSnapshot snapshot) {
         Long appId = snapshot.getApp().getId();
-        List<CveFinding> findings = vulnerabilityRepository.findByAppIdAndAiVulnerableTrue(appId).stream()
-                .map(this::toCveFinding)
-                .toList();
+        List<Vulnerability> vulnerabilities = vulnerabilityRepository.findByAppIdAndAiVulnerableTrue(appId);
 
-        Set<String> targetCoordinates = findings.stream()
-                .map(f -> f.groupId() + ":" + f.artifactId())
+        Set<String> targetCoordinates = vulnerabilities.stream()
+                .map(v -> v.getGroupId() + ":" + v.getArtifactId())
                 .collect(Collectors.toSet());
+
+        String dependencyTree = snapshot.getDependencyTree();
+        // AI가 dependency:tree 텍스트를 눈으로 다시 훑어 경로를 재구성하다가 이름이 비슷한 형제
+        // 노드를 혼동하는 실수(예: spring-security-config vs spring-security-web)를 구조적으로
+        // 없애기 위해, 각 CVE 아티팩트의 조상 체인을 자바에서 미리 계산해서 CveFinding에 실어 보낸다.
+        Map<String, List<String>> chains = mavenDependencyExtractor.resolveChains(dependencyTree, targetCoordinates);
         // CVE와 무관한 나머지 서브트리까지 통째로 프롬프트에 넣지 않도록, 해당 아티팩트로 가는
         // 경로만 추린다. 매칭이 하나도 없으면(파싱 실패 등) pruneToPaths가 원문을 그대로 돌려준다.
-        String prunedDependencyTree = mavenDependencyExtractor.pruneToPaths(snapshot.getDependencyTree(), targetCoordinates);
+        String prunedDependencyTree = mavenDependencyExtractor.pruneToPaths(dependencyTree, targetCoordinates);
+
+        List<CveFinding> findings = vulnerabilities.stream()
+                .map(v -> toCveFinding(v, chains))
+                .toList();
 
         return new AppFixPlanTarget(
                 appId,
@@ -69,7 +77,12 @@ public class FixPlanService {
         );
     }
 
-    private CveFinding toCveFinding(Vulnerability vulnerability) {
+    private CveFinding toCveFinding(Vulnerability vulnerability, Map<String, List<String>> chains) {
+        String coordinate = vulnerability.getGroupId() + ":" + vulnerability.getArtifactId();
+        List<String> chain = chains.get(coordinate);
+        // 체인 크기가 1이면(자기 자신뿐) 최상위 직접 의존성이라는 뜻이라 경로를 따로 안 붙인다.
+        String dependencyPath = (chain != null && chain.size() > 1) ? String.join(" -> ", chain) : null;
+
         return new CveFinding(
                 vulnerability.getCveId(),
                 vulnerability.getGroupId(),
@@ -77,7 +90,8 @@ public class FixPlanService {
                 vulnerability.getVersion(),
                 vulnerability.getAiFixedVersion(),
                 vulnerability.getAiConfidence(),
-                vulnerability.getBroughtInBy()
+                vulnerability.getBroughtInBy(),
+                dependencyPath
         );
     }
 

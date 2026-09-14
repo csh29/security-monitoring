@@ -182,6 +182,35 @@ public class MavenDependencyExtractor {
     }
 
     /**
+     * dependency:tree 원문에서 targetCoordinates(groupId:artifactId) 각각의 "최상위 직접 의존성부터
+     * 자기 자신까지" 조상 체인을 구해서 돌려준다. fix-plan reasoning의 "경로:" 줄은 이 값을 그대로
+     * 인용하기만 하면 된다 — AI가 dependency:tree 텍스트를 눈으로 다시 훑어 경로를 재구성하다가
+     * 이름이 비슷한 형제 노드(예: spring-security-config vs spring-security-web)를 혼동하는 실수를
+     * 구조적으로 없애기 위한 용도다. 체인 크기가 1이면(자기 자신뿐) 최상위 직접 의존성이라는 뜻이다.
+     */
+    public Map<String, List<String>> resolveChains(String rawText, Set<String> targetCoordinates) {
+        Map<String, List<String>> result = new HashMap<>();
+        if (rawText == null || rawText.isBlank() || targetCoordinates.isEmpty()) return result;
+
+        List<String> lines = rawText.lines().toList();
+        List<String> ancestors = new ArrayList<>();
+        for (int i = 1; i < lines.size(); i++) {
+            ParsedTreeLine parsed = parseTreeLine(lines.get(i));
+            if (parsed == null) continue;
+
+            while (ancestors.size() >= parsed.depth()) {
+                ancestors.remove(ancestors.size() - 1);
+            }
+            ancestors.add(parsed.coordinate());
+
+            if (targetCoordinates.contains(parsed.coordinate()) && !result.containsKey(parsed.coordinate())) {
+                result.put(parsed.coordinate(), List.copyOf(ancestors));
+            }
+        }
+        return result;
+    }
+
+    /**
      * dependency:tree 원문에서 targetCoordinates(groupId:artifactId)로 가는 경로에 해당하는 줄만 남긴다.
      * fix-plan 프롬프트에 CVE와 무관한 나머지 서브트리(수십~수백 줄)까지 통째로 넣지 않기 위한 용도라,
      * 토큰 절감이 목적이지 정확한 트리 재현이 목적이 아니다 — 매칭되는 게 없으면 원문을 그대로 반환한다.

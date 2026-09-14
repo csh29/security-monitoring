@@ -114,6 +114,10 @@ class CveFinding:
     ai_fixed_version: Optional[str]
     ai_confidence: Optional[str]
     brought_in_by: Optional[str]  # 이 아티팩트를 끌고 들어온 최상위 직접 의존성. 직접 의존성 자신이면 스스로를 가리킴.
+    # 최상위 직접 의존성부터 이 아티팩트까지의 전체 조상 체인("A -> B -> C" 형태로 이미 조인됨).
+    # 직접 의존성이면 None. 자바에서 dependency:tree를 파싱해 미리 계산한 값이라, reasoning의
+    # "경로:" 줄은 이 값을 그대로 인용하기만 하면 된다 — dependency:tree를 다시 훑어 재구성하지 않는다.
+    dependency_path: Optional[str] = None
 
     @staticmethod
     def from_json(data: dict) -> "CveFinding":
@@ -125,6 +129,7 @@ class CveFinding:
             ai_fixed_version=data.get("aiFixedVersion"),
             ai_confidence=data.get("aiConfidence"),
             brought_in_by=data.get("broughtInBy"),
+            dependency_path=data.get("dependencyPath"),
         )
 
 
@@ -373,6 +378,7 @@ class FixPlanGeneratorClient:
             f"- {f.cve_id} / {f.group_id}:{f.artifact_id} / 현재 {f.installed_version} "
             f"/ 권장 최소 {f.ai_fixed_version} (신뢰도 {f.ai_confidence}) "
             f"/ 끌고 들어온 직접 의존성: {f.brought_in_by}"
+            f"/ 전체 경로: {f.dependency_path or '(직접 의존성)'}"
             for f in target.cve_findings
         )
 
@@ -384,11 +390,16 @@ class FixPlanGeneratorClient:
 [dependency:tree]
 {target.dependency_tree}
 
-[취약점 목록] (CVE ID / groupId:artifactId / 현재 버전 / 권장 최소 버전 / 신뢰도 / 끌고 들어온 직접 의존성)
+[취약점 목록] (CVE ID / groupId:artifactId / 현재 버전 / 권장 최소 버전 / 신뢰도 / 끌고 들어온 직접 의존성 / 전체 경로)
 {findings_text}
 
 "끌고 들어온 직접 의존성"이 아티팩트 자신과 다르면, 이 아티팩트는 pom.xml에 직접 선언되지 않은
 전이 의존성이라는 뜻이다. reasoning에 이 관계를 명시하라(예: "X는 Y가 끌고 들어오는 전이 의존성").
+
+"전체 경로"는 dependency:tree를 이미 파싱해서 계산해둔 값이다. reasoning의 "경로:" 줄에는
+이 값을 그대로 인용하라 — dependency:tree 텍스트를 다시 눈으로 훑어서 경로를 재구성하지 마라.
+이름이 비슷한 형제 노드(예: spring-security-config vs spring-security-web)를 혼동해서 잘못된
+경로를 적는 실수를 막기 위한 값이다. "(직접 의존성)"이면 pom.xml에 직접 선언된 것이다.
 """
 
     def _parse_response(self, raw_text: str) -> FixPlan:

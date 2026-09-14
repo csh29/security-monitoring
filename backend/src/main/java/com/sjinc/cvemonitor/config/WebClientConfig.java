@@ -20,4 +20,9 @@ public class WebClientConfig {
     public WebClient osvWebClient(WebClient.Builder builder) {
         return builder.baseUrl("https://api.osv.dev").build();
     }
+
+    @Bean
+    public WebClient mavenCentralWebClient(WebClient.Builder builder) {
+        return builder.baseUrl("https://repo1.maven.org/maven2").build();
+    }
 }
