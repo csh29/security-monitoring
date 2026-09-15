@@ -79,7 +79,9 @@ public class ScanOrchestrationService {
                         identifier, detail.getSummary(), joinFixedVersions(detail))));
             }
 
-            // CVE ID당 1건만 저장하므로(cveId unique), 같은 CVE를 유발한 의존성이 여럿이면 그중 하나만 대표로 남긴다.
+            // Vulnerability 한 행에 아티팩트 하나만 담기므로, 이 앱 안에서 같은 CVE를 유발한 의존성이
+            // 여럿이면(예: 같은 CVE가 서로 다른 두 아티팩트에 걸림) 그중 하나만 대표로 남긴다.
+            // (app_id, cveId) 유니크는 "같은 앱"이라는 범위만 보장할 뿐, 이 다중 아티팩트 축약과는 무관하다.
             Collection<DependencyFinding> cveFindings = findings.stream()
                     .filter(finding -> isCveId(finding.identifier()))
                     .collect(Collectors.toMap(
