@@ -92,6 +92,11 @@ class DependencyContext:
     brought_in_by: Optional[str] = None
     # OSV가 알려주는 수정 버전 후보(쉼표 구분). 있으면 설명을 다시 해석해서 유추할 필요가 없다.
     known_fixed_versions: Optional[str] = None
+    # NVD의 구조화된 영향 버전 범위(cpeMatch)와 설치 버전을 자바가 직접 비교한 결과.
+    # None이면 NVD가 구조화된 범위를 안 줬거나 파싱 불가라 판단 불가라는 뜻 — 이때만
+    # description 프로즈를 근거로 판단한다. True/False면 그 자체가 최종 근거다.
+    nvd_range_vulnerable: Optional[bool] = None
+    nvd_matched_range: Optional[str] = None
 
     @staticmethod
     def from_json(data: dict) -> "DependencyContext":
@@ -105,6 +110,8 @@ class DependencyContext:
             version=data.get("version") or "",
             brought_in_by=data.get("broughtInBy"),
             known_fixed_versions=data.get("knownFixedVersions"),
+            nvd_range_vulnerable=data.get("nvdRangeVulnerable"),
+            nvd_matched_range=data.get("nvdMatchedRange"),
         )
 
 
@@ -191,25 +198,6 @@ def _reject_if_truncated(response, max_tokens: int) -> None:
             f"응답이 max_tokens({max_tokens})에서 잘렸습니다. "
             "내용이 불완전하므로 저장하지 않습니다."
         )
-
-
-def _shorten_description(description: str, max_len: int = 240) -> str:
-    """OSV 수정 버전 후보가 있어 설명 프로즈를 다시 해석할 필요가 없을 때, 컴포넌트 동일성
-    확인용으로 앞부분만 남긴다. 문장 단위로 max_len 안에 들어가는 만큼 이어붙인다 — 첫 문장만
-    자르면 "Netty is a network framework." 처럼 실제 영향 버전 정보가 없는 상투적 문장만
-    남는 경우가 있어서, 예산이 허락하는 한 다음 문장까지 포함시킨다."""
-    if len(description) <= max_len:
-        return description
-
-    result = ""
-    for sentence in description.split(". "):
-        candidate = result + sentence + ". "
-        if len(candidate) > max_len:
-            if not result:  # 첫 문장 자체가 너무 길면 강제로 자른다.
-                return sentence[:max_len].rstrip() + "..."
-            break
-        result = candidate
-    return result.rstrip()
 
 
 def _strip_code_fence(raw_text: str) -> str:
@@ -344,13 +332,22 @@ class VulnAssessorClient:
 
     def _build_prompt(self, ctx: DependencyContext) -> str:
         # 판정 룰은 전부 시스템 프롬프트(prompts/)로 갔다. 여기는 데이터만 담는다.
-        # OSV 수정 버전 후보가 있으면 assess.system.md 규칙상 설명 프로즈를 다시 해석할 필요가
-        # 없으므로(컴포넌트 동일성 확인 용도로만 쓰면 됨), 첫 문장만 남겨 입력 토큰을 아낀다.
-        description = _shorten_description(ctx.description) if ctx.known_fixed_versions else ctx.description
+        #
+        # description은 절대 축약하지 않는다 — 예전엔 OSV 후보가 있으면 "컴포넌트 동일성 확인용"
+        # 이라고 보고 240자로 잘랐는데, 실측해보니 여러 CVE에서 "Affected versions:" 목록이
+        # 뒷부분에 나와서 그 전에 잘려나갔다. is_vulnerable 판단(범위 안/밖)에 description이
+        # 실제로 필요한 경우가 많아 이제 항상 전문을 보낸다.
+        if ctx.nvd_range_vulnerable is None:
+            nvd_line = "- NVD 구조화 범위 판정: 판단 불가(구조화된 영향 범위 데이터 없음) — 아래 설명을 근거로 직접 판단할 것"
+        else:
+            verdict = "영향 범위 안(취약)" if ctx.nvd_range_vulnerable else "영향 범위 밖(취약 아님)"
+            range_detail = f", 매치된 범위: {ctx.nvd_matched_range}" if ctx.nvd_matched_range else ""
+            nvd_line = f"- NVD 구조화 범위 판정: {verdict}{range_detail} — 이 값이 최종 근거이니 설명과 다르게 보여도 이 값을 따를 것"
         return f"""- CVE ID: {ctx.cve_id}
-- 설명: {description}
+- 설명: {ctx.description}
 - 의존성: {ctx.group_id}:{ctx.artifact_id}:{ctx.version}
 - OSV 수정 버전 후보: {ctx.known_fixed_versions or "(없음)"}
+{nvd_line}
 """
 
     def _parse_response(self, raw_text: str) -> VulnAssessment:

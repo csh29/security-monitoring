@@ -66,6 +66,14 @@
             <version>3.3.0</version>
         </dependency>
 
+        <!-- NVD의 구조화된 버전 범위(cpeMatch)와 설치 버전을 비교할 때, Maven 고유의
+             버전 비교 규칙(.RELEASE/.Final 같은 접미사 처리 포함)을 그대로 쓰기 위함. -->
+        <dependency>
+            <groupId>org.apache.maven</groupId>
+            <artifactId>maven-artifact</artifactId>
+            <version>3.9.6</version>
+        </dependency>
+
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>

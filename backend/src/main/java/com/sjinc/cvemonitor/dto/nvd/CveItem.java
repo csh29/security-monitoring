@@ -27,6 +27,14 @@ public class CveItem {
     /** CVSS 등 취약점 심각도 점수 정보. 버전에 따라 v2/v3/v3.1 metric이 섞여 내려올 수 있다. */
     private Metrics metrics;
 
+    /**
+     * NVD가 구조화된 형태로 내려주는 실제 영향 버전 범위(CPE 매치). 이전엔 이 필드가 없어서
+     * Jackson이 조용히 버렸고, AI가 description 프로즈만 보고 영향 범위를 추측해야 했다 —
+     * 그 결과 설명에 영향 범위가 여러 줄 나올 때 일부를 놓치는 실수가 실제로 있었다.
+     * 이제 이 필드로 설치 버전이 실제 영향 범위 안에 있는지 자바가 직접 계산한다.
+     */
+    private List<NvdConfiguration> configurations;
+
 
     /**
      * descriptions 중 언어가 "en"인 설명 하나를 찾아 반환한다.
@@ -87,5 +95,9 @@ public class CveItem {
 
     public Metrics getMetrics() {
         return metrics;
+    }
+
+    public List<NvdConfiguration> getConfigurations() {
+        return configurations;
     }
 }
