@@ -28,6 +28,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -108,6 +109,15 @@ public class ScanOrchestrationService {
                         finding.identifier(), appId, finding.groupId(), finding.artifactId(), finding.version(), broughtInBy,
                         finding.knownFixedVersions());
             });
+
+            if (app != null) {
+                // 라이브러리 삭제/업그레이드로 이번 스캔엔 안 걸린 기존 OPEN 건을 RESOLVED로 표시한다.
+                // cveFindings가 비어있어도(전부 해소된 경우) 실행해야 하므로 이 블록 밖에서 처리한다.
+                Set<String> currentCveIds = cveFindings.stream()
+                        .map(DependencyFinding::identifier)
+                        .collect(Collectors.toSet());
+                vulnerabilityService.resolveMissingVulnerabilities(appId, currentCveIds);
+            }
 
             if (!cveFindings.isEmpty()) {
                 // fix-plan 배치가 나중에 pom.xml/tree를 참고할 수 있도록, clone 디렉터리를 지우기 전에 스냅샷으로 남겨둔다.
