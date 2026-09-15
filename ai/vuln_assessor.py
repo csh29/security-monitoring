@@ -1,8 +1,9 @@
 """CVE 취약점 판단 AI 어시스턴트.
 
 두 단계로 동작한다.
-  stage 1) 자바 백엔드(/api/ai/**)에서 아직 AI 판단이 없는 취약점을 하나씩 읽어와서,
-           이 의존성 버전이 실제로 해당 CVE에 취약한지 / 어떤 버전으로 올려야 하는지 판단하고 저장한다.
+  stage 1) 자바 백엔드(/api/ai/**)에서 아직 AI 판단이 없는 취약점을 읽어와서, 이 의존성 버전이
+           실제로 해당 CVE에 취약한지 / 어떤 버전으로 올려야 하는지 판단하고 저장한다. 첫 건은
+           혼자 먼저 보내 프롬프트 캐시를 예열한 뒤, 나머지는 ASSESS_MAX_WORKERS개씩 병렬로 처리한다.
   stage 2) stage 1에서 "취약함"으로 확정된 CVE들을, 앱(pom.xml) 단위로 모아서
            한 번에 취합 판단시켜 pom.xml 수정안(diff가 작은 전략 선택 포함)을 만들고 저장한다.
 """
@@ -12,7 +13,9 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import asdict, dataclass
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import asdict, dataclass, field
 from typing import Optional
 
 import anthropic
@@ -21,6 +24,13 @@ import requests
 from prompt_rules import ASSESS_SYSTEM, FIX_PLAN_SYSTEM, load_prompt
 
 MODEL = "claude-sonnet-5"
+
+# stage 1(CVE 판단)을 병렬로 돌릴 워커 수. 너무 높으면 두 가지 문제가 생긴다:
+#   1) 프롬프트 캐시가 아직 안 만들어진 상태에서 여러 요청이 동시에 도착하면 각자 따로
+#      캐시를 써버려서(cache_creation 중복) 캐싱 이득이 줄어든다.
+#   2) Anthropic API의 분당 요청/토큰 제한(rate limit)에 걸릴 수 있다.
+# 그래서 첫 건은 반드시 혼자 먼저 보내서 캐시를 예열한 뒤, 나머지만 이 워커 수로 병렬 처리한다.
+ASSESS_MAX_WORKERS = 5
 
 # 자바 백엔드 접속 정보. SecurityConfig에서 /api/ai/**는 세션 로그인 없이
 # X-Internal-Token 헤더만으로 인증하므로, application.properties의
@@ -61,6 +71,11 @@ FIX_PLAN_SCHEMA = {
 # pom.xml 전문을 그대로 받아야 해서 출력이 길다. 8192로는 큰 pom에서 잘린다.
 ASSESS_MAX_TOKENS = 4096
 FIX_PLAN_MAX_TOKENS = 32000
+
+# output_config.effort를 안 넘기면 claude-sonnet-5는 기본 "high"로 돈다. CVE 판단은 정해진
+# 스키마 안에서 고르는 분류 작업이라 medium으로 충분하다고 보고 낮춘다 — fix-plan(다중 CVE를
+# 취합해서 pom.xml 전체를 다시 써야 하는 더 복잡한 작업)은 그대로 기본값(high)을 쓴다.
+ASSESS_EFFORT = "medium"
 
 
 @dataclass
@@ -215,20 +230,23 @@ def _extract_text(response) -> str:
 @dataclass
 class TokenUsageTracker:
     """호출별 토큰 사용량을 누적한다. 캐시가 실제로 적중하는지, 어떤 건이 유난히
-    토큰을 많이 쓰는지 디버깅할 때 쓴다."""
+    토큰을 많이 쓰는지 디버깅할 때 쓴다. stage 1을 병렬로 돌리므로 여러 스레드가
+    동시에 record()를 호출할 수 있어 락으로 보호한다."""
 
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def record(self, label: str, usage) -> None:
         cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
         cache_creation = getattr(usage, "cache_creation_input_tokens", 0) or 0
-        self.input_tokens += usage.input_tokens
-        self.output_tokens += usage.output_tokens
-        self.cache_read_tokens += cache_read
-        self.cache_creation_tokens += cache_creation
+        with self._lock:
+            self.input_tokens += usage.input_tokens
+            self.output_tokens += usage.output_tokens
+            self.cache_read_tokens += cache_read
+            self.cache_creation_tokens += cache_creation
         print(f"  [tokens] {label}: input={usage.input_tokens} output={usage.output_tokens} "
               f"cache_read={cache_read} cache_creation={cache_creation}")
 
@@ -311,8 +329,12 @@ class VulnAssessorClient:
                 "text": load_prompt(ASSESS_SYSTEM),
                 "cache_control": {"type": "ephemeral"},
             }],
+            # CVE 판단은 정해진 스키마 안에서 취약 여부/버전을 고르는 분류에 가까운 작업이라
+            # (Claude API 가이드 기준 effort 미설정 시 기본값은 high) high까지는 필요 없다.
+            # medium으로 낮춰서 품질 손해 없이 thinking/output 토큰을 아낀다.
             output_config={
                 "format": {"type": "json_schema", "schema": ASSESSMENT_SCHEMA},
+                "effort": ASSESS_EFFORT,
             },
             messages=[{"role": "user", "content": self._build_prompt(ctx)}],
         )
@@ -326,10 +348,8 @@ class VulnAssessorClient:
         # 없으므로(컴포넌트 동일성 확인 용도로만 쓰면 됨), 첫 문장만 남겨 입력 토큰을 아낀다.
         description = _shorten_description(ctx.description) if ctx.known_fixed_versions else ctx.description
         return f"""- CVE ID: {ctx.cve_id}
-- 심각도: {ctx.severity}
 - 설명: {description}
 - 의존성: {ctx.group_id}:{ctx.artifact_id}:{ctx.version}
-- 최상위 원인 의존성(직접 의존성): {ctx.brought_in_by}
 - OSV 수정 버전 후보: {ctx.known_fixed_versions or "(없음)"}
 """
 
@@ -373,14 +393,31 @@ class FixPlanGeneratorClient:
         _reject_if_truncated(response, FIX_PLAN_MAX_TOKENS)
         return self._parse_response(_extract_text(response))
 
+    @staticmethod
+    def _build_findings_text(cve_findings: list["CveFinding"]) -> str:
+        """같은 아티팩트(groupId:artifactId:설치버전)에 CVE가 여러 개 걸리면(예: netty 계열
+        하나에 8개) 경로처럼 CVE마다 똑같이 반복되는 필드를 매번 다시 안 쓰고, 아티팩트당
+        블록 하나로 묶어서 CVE별로 다른 값(권장 버전/신뢰도)만 나열한다. dependency_path가
+        이미 brought_in_by를 포함하는 전체 체인이라 brought_in_by는 따로 반복하지 않는다."""
+        groups: dict[tuple, list["CveFinding"]] = {}
+        for f in cve_findings:
+            key = (f.group_id, f.artifact_id, f.installed_version, f.dependency_path)
+            groups.setdefault(key, []).append(f)
+
+        blocks = []
+        for (group_id, artifact_id, installed_version, dependency_path), findings in groups.items():
+            cve_list = ", ".join(
+                f"{f.cve_id}(권장 {f.ai_fixed_version}, 신뢰도 {f.ai_confidence})" for f in findings
+            )
+            blocks.append(
+                f"■ {group_id}:{artifact_id}  현재 {installed_version}\n"
+                f"  경로: {dependency_path or '직접 의존성'}\n"
+                f"  CVE: {cve_list}"
+            )
+        return "\n".join(blocks)
+
     def _build_prompt(self, target: AppFixPlanTarget) -> str:
-        findings_text = "\n".join(
-            f"- {f.cve_id} / {f.group_id}:{f.artifact_id} / 현재 {f.installed_version} "
-            f"/ 권장 최소 {f.ai_fixed_version} (신뢰도 {f.ai_confidence}) "
-            f"/ 끌고 들어온 직접 의존성: {f.brought_in_by}"
-            f"/ 전체 경로: {f.dependency_path or '(직접 의존성)'}"
-            for f in target.cve_findings
-        )
+        findings_text = self._build_findings_text(target.cve_findings)
 
         return f"""[대상 프로젝트] {target.system_name}
 
@@ -390,16 +427,17 @@ class FixPlanGeneratorClient:
 [dependency:tree]
 {target.dependency_tree}
 
-[취약점 목록] (CVE ID / groupId:artifactId / 현재 버전 / 권장 최소 버전 / 신뢰도 / 끌고 들어온 직접 의존성 / 전체 경로)
+[취약점 목록] (아티팩트당 하나의 블록. 같은 아티팩트에 CVE가 여러 개면 CVE 줄에 전부 나열됨)
 {findings_text}
 
-"끌고 들어온 직접 의존성"이 아티팩트 자신과 다르면, 이 아티팩트는 pom.xml에 직접 선언되지 않은
-전이 의존성이라는 뜻이다. reasoning에 이 관계를 명시하라(예: "X는 Y가 끌고 들어오는 전이 의존성").
+각 블록의 "경로:"는 dependency:tree를 이미 파싱해서 계산해둔, 최상위 직접 의존성부터 이
+아티팩트까지의 전체 조상 체인이다. reasoning의 "경로:" 줄에는 이 값을 그대로 인용하라 —
+dependency:tree 텍스트를 다시 눈으로 훑어서 경로를 재구성하지 마라. 이름이 비슷한 형제 노드
+(예: spring-security-config vs spring-security-web)를 혼동해서 잘못된 경로를 적는 실수를 막기
+위한 값이다. "직접 의존성"이면 pom.xml에 직접 선언된 것이라 경로가 따로 없다는 뜻이다.
 
-"전체 경로"는 dependency:tree를 이미 파싱해서 계산해둔 값이다. reasoning의 "경로:" 줄에는
-이 값을 그대로 인용하라 — dependency:tree 텍스트를 다시 눈으로 훑어서 경로를 재구성하지 마라.
-이름이 비슷한 형제 노드(예: spring-security-config vs spring-security-web)를 혼동해서 잘못된
-경로를 적는 실수를 막기 위한 값이다. "(직접 의존성)"이면 pom.xml에 직접 선언된 것이다.
+한 아티팩트에 CVE가 여러 개 걸려 있으면, 그중 "권장 최소 버전"이 가장 높은 값이 그 아티팩트의
+목표 버전이다(권장 최소 버전이 null인 CVE는 목표 버전 산정에 쓰지 마라).
 """
 
     def _parse_response(self, raw_text: str) -> FixPlan:
@@ -412,25 +450,49 @@ class FixPlanGeneratorClient:
         )
 
 
+def _assess_one(ai_client: "VulnAssessorClient", backend: "CveMonitorClient",
+                 ctx: DependencyContext) -> tuple[DependencyContext, Optional[VulnAssessment], Optional[Exception]]:
+    """CVE 하나를 판단하고 저장한다. 병렬 실행 시 스레드에서 그대로 호출되므로
+    예외를 여기서 잡아 (ctx, 결과, 에러) 형태로 돌려준다 — 한 건 실패가 나머지를 막지 않도록."""
+    try:
+        assessment = ai_client.assess(ctx)
+        backend.submit_assessment(ctx.id, assessment)
+        return ctx, assessment, None
+    except Exception as e:
+        return ctx, None, e
+
+
 def main() -> None:
     backend = CveMonitorClient()
 
-    # stage 1: CVE 하나씩 개별 판단
+    # stage 1: CVE 하나씩 개별 판단. 시스템 프롬프트가 CVE 건마다 동일해서 프롬프트
+    # 캐시를 쓰는데, 처음부터 여러 건을 동시에 보내면 캐시가 만들어지기 전에 여러
+    # 요청이 동시에 도착해 각자 따로 캐시를 써버릴 수 있다(cache_creation 중복).
+    # 그래서 첫 건은 혼자 먼저 보내 캐시를 예열한 뒤, 나머지만 병렬로 처리한다.
     ai_client = VulnAssessorClient()
     pending = backend.fetch_pending_vulnerabilities()
     print(f"판단할 취약점 {len(pending)}건")
 
     skipped_cves: list[tuple[str, str]] = []
-    for ctx in pending:
-        try:
-            assessment = ai_client.assess(ctx)
-            backend.submit_assessment(ctx.id, assessment)
+
+    def handle_result(ctx: DependencyContext, assessment: Optional[VulnAssessment], err: Optional[Exception]) -> None:
+        if err is not None:
+            # 한 건 실패했다고 나머지 CVE 판단까지 통째로 포기하지 않는다.
+            skipped_cves.append((ctx.cve_id, str(err)))
+            print(f"[{ctx.cve_id}] 판단 실패, 건너뜀: {err}")
+        else:
             print(f"[{ctx.cve_id}] vulnerable={assessment.is_vulnerable} "
                   f"fixed_version={assessment.fixed_version} confidence={assessment.confidence}")
-        except Exception as e:
-            # 한 건 실패했다고 나머지 CVE 판단까지 통째로 포기하지 않는다.
-            skipped_cves.append((ctx.cve_id, str(e)))
-            print(f"[{ctx.cve_id}] 판단 실패, 건너뜀: {e}")
+
+    if pending:
+        first_ctx, rest = pending[0], pending[1:]
+        handle_result(*_assess_one(ai_client, backend, first_ctx))
+
+        if rest:
+            with ThreadPoolExecutor(max_workers=ASSESS_MAX_WORKERS) as executor:
+                futures = [executor.submit(_assess_one, ai_client, backend, ctx) for ctx in rest]
+                for future in as_completed(futures):
+                    handle_result(*future.result())
 
     # stage 2: 앱 단위로 취합해서 pom.xml 수정안 생성
     fix_plan_client = FixPlanGeneratorClient()
