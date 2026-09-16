@@ -49,7 +49,7 @@ public class FixPlanService {
 
     private AppFixPlanTarget toTarget(ScanSnapshot snapshot) {
         Long appId = snapshot.getApp().getId();
-        List<Vulnerability> vulnerabilities = vulnerabilityRepository.findByAppIdAndAiVulnerableTrueAndStatus(appId, "OPEN");
+        List<Vulnerability> vulnerabilities = vulnerabilityRepository.findConfirmedVulnerable(appId, "OPEN");
 
         Set<String> targetCoordinates = vulnerabilities.stream()
                 .map(v -> v.getGroupId() + ":" + v.getArtifactId())
@@ -116,7 +116,7 @@ public class FixPlanService {
      * 아티팩트별로 묶어서 요약한다. AI가 만드는 게 아니라 DB 조회만으로 자바가 직접 만든다.
      */
     private String buildLowSeverityNote(Long appId) {
-        List<Vulnerability> lowSeverity = vulnerabilityRepository.findByAppIdAndSeverityNotInAndStatus(appId, aiAssessmentSeverities, "OPEN");
+        List<Vulnerability> lowSeverity = vulnerabilityRepository.findOutOfAssessmentScope(appId, aiAssessmentSeverities, "OPEN");
         if (lowSeverity.isEmpty()) {
             return "";
         }

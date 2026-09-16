@@ -29,7 +29,7 @@ public class ProgramService {
     /** 프로그램 전체 목록. 프로그램 관리 화면의 그리드, 사용자별 권한관리 화면의 체크리스트 등에서 공용으로 쓰인다. */
     @Transactional(readOnly = true)
     public List<Program> getAllPrograms() {
-        return programRepository.findAllByOrderBySortOrderAsc();
+        return programRepository.findAllSorted();
     }
 
     /** 프로그램 관리 화면의 "저장" 버튼. request.id()가 이미 존재하는 program_id면 수정, 아니면 신규 등록. */
