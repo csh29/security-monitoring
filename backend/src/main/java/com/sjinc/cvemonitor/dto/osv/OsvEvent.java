@@ -1,12 +1,14 @@
 package com.sjinc.cvemonitor.dto.osv;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 /** ranges[].events[] 항목 하나. 실제로는 이 넷 중 하나의 필드만 채워져서 내려온다. */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class OsvEvent {
     private String introduced;
     private String fixed;
+    @JsonProperty("last_affected")
     private String lastAffected;
     private String limit;
 

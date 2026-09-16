@@ -64,6 +64,10 @@ public class ScanOrchestrationService {
             List<OsvBatchResultItem> results = osvClient.queryBatch(dependencies).getResults();
 
             List<DependencyFinding> findings = new ArrayList<>();
+            // upsertEntity에서 NVD 구조화 범위가 없을 때 OSV 구조화 범위로 한 번 더 확인할 수 있도록,
+            // 스캔 때 이미 받아온 OsvVulnDetail을 (cveId, groupId, artifactId) 키로 보관해둔다 —
+            // 같은 상세를 얻으려고 OSV를 또 호출하지 않기 위함이다.
+            Map<String, OsvVulnDetail> detailByKey = new LinkedHashMap<>();
             for (int i = 0; i < results.size(); i++) {
                 MavenDependency dependency = dependencies.get(i);
                 List<OsvVulnRef> vulnRefs = results.get(i).getVulns();
@@ -75,18 +79,24 @@ public class ScanOrchestrationService {
                     dedupedByCve.putIfAbsent(extractCveOrId(detail), detail);
                 }
 
-                dedupedByCve.forEach((identifier, detail) -> findings.add(new DependencyFinding(
-                        dependency.groupId(), dependency.artifactId(), dependency.version(),
-                        identifier, detail.getSummary(), joinFixedVersions(detail))));
+                dedupedByCve.forEach((identifier, detail) -> {
+                    findings.add(new DependencyFinding(
+                            dependency.groupId(), dependency.artifactId(), dependency.version(),
+                            identifier, detail.getSummary(), joinFixedVersions(detail)));
+                    detailByKey.put(identifier + "|" + dependency.groupId() + ":" + dependency.artifactId(), detail);
+                });
             }
 
-            // Vulnerability 한 행에 아티팩트 하나만 담기므로, 이 앱 안에서 같은 CVE를 유발한 의존성이
-            // 여럿이면(예: 같은 CVE가 서로 다른 두 아티팩트에 걸림) 그중 하나만 대표로 남긴다.
-            // (app_id, cveId) 유니크는 "같은 앱"이라는 범위만 보장할 뿐, 이 다중 아티팩트 축약과는 무관하다.
+            // 같은 CVE가 서로 다른 두 아티팩트에 걸리는 경우가 실제로 있다(예: micrometer-core와
+            // micrometer-registry-prometheus가 같은 CVE-2026-40984에 걸림). 예전엔 CVE ID만으로
+            // 대표 하나만 남기고 나머지 아티팩트를 통째로 버렸는데, 그러면 그 아티팩트의 실제 취약
+            // 버전이 Vulnerability 테이블에 아예 안 남아서 fix-plan이 그 라이브러리 패치를 영원히
+            // 모른다 — 실제로 겪은 버그다. (cveId, groupId, artifactId) 조합 단위로 남긴다
+            // (app_id, cve_id, group_id, artifact_id) 복합 유니크와 정확히 같은 기준이다.
             Collection<DependencyFinding> cveFindings = findings.stream()
                     .filter(finding -> isCveId(finding.identifier()))
                     .collect(Collectors.toMap(
-                            DependencyFinding::identifier,
+                            finding -> finding.identifier() + "|" + finding.groupId() + ":" + finding.artifactId(),
                             finding -> finding,
                             (first, second) -> first,
                             LinkedHashMap::new))
@@ -105,18 +115,22 @@ public class ScanOrchestrationService {
             cveFindings.forEach(finding -> {
                 String coordinate = finding.groupId() + ":" + finding.artifactId();
                 String broughtInBy = topLevelCauseByCoordinate.get(coordinate);
+                String key = finding.identifier() + "|" + finding.groupId() + ":" + finding.artifactId();
                 vulnerabilityService.syncCveById(
                         finding.identifier(), appId, finding.groupId(), finding.artifactId(), finding.version(), broughtInBy,
-                        finding.knownFixedVersions());
+                        finding.knownFixedVersions(), detailByKey.get(key));
             });
 
             if (app != null) {
                 // 라이브러리 삭제/업그레이드로 이번 스캔엔 안 걸린 기존 OPEN 건을 RESOLVED로 표시한다.
                 // cveFindings가 비어있어도(전부 해소된 경우) 실행해야 하므로 이 블록 밖에서 처리한다.
-                Set<String> currentCveIds = cveFindings.stream()
-                        .map(DependencyFinding::identifier)
+                // CVE ID만으로 비교하면 안 된다 — 같은 CVE가 여러 아티팩트에 걸린 경우, 한쪽
+                // 아티팩트가 해소돼도 다른 아티팩트가 여전히 걸려있으면(같은 CVE ID) 잘못 RESOLVED
+                // 처리될 수 있다. (cveId, groupId, artifactId) 조합 단위로 비교해야 정확하다.
+                Set<String> currentKeys = cveFindings.stream()
+                        .map(f -> f.identifier() + "|" + f.groupId() + ":" + f.artifactId())
                         .collect(Collectors.toSet());
-                vulnerabilityService.resolveMissingVulnerabilities(appId, currentCveIds);
+                vulnerabilityService.resolveMissingVulnerabilities(appId, currentKeys);
             }
 
             if (!cveFindings.isEmpty()) {

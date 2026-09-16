@@ -337,12 +337,15 @@ class VulnAssessorClient:
         # 이라고 보고 240자로 잘랐는데, 실측해보니 여러 CVE에서 "Affected versions:" 목록이
         # 뒷부분에 나와서 그 전에 잘려나갔다. is_vulnerable 판단(범위 안/밖)에 description이
         # 실제로 필요한 경우가 많아 이제 항상 전문을 보낸다.
+        # nvd_range_vulnerable은 NVD의 configurations가 있으면 그 결과, 없으면 OSV의 구조화 범위
+        # (affected[].ranges)로 자바가 대신 확인한 결과다 — 어느 쪽이든 이미 결정론적으로 나온
+        # 값이라 여기까지 내려온다는 건 둘 다 구조화 데이터가 없었다는 뜻이다.
         if ctx.nvd_range_vulnerable is None:
-            nvd_line = "- NVD 구조화 범위 판정: 판단 불가(구조화된 영향 범위 데이터 없음) — 아래 설명을 근거로 직접 판단할 것"
+            nvd_line = "- 구조화 범위 판정(NVD/OSV): 판단 불가(구조화된 영향 범위 데이터 없음) — 아래 설명을 근거로 직접 판단할 것"
         else:
             verdict = "영향 범위 안(취약)" if ctx.nvd_range_vulnerable else "영향 범위 밖(취약 아님)"
             range_detail = f", 매치된 범위: {ctx.nvd_matched_range}" if ctx.nvd_matched_range else ""
-            nvd_line = f"- NVD 구조화 범위 판정: {verdict}{range_detail} — 이 값이 최종 근거이니 설명과 다르게 보여도 이 값을 따를 것"
+            nvd_line = f"- 구조화 범위 판정(NVD/OSV): {verdict}{range_detail} — 이 값이 최종 근거이니 설명과 다르게 보여도 이 값을 따를 것"
         return f"""- CVE ID: {ctx.cve_id}
 - 설명: {ctx.description}
 - 의존성: {ctx.group_id}:{ctx.artifact_id}:{ctx.version}

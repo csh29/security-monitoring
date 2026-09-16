@@ -4,7 +4,7 @@ import com.sjinc.cvemonitor.dto.osv.OsvAffected;
 import com.sjinc.cvemonitor.dto.osv.OsvEvent;
 import com.sjinc.cvemonitor.dto.osv.OsvRange;
 import com.sjinc.cvemonitor.dto.osv.OsvVulnDetail;
-import org.apache.maven.artifact.versioning.ComparableVersion;
+import com.sjinc.cvemonitor.service.maven.VersionLineSelector;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -97,30 +97,6 @@ public class OsvFixVersionResolver {
             }
         }
         if (candidates.isEmpty()) return null;
-
-        ComparableVersion current = new ComparableVersion(currentVersion);
-        int currentMajor = majorVersion(currentVersion);
-
-        String best = null;
-        ComparableVersion bestComparable = null;
-        for (String candidate : candidates) {
-            if (majorVersion(candidate) != currentMajor) continue;
-            ComparableVersion candidateComparable = new ComparableVersion(candidate);
-            if (candidateComparable.compareTo(current) <= 0) continue; // 다운그레이드/제자리는 후보에서 제외
-            if (bestComparable == null || candidateComparable.compareTo(bestComparable) < 0) {
-                best = candidate;
-                bestComparable = candidateComparable;
-            }
-        }
-        return best;
-    }
-
-    private int majorVersion(String version) {
-        String digits = version.split("[.\\-]")[0].replaceAll("[^0-9]", "");
-        try {
-            return Integer.parseInt(digits);
-        } catch (NumberFormatException e) {
-            return -1;
-        }
+        return VersionLineSelector.pickLowestSameLineAbove(candidates, currentVersion);
     }
 }
