@@ -1,0 +1,34 @@
+/**
+ * .grid 클래스가 붙은 모든 테이블에 공통 모양을 준다. 화면마다 <style> 태그에 반복해서 적던
+ * ".grid th, .grid td{...}" 류 규칙 중, 모든 그리드 화면에서 값이 똑같은 것만 여기로 모았다.
+ * padding은 8px 10px(th는 12px 10px)를 기본값으로 삼고 — 화면 절반이 이 값을 쓴다 — 12px 14px
+ * 한 줄짜리 패딩을 쓰는 화면(취약점 관리/조회, 사용자별 권한관리)은 그 화면 <style>에서
+ * 그대로 덮어쓴다. 카드형 테두리/스크롤(취약점 관리 화면처럼 sticky 헤더를 쓰는 곳은
+ * border-collapse:separate가 필요) 같은 진짜 화면별 값도 마찬가지.
+ *
+ * JS로 런타임에 <style>을 주입하지 않고 이렇게 정적 CSS 파일 + <link>로 두는 이유: JS 주입은
+ * 스크립트가 실행될 때까지 스타일이 없어서, 화면이 원래 모습대로 그려졌다가 스크립트 실행 후
+ * 스타일이 적용되며 한 번 더 바뀌는 깜빡임(FOUC)이 생긴다. <link rel="stylesheet">는 브라우저가
+ * 페인트하기 전에 렌더링을 막고 기다려주므로, 서버 렌더링처럼 완성된 모습이 한 번에 뜬다.
+ */
+
+.grid{ width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+.grid th, .grid td{ padding:8px 10px; font-size:12.5px; text-align:left; border-bottom:1px solid var(--line); border-right:1px solid var(--line); }
+.grid th:last-child, .grid td:last-child{ border-right:none; }
+.grid th{ padding:12px 10px; background:#fafafd; color:var(--text-sub); font-weight:700; }
+.grid tbody tr:last-child td{ border-bottom:none; }
+.grid tbody tr:hover:not(.selected){ background:#fafafd; }
+.grid tbody tr.selected{ background:var(--accent-soft); }
+
+/* 행을 클릭하면 grid.js의 render()가 붙여주는 강조 표시. hover 규칙(:not(.selected))이 특이도가
+   더 높아서 .current도 hover 상태를 명시해야 마우스를 올려도 강조색이 유지된다. */
+.grid tbody tr.current{ background:var(--accent-soft); }
+.grid tbody tr.current:hover{ background:var(--accent-soft); }
+
+.grid .empty{ text-align:center; color:var(--text-sub); }
+
+.grid td input, .grid td select{
+    width:100%; box-sizing:border-box; border:1px solid transparent; background:transparent;
+    padding:6px 8px; border-radius:6px; font-size:12.5px; font-family:inherit; color:var(--text);
+}
+.grid td input:focus, .grid td select:focus{ outline:none; border-color:var(--accent); background:#fff; }

@@ -1,0 +1,18 @@
+package com.sjinc.cvemonitor.repository;
+
+import com.sjinc.cvemonitor.domain.CommonCode;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.List;
+
+public interface CommonCodeRepository extends JpaRepository<CommonCode, Long> {
+
+    /** 화면의 select 하나를 채울 때 쓰는 조회 — 지정한 그룹의 사용중인 코드만 정렬순서대로. */
+    List<CommonCode> findByCodeGroupAndUseYnOrderBySortOrderAsc(String codeGroup, String useYn);
+
+    /** 공통코드관리 화면에서 그룹 하나를 선택했을 때의 디테일 그리드 — 사용여부와 상관없이 전부 보여준다. */
+    List<CommonCode> findByCodeGroupOrderBySortOrderAsc(String codeGroup);
+
+    /** 마스터(그룹) 삭제 시 딸린 디테일 코드도 함께 지운다. */
+    void deleteAllByCodeGroup(String codeGroup);
+}

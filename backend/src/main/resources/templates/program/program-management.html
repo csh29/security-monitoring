@@ -4,83 +4,11 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>프로그램 관리 · 보안취약점 모니터링 대시보드</title>
+    <link rel="stylesheet" href="/css/common-ui.css">
+    <link rel="stylesheet" href="/css/grid.css">
     <style>
-        :root{
-            --bg:            #f2f2f8;
-            --card:          #ffffff;
-            --navy:          #191940;
-            --accent:        #f43f68;
-            --accent-soft:   #ffe4ec;
-            --text:          #191940;
-            --text-sub:      #8b8ba7;
-            --line:          #e8e8f2;
-
-            --radius-md: 14px;
-
-            --left-w:  220px;
-            --top-h:   64px;
-        }
-
-        *{ box-sizing:border-box; margin:0; padding:0; }
-        html, body{ height:100%; }
-        body{
-            font-family:"Pretendard","Malgun Gothic",system-ui,sans-serif;
-            background:var(--bg); color:var(--text);
-        }
-
-        .app-shell{
-            width:100%; height:100vh;
-            display:grid;
-            grid-template-columns: var(--left-w) 1fr;
-            grid-template-rows:    var(--top-h)  1fr;
-            grid-template-areas:
-                "left top"
-                "left main";
-        }
-
-        .area-left{ grid-area:left; background:var(--card); border-right:1px solid var(--line); overflow-y:auto; }
-        .area-top { grid-area:top;  background:var(--card); border-bottom:1px solid var(--line); }
-        .area-main{ grid-area:main; overflow-y:auto; }
-
-        @media (max-width:760px){
-            .app-shell{
-                grid-template-columns:1fr;
-                grid-template-rows:auto auto 1fr;
-                grid-template-areas:"left" "top" "main";
-                height:auto; min-height:100vh;
-            }
-        }
-
-        .area-main{ padding:24px; display:flex; flex-direction:column; gap:20px; }
-        .panel-head{ display:flex; align-items:center; justify-content:space-between; }
-        .panel-title{ font-size:13px; font-weight:700; color:var(--text-sub); }
-
-        .btn-group{ display:flex; gap:8px; }
-        .btn{
-            padding:7px 16px; border-radius:8px; border:1px solid var(--line);
-            background:var(--card); font-size:12.5px; font-weight:700;
-            color:var(--text); cursor:pointer;
-        }
-        .btn:hover{ background:#fafafd; }
-        .btn.primary{ background:var(--navy); color:#fff; border-color:var(--navy); }
-        .btn.primary:hover{ opacity:.9; }
-        .btn.danger{ background:var(--accent-soft); color:var(--accent); border-color:transparent; }
-        .btn.danger:hover{ background:var(--accent); color:#fff; }
-
-        .grid{ width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-md); overflow:hidden; }
-        .grid th, .grid td{ padding:8px 10px; font-size:12.5px; text-align:left; border-bottom:1px solid var(--line); }
-        .grid th{ padding:12px 10px; background:#fafafd; color:var(--text-sub); font-weight:700; }
-        .grid tbody tr:last-child td{ border-bottom:none; }
-        .grid tbody tr.selected{ background:var(--accent-soft); }
-        .grid th.chk, .grid td.chk{ width:36px; text-align:center; }
-        .grid th.useyn, .grid td.useyn{ width:70px; text-align:center; }
-        .grid .empty{ text-align:center; color:var(--text-sub); }
-
-        .grid td input{
-            width:100%; box-sizing:border-box; border:1px solid transparent; background:transparent;
-            padding:6px 8px; border-radius:6px; font-size:12.5px; font-family:inherit; color:var(--text);
-        }
-        .grid td input:focus{ outline:none; border-color:var(--accent); background:#fff; }
+        /* 화면 공통 뼈대(:root, .app-shell, .btn 등)는 common-ui.css가, .grid 공통 모양(패딩 포함)은
+           grid.css가 담당한다. 여기는 이 화면에서만 다른 값(정렬순서 입력창 폭)만 남긴다. */
         .grid td input[type="number"]{ width:90px; }
     </style>
 </head>
@@ -104,16 +32,7 @@
 
         <section>
             <table class="grid" id="programGrid">
-                <thead>
-                    <tr>
-                        <th class="chk"></th>
-                        <th>프로그램ID</th>
-                        <th>이름</th>
-                        <th>URL</th>
-                        <th>정렬순서</th>
-                        <th class="useyn">사용여부</th>
-                    </tr>
-                </thead>
+                <thead id="programGridHead"></thead>
                 <tbody id="programGridBody">
                     <tr><td class="empty" colspan="6">조회 중입니다...</td></tr>
                 </tbody>
@@ -122,87 +41,47 @@
     </main>
 </div>
 
+<script src="/js/grid.js"></script>
 <script th:inline="javascript">
     (function () {
         const API_URL = '/api/programs';
         const gridBody = document.getElementById('programGridBody');
 
-        function createInput(value, type) {
-            const input = document.createElement('input');
-            input.type = type || 'text';
-            input.value = (value === null || value === undefined) ? '' : value;
-            return input;
-        }
-
-        function wrapCell(input) {
-            const td = document.createElement('td');
-            td.appendChild(input);
-            return td;
-        }
-
-        function buildRow(program) {
-            const tr = document.createElement('tr');
-            const isExisting = !!(program && program.programId);
-            if (isExisting) {
+        function initRow(tr, program) {
+            tr._fields = {};
+            if (program && program.programId) {
                 tr.dataset.id = program.programId;
             }
+        }
 
-            const chkCell = document.createElement('td');
-            chkCell.className = 'chk';
-            const chk = document.createElement('input');
-            chk.type = 'checkbox';
-            chk.addEventListener('change', function () {
-                tr.classList.toggle('selected', chk.checked);
-            });
-            chkCell.appendChild(chk);
-
-            const programIdInput = createInput(program ? program.programId : '');
-            if (isExisting) {
+        const COLUMNS = [
+            { type: 'row-select', width: 36, align: 'center' },
+            {
+                id: 'programId', label: '프로그램ID', type: 'text',
                 // program_id는 기본키라 생성 후에는 수정하지 않는다(신규 행에서만 입력).
-                programIdInput.disabled = true;
-            }
-            const nameInput = createInput(program ? program.name : '');
-            const urlInput = createInput(program ? program.url : '');
-            const sortInput = createInput(program ? program.sortOrder : '', 'number');
+                // disabled면 그 input에서 click 자체가 안 떠서 행 클릭(강조 표시)이 안 먹히니 readOnly를 쓴다.
+                readOnly: function (value, program) { return !!(program && program.programId); }
+            },
+            { id: 'name', label: '이름', type: 'text' },
+            { id: 'url', label: 'URL', type: 'text' },
+            { id: 'sortOrder', label: '정렬순서', type: 'number' },
+            { id: 'useYn', label: '사용여부', type: 'checkbox', width: 70, align: 'center' }
+        ];
 
-            const useYnCell = document.createElement('td');
-            useYnCell.className = 'useyn';
-            const useYnChk = document.createElement('input');
-            useYnChk.type = 'checkbox';
-            useYnChk.checked = program ? program.useYn === 'Y' : true;
-            useYnCell.appendChild(useYnChk);
+        Grid.renderHeader(document.getElementById('programGridHead'), COLUMNS);
 
-            tr.appendChild(chkCell);
-            tr.appendChild(wrapCell(programIdInput));
-            tr.appendChild(wrapCell(nameInput));
-            tr.appendChild(wrapCell(urlInput));
-            tr.appendChild(wrapCell(sortInput));
-            tr.appendChild(useYnCell);
-
-            tr._fields = { programId: programIdInput, name: nameInput, url: urlInput, sortOrder: sortInput, useYn: useYnChk };
-            return tr;
+        function buildRow(program) {
+            return Grid.buildRow(COLUMNS, program, { buildRow: initRow });
         }
 
         // 이 화면 자신을 가리키는 프로그램은 그리드에서 수정/삭제하지 못하도록 숨긴다.
         const SELF_PROGRAM_ID = 'program-management';
 
         function renderRows(allPrograms) {
-            gridBody.innerHTML = '';
-
             const programs = (allPrograms || []).filter(function (program) {
                 return program.programId !== SELF_PROGRAM_ID;
             });
-
-            if (!programs || programs.length === 0) {
-                const emptyRow = document.createElement('tr');
-                emptyRow.innerHTML = '<td class="empty" colspan="6">등록된 프로그램이 없습니다.</td>';
-                gridBody.appendChild(emptyRow);
-                return;
-            }
-
-            programs.forEach(function (program) {
-                gridBody.appendChild(buildRow(program));
-            });
+            Grid.render(gridBody, COLUMNS, programs, { emptyMessage: '등록된 프로그램이 없습니다.', buildRow: initRow });
         }
 
         function searchPrograms() {

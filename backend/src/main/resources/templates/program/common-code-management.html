@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>공통코드관리 · 보안취약점 모니터링 대시보드</title>
+    <link rel="stylesheet" href="/css/common-ui.css">
+    <link rel="stylesheet" href="/css/grid.css">
+    <style>
+        /* 화면 공통 뼈대(:root, .app-shell, .btn 등)는 common-ui.css가, .grid 공통 모양(패딩 포함)은
+           grid.css가 담당한다. 여기는 이 화면 전용 레이아웃(마스터/디테일 2단 구성)만 남긴다. */
+        .panel-title .sub{ font-weight:400; color:var(--text-sub); }
+
+        /* 좌측 그룹(마스터) / 우측 상세 코드(디테일) 2단 구성. 좁은 화면에서는 세로로 쌓는다. */
+        .master-detail{ display:flex; gap:20px; align-items:flex-start; }
+        .master-detail .panel{ display:flex; flex-direction:column; gap:12px; min-width:0; }
+        .master-panel{ flex:0 0 42%; }
+        .detail-panel{ flex:1; }
+        @media (max-width:1000px){
+            .master-detail{ flex-direction:column; }
+            .master-panel{ flex:1 1 auto; width:100%; }
+        }
+
+        .grid td input[type="number"]{ width:80px; }
+    </style>
+</head>
+<body>
+<div class="app-shell">
+    <div th:replace="~{fragments/sidebar :: sidebar}"></div>
+    <div th:replace="~{fragments/topbar :: topbar}"></div>
+    <div th:replace="~{fragments/loading-overlay :: overlay}"></div>
+
+    <main class="area-main">
+        <section class="master-detail">
+            <div class="panel master-panel">
+                <div class="panel-head">
+                    <div class="panel-title">그룹 목록</div>
+                    <div class="btn-group">
+                        <button type="button" id="btnGroupSearch" class="btn">조회</button>
+                        <button type="button" id="btnGroupAdd" class="btn">추가</button>
+                        <button type="button" id="btnGroupSave" class="btn primary">저장</button>
+                        <button type="button" id="btnGroupDelete" class="btn danger">삭제</button>
+                    </div>
+                </div>
+                <table class="grid" id="groupGrid">
+                    <thead id="groupGridHead"></thead>
+                    <tbody id="groupGridBody">
+                        <tr><td class="empty" colspan="5">조회 중입니다...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="panel detail-panel">
+                <div class="panel-head">
+                    <div class="panel-title">상세 코드 <span class="sub" id="detailGroupLabel"></span></div>
+                    <div class="btn-group">
+                        <button type="button" id="btnCodeAdd" class="btn" disabled>추가</button>
+                        <button type="button" id="btnCodeSave" class="btn primary" disabled>저장</button>
+                        <button type="button" id="btnCodeDelete" class="btn danger" disabled>삭제</button>
+                    </div>
+                </div>
+                <table class="grid" id="codeGrid">
+                    <thead id="codeGridHead"></thead>
+                    <tbody id="codeGridBody">
+                        <tr><td class="empty" colspan="5">좌측에서 그룹을 선택하세요.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+</div>
+
+<script src="/js/grid.js"></script>
+<script th:inline="javascript">
+    (function () {
+        const GROUPS_URL = '/api/common-code-groups';
+        const CODES_URL = '/api/common-codes';
+
+        const groupGridBody = document.getElementById('groupGridBody');
+        const codeGridBody = document.getElementById('codeGridBody');
+        const detailGroupLabel = document.getElementById('detailGroupLabel');
+        const btnCodeAdd = document.getElementById('btnCodeAdd');
+        const btnCodeSave = document.getElementById('btnCodeSave');
+        const btnCodeDelete = document.getElementById('btnCodeDelete');
+
+        // 우측 디테일 그리드가 지금 보여주고 있는 그룹코드. null이면 그룹 미선택 상태.
+        let currentGroup = null;
+
+        // ── 좌측: 그룹(마스터) ──────────────────────────────────────
+        function initGroupRow(tr, group) {
+            tr._fields = {};
+            if (group && group.codeGroup) {
+                tr.dataset.id = group.codeGroup;
+            }
+        }
+
+        const GROUP_COLUMNS = [
+            // 체크박스 클릭은 삭제 대상 선택용이라, stopPropagation으로 우측 디테일을 바꾸는 행 클릭과 분리한다.
+            { type: 'row-select', width: 36, align: 'center', stopPropagation: true },
+            {
+                id: 'codeGroup', label: '그룹코드', type: 'text',
+                // 그룹코드는 자연키라 생성 후에는 수정하지 않는다(신규 행에서만 입력).
+                // disabled를 쓰면 브라우저가 그 input에서는 click 자체를 안 띄워서(행 클릭이 안 먹힘)
+                // readOnly를 쓴다 — 값 수정은 막히지만 클릭/포커스는 정상적으로 동작한다.
+                readOnly: function (value, group) { return !!(group && group.codeGroup); }
+            },
+            { id: 'groupName', label: '그룹명', type: 'text' },
+            { id: 'sortOrder', label: '정렬순서', type: 'number', width: 90 },
+            { id: 'useYn', label: '사용여부', type: 'checkbox', width: 70, align: 'center' }
+        ];
+
+        Grid.renderHeader(document.getElementById('groupGridHead'), GROUP_COLUMNS);
+
+        function buildGroupRow(group) {
+            return Grid.buildRow(GROUP_COLUMNS, group, { buildRow: initGroupRow });
+        }
+
+        function renderGroups(groups) {
+            Grid.render(groupGridBody, GROUP_COLUMNS, groups, {
+                emptyMessage: '등록된 그룹이 없습니다.',
+                buildRow: initGroupRow,
+                // 행을 클릭하면(체크박스 제외) 우측 디테일 그리드를 그 그룹의 코드로 채운다.
+                // 강조 표시(.current)는 Grid.render가 알아서 붙여주므로 여기서는 신경 쓰지 않는다.
+                onRowClick: function (tr) {
+                    if (!tr.dataset.id) {
+                        clearDetail();
+                        return;
+                    }
+                    selectGroup(tr.dataset.id, tr._fields.groupName.value);
+                }
+            });
+        }
+
+        function searchGroups() {
+            return fetch(GROUPS_URL)
+                .then(function (res) {
+                    if (!res.ok) throw new Error('그룹 조회에 실패했습니다.');
+                    return res.json();
+                })
+                .then(function (groups) {
+                    renderGroups(groups);
+                    // 그리드를 통째로 다시 그리므로, 디테일에 보여주고 있던 그룹이 있으면 강조 표시를 되살린다.
+                    if (currentGroup) {
+                        const tr = groupGridBody.querySelector('tr[data-id="' + CSS.escape(currentGroup) + '"]');
+                        if (tr) {
+                            tr.classList.add('current');
+                        } else {
+                            clearDetail();
+                        }
+                    }
+                })
+                .catch(function (err) {
+                    alert(err.message);
+                });
+        }
+
+        function addGroupRow() {
+            // 새로 추가하는 그룹은 아직 저장 전이라 디테일 컨텍스트가 없다 — 이전에 보고 있던
+            // 다른 그룹의 코드가 그대로 남아있으면 혼동되니 비워둔다.
+            clearDetail();
+
+            const emptyRow = groupGridBody.querySelector('.empty');
+            if (emptyRow) {
+                emptyRow.closest('tr').remove();
+            }
+            const tr = buildGroupRow(null);
+            groupGridBody.insertBefore(tr, groupGridBody.firstChild);
+            tr._fields.codeGroup.focus();
+        }
+
+        function saveGroups() {
+            const rows = Array.from(groupGridBody.querySelectorAll('tr')).filter(function (tr) {
+                return !!tr._fields;
+            });
+            const requests = [];
+
+            for (const tr of rows) {
+                const codeGroup = tr._fields.codeGroup.value.trim();
+                const groupName = tr._fields.groupName.value.trim();
+                const sortOrder = tr._fields.sortOrder.value.trim();
+
+                if (!codeGroup && !groupName) {
+                    continue;
+                }
+                if (!codeGroup || !groupName) {
+                    alert('그룹코드, 그룹명은 필수입니다.');
+                    return;
+                }
+
+                const payload = {
+                    codeGroup: codeGroup,
+                    groupName: groupName,
+                    sortOrder: sortOrder ? Number(sortOrder) : null,
+                    useYn: tr._fields.useYn.checked ? 'Y' : 'N'
+                };
+
+                requests.push(fetch(GROUPS_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                }));
+            }
+
+            if (requests.length === 0) {
+                return;
+            }
+
+            Promise.all(requests)
+                .then(function (results) {
+                    if (results.some(function (res) { return !res.ok; })) {
+                        throw new Error('저장에 실패했습니다.');
+                    }
+                    searchGroups();
+                })
+                .catch(function (err) {
+                    alert(err.message);
+                });
+        }
+
+        function deleteGroups() {
+            const rows = Array.from(groupGridBody.querySelectorAll('tr.selected'));
+            if (rows.length === 0) {
+                alert('삭제할 그룹을 목록에서 선택하세요.');
+                return;
+            }
+            if (!confirm('선택한 그룹을 삭제하시겠습니까? 그룹에 속한 상세 코드도 함께 삭제됩니다.')) {
+                return;
+            }
+
+            const deletesCurrentGroup = rows.some(function (tr) { return tr.dataset.id === currentGroup; });
+
+            const requests = rows
+                .filter(function (tr) { return !!tr.dataset.id; })
+                .map(function (tr) { return fetch(GROUPS_URL + '/' + encodeURIComponent(tr.dataset.id), { method: 'DELETE' }); });
+
+            rows.forEach(function (tr) {
+                if (!tr.dataset.id) {
+                    tr.remove();
+                }
+            });
+
+            if (requests.length === 0) {
+                return;
+            }
+
+            Promise.all(requests)
+                .then(function (results) {
+                    if (results.some(function (res) { return !res.ok; })) {
+                        throw new Error('삭제에 실패했습니다.');
+                    }
+                    if (deletesCurrentGroup) {
+                        clearDetail();
+                    }
+                    searchGroups();
+                })
+                .catch(function (err) {
+                    alert(err.message);
+                });
+        }
+
+        // ── 우측: 코드(디테일) ──────────────────────────────────────
+        function initCodeRow(tr, code) {
+            tr._fields = {};
+            if (code && code.id) {
+                tr.dataset.id = code.id;
+            }
+        }
+
+        const CODE_COLUMNS = [
+            { type: 'row-select', width: 36, align: 'center' },
+            { id: 'codeValue', label: '코드값', type: 'text' },
+            { id: 'codeName', label: '코드명', type: 'text' },
+            { id: 'sortOrder', label: '정렬순서', type: 'number', width: 90 },
+            { id: 'useYn', label: '사용여부', type: 'checkbox', width: 70, align: 'center' }
+        ];
+
+        Grid.renderHeader(document.getElementById('codeGridHead'), CODE_COLUMNS);
+
+        function buildCodeRow(code) {
+            return Grid.buildRow(CODE_COLUMNS, code, { buildRow: initCodeRow });
+        }
+
+        function renderCodes(codes) {
+            Grid.render(codeGridBody, CODE_COLUMNS, codes, { emptyMessage: '등록된 코드가 없습니다.', buildRow: initCodeRow });
+        }
+
+        function setDetailButtonsEnabled(enabled) {
+            btnCodeAdd.disabled = !enabled;
+            btnCodeSave.disabled = !enabled;
+            btnCodeDelete.disabled = !enabled;
+        }
+
+        function clearDetail() {
+            currentGroup = null;
+            detailGroupLabel.textContent = '';
+            Array.from(groupGridBody.querySelectorAll('tr.current')).forEach(function (tr) {
+                tr.classList.remove('current');
+            });
+            Grid.renderMessage(codeGridBody, CODE_COLUMNS.length, '좌측에서 그룹을 선택하세요.');
+            setDetailButtonsEnabled(false);
+        }
+
+        function selectGroup(codeGroup, groupName) {
+            // 행 강조(.current)는 Grid.render의 클릭 위임이 클릭한 행에 이미 붙여준 뒤 이 함수를
+            // 호출하므로, 여기서는 상태 갱신과 디테일 조회만 하면 된다.
+            currentGroup = codeGroup;
+            detailGroupLabel.textContent = '- ' + (groupName || codeGroup);
+            setDetailButtonsEnabled(true);
+            searchCodes();
+        }
+
+        function searchCodes() {
+            if (!currentGroup) {
+                return;
+            }
+            const params = new URLSearchParams({ group: currentGroup, includeInactive: 'true' });
+            fetch(CODES_URL + '?' + params.toString())
+                .then(function (res) {
+                    if (!res.ok) throw new Error('코드 조회에 실패했습니다.');
+                    return res.json();
+                })
+                .then(renderCodes)
+                .catch(function (err) {
+                    alert(err.message);
+                });
+        }
+
+        function addCodeRow() {
+            if (!currentGroup) {
+                return;
+            }
+            const emptyRow = codeGridBody.querySelector('.empty');
+            if (emptyRow) {
+                emptyRow.closest('tr').remove();
+            }
+            const tr = buildCodeRow(null);
+            codeGridBody.insertBefore(tr, codeGridBody.firstChild);
+            tr._fields.codeValue.focus();
+        }
+
+        function saveCodes() {
+            if (!currentGroup) {
+                return;
+            }
+            const rows = Array.from(codeGridBody.querySelectorAll('tr')).filter(function (tr) {
+                return !!tr._fields;
+            });
+            const requests = [];
+
+            for (const tr of rows) {
+                const codeValue = tr._fields.codeValue.value.trim();
+                const codeName = tr._fields.codeName.value.trim();
+                const sortOrder = tr._fields.sortOrder.value.trim();
+
+                if (!codeValue && !codeName) {
+                    continue;
+                }
+                if (!codeValue || !codeName) {
+                    alert('코드값, 코드명은 필수입니다.');
+                    return;
+                }
+
+                const payload = {
+                    id: tr.dataset.id ? Number(tr.dataset.id) : null,
+                    codeGroup: currentGroup,
+                    codeValue: codeValue,
+                    codeName: codeName,
+                    sortOrder: sortOrder ? Number(sortOrder) : null,
+                    useYn: tr._fields.useYn.checked ? 'Y' : 'N'
+                };
+
+                requests.push(fetch(CODES_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                }));
+            }
+
+            if (requests.length === 0) {
+                return;
+            }
+
+            Promise.all(requests)
+                .then(function (results) {
+                    if (results.some(function (res) { return !res.ok; })) {
+                        throw new Error('저장에 실패했습니다.');
+                    }
+                    searchCodes();
+                })
+                .catch(function (err) {
+                    alert(err.message);
+                });
+        }
+
+        function deleteCodes() {
+            const rows = Array.from(codeGridBody.querySelectorAll('tr.selected'));
+            if (rows.length === 0) {
+                alert('삭제할 코드를 목록에서 선택하세요.');
+                return;
+            }
+            if (!confirm('선택한 코드를 삭제하시겠습니까?')) {
+                return;
+            }
+
+            const requests = rows
+                .filter(function (tr) { return !!tr.dataset.id; })
+                .map(function (tr) { return fetch(CODES_URL + '/' + tr.dataset.id, { method: 'DELETE' }); });
+
+            rows.forEach(function (tr) {
+                if (!tr.dataset.id) {
+                    tr.remove();
+                }
+            });
+
+            if (requests.length === 0) {
+                return;
+            }
+
+            Promise.all(requests)
+                .then(function (results) {
+                    if (results.some(function (res) { return !res.ok; })) {
+                        throw new Error('삭제에 실패했습니다.');
+                    }
+                    searchCodes();
+                })
+                .catch(function (err) {
+                    alert(err.message);
+                });
+        }
+
+        document.getElementById('btnGroupSearch').addEventListener('click', searchGroups);
+        document.getElementById('btnGroupAdd').addEventListener('click', addGroupRow);
+        document.getElementById('btnGroupSave').addEventListener('click', saveGroups);
+        document.getElementById('btnGroupDelete').addEventListener('click', deleteGroups);
+
+        btnCodeAdd.addEventListener('click', addCodeRow);
+        btnCodeSave.addEventListener('click', saveCodes);
+        btnCodeDelete.addEventListener('click', deleteCodes);
+
+        searchGroups();
+    })();
+</script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 package com.sjinc.cvemonitor.mvc;
 
+import com.sjinc.cvemonitor.service.vulnerability.VulnerabilityService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
@@ -16,6 +17,10 @@ import java.security.Principal;
 public class ViewController {
 
     private final ResourceLoader resourceLoader;
+    private final VulnerabilityService vulnerabilityService;
+
+    /** 대시보드 막대그래프에 보여줄 프로젝트 수. */
+    private static final int DASHBOARD_TOP_APPS = 5;
 
     @GetMapping("/login")
     public String loginPage() {
@@ -26,6 +31,11 @@ public class ViewController {
     public String home(Principal principal, Model model) {
         model.addAttribute("username", principal != null ? principal.getName() : "");
         model.addAttribute("activeMenu", "home");
+        model.addAttribute("totalOpenVulnerabilities", vulnerabilityService.countOpenVulnerabilities());
+        model.addAttribute("averageResolutionRate", vulnerabilityService.getAverageResolutionRate());
+        model.addAttribute("openCriticalRate", vulnerabilityService.getOpenCriticalRate());
+        model.addAttribute("appVulnerabilityCounts",
+                vulnerabilityService.getTopOpenVulnerabilityCountsByApp(DASHBOARD_TOP_APPS));
         return "home";
     }
 

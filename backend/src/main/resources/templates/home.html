@@ -4,54 +4,10 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>보안취약점 모니터링 대시보드</title>
+    <link rel="stylesheet" href="/css/common-ui.css">
     <style>
-        :root{
-            --bg:            #f2f2f8;
-            --card:          #ffffff;
-            --navy:          #191940;
-            --accent:        #f43f68;
-            --accent-soft:   #ffe4ec;
-            --text:          #191940;
-            --text-sub:      #8b8ba7;
-            --line:          #e8e8f2;
-
-            --radius-md: 14px;
-
-            --left-w:  220px;
-            --top-h:   64px;
-        }
-
-        *{ box-sizing:border-box; margin:0; padding:0; }
-        html, body{ height:100%; }
-        body{
-            font-family:"Pretendard","Malgun Gothic",system-ui,sans-serif;
-            background:var(--bg); color:var(--text);
-        }
-
-        .app-shell{
-            width:100%; height:100vh;
-            display:grid;
-            grid-template-columns: var(--left-w) 1fr;
-            grid-template-rows:    var(--top-h)  1fr;
-            grid-template-areas:
-                "left top"
-                "left main";
-        }
-
-        .area-left{ grid-area:left; background:var(--card); border-right:1px solid var(--line); overflow-y:auto; }
-        .area-top { grid-area:top;  background:var(--card); border-bottom:1px solid var(--line); }
-        .area-main{ grid-area:main; overflow-y:auto; }
-
-        @media (max-width:760px){
-            .app-shell{
-                grid-template-columns:1fr;
-                grid-template-rows:auto auto 1fr;
-                grid-template-areas:"left" "top" "main";
-                height:auto; min-height:100vh;
-            }
-        }
-
-        .area-main{ padding:24px; display:flex; flex-direction:column; gap:20px; }
+        /* 화면 공통 뼈대(:root, .app-shell 등)는 common-ui.css가 담당한다. 여기는 이 화면 전용
+           위젯(KPI 카드, 막대 차트, 검색바)만 남긴다. */
 
         /* KPI 3열 */
         .kpi-row{ display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
@@ -101,25 +57,25 @@
 
     <main class="area-main">
         <section class="kpi-row">
-            <div class="kpi"><div class="val">12건</div><div class="lbl">이번주 신규 취약점</div></div>
-            <div class="kpi"><div class="val">95%</div><div class="lbl">크리티컬 알림 확인율</div></div>
-            <div class="kpi"><div class="val">78%</div><div class="lbl">평균 조치 완료율</div></div>
+            <div class="kpi"><div class="val" th:text="|${totalOpenVulnerabilities}건|">12건</div><div class="lbl">전체 미해결 취약점</div></div>
+            <div class="kpi"><div class="val" th:text="|${openCriticalRate}%|">95%</div><div class="lbl">미해결 크리티컬 비율</div></div>
+            <div class="kpi"><div class="val" th:text="|${averageResolutionRate}%|">78%</div><div class="lbl">평균 조치 완료율</div></div>
         </section>
 
         <section>
             <div class="panel-title">프로젝트별 미해결 취약점 TOP 5 (건수)</div>
-            <div class="bars">
-                <div class="bar-row"><span class="cap">관리자 시스템</span>
-                    <span class="track"><i class="fill" style="width:33%"></i><span class="num">6</span></span></div>
-                <div class="bar-row"><span class="cap">결제 시스템</span>
-                    <span class="track"><i class="fill" style="width:50%"></i><span class="num">9</span></span></div>
-                <div class="bar-row"><span class="cap">사내 포털</span>
-                    <span class="track"><i class="fill" style="width:61%"></i><span class="num">11</span></span></div>
-                <div class="bar-row"><span class="cap">ERP 연동</span>
-                    <span class="track"><i class="fill" style="width:78%"></i><span class="num">14</span></span></div>
-                <div class="bar-row"><span class="cap">CRM 시스템</span>
-                    <span class="track"><i class="fill" style="width:100%"></i><span class="num">18</span></span></div>
+            <div class="bars" th:if="${not #lists.isEmpty(appVulnerabilityCounts)}">
+                <div class="bar-row" th:each="count : ${appVulnerabilityCounts}">
+                    <span class="cap" th:text="${count.systemName}">시스템명</span>
+                    <span class="track">
+                        <i class="fill" th:style="|width:${appVulnerabilityCounts[0].openCount > 0 ? count.openCount * 100 / appVulnerabilityCounts[0].openCount : 0}%|"></i>
+                        <span class="num" th:text="${count.openCount}">0</span>
+                    </span>
+                </div>
             </div>
+            <p th:if="${#lists.isEmpty(appVulnerabilityCounts)}" style="font-size:13px; color:var(--text-sub);">
+                미해결 취약점이 없습니다.
+            </p>
         </section>
 
         <div class="search"><span>⌕</span><span>이번주 크리티컬 등급 취약점은?</span></div>

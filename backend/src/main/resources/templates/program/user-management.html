@@ -4,82 +4,11 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>사용자 관리 · 보안취약점 모니터링 대시보드</title>
+    <link rel="stylesheet" href="/css/common-ui.css">
+    <link rel="stylesheet" href="/css/grid.css">
     <style>
-        :root{
-            --bg:            #f2f2f8;
-            --card:          #ffffff;
-            --navy:          #191940;
-            --accent:        #f43f68;
-            --accent-soft:   #ffe4ec;
-            --text:          #191940;
-            --text-sub:      #8b8ba7;
-            --line:          #e8e8f2;
-
-            --radius-md: 14px;
-
-            --left-w:  220px;
-            --top-h:   64px;
-        }
-
-        *{ box-sizing:border-box; margin:0; padding:0; }
-        html, body{ height:100%; }
-        body{
-            font-family:"Pretendard","Malgun Gothic",system-ui,sans-serif;
-            background:var(--bg); color:var(--text);
-        }
-
-        .app-shell{
-            width:100%; height:100vh;
-            display:grid;
-            grid-template-columns: var(--left-w) 1fr;
-            grid-template-rows:    var(--top-h)  1fr;
-            grid-template-areas:
-                "left top"
-                "left main";
-        }
-
-        .area-left{ grid-area:left; background:var(--card); border-right:1px solid var(--line); overflow-y:auto; }
-        .area-top { grid-area:top;  background:var(--card); border-bottom:1px solid var(--line); }
-        .area-main{ grid-area:main; overflow-y:auto; }
-
-        @media (max-width:760px){
-            .app-shell{
-                grid-template-columns:1fr;
-                grid-template-rows:auto auto 1fr;
-                grid-template-areas:"left" "top" "main";
-                height:auto; min-height:100vh;
-            }
-        }
-
-        .area-main{ padding:24px; display:flex; flex-direction:column; gap:20px; }
-        .panel-head{ display:flex; align-items:center; justify-content:space-between; }
-        .panel-title{ font-size:13px; font-weight:700; color:var(--text-sub); }
-
-        .btn-group{ display:flex; gap:8px; }
-        .btn{
-            padding:7px 16px; border-radius:8px; border:1px solid var(--line);
-            background:var(--card); font-size:12.5px; font-weight:700;
-            color:var(--text); cursor:pointer;
-        }
-        .btn:hover{ background:#fafafd; }
-        .btn.primary{ background:var(--navy); color:#fff; border-color:var(--navy); }
-        .btn.primary:hover{ opacity:.9; }
-        .btn.danger{ background:var(--accent-soft); color:var(--accent); border-color:transparent; }
-        .btn.danger:hover{ background:var(--accent); color:#fff; }
-
-        .grid{ width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-md); overflow:hidden; }
-        .grid th, .grid td{ padding:8px 10px; font-size:12.5px; text-align:left; border-bottom:1px solid var(--line); }
-        .grid th{ padding:12px 10px; background:#fafafd; color:var(--text-sub); font-weight:700; }
-        .grid tbody tr:last-child td{ border-bottom:none; }
-        .grid tbody tr.selected{ background:var(--accent-soft); }
-        .grid th.chk, .grid td.chk{ width:36px; text-align:center; }
-        .grid .empty{ text-align:center; color:var(--text-sub); }
-
-        .grid td input, .grid td select{
-            width:100%; box-sizing:border-box; border:1px solid transparent; background:transparent;
-            padding:6px 8px; border-radius:6px; font-size:12.5px; font-family:inherit; color:var(--text);
-        }
-        .grid td input:focus, .grid td select:focus{ outline:none; border-color:var(--accent); background:#fff; }
+        /* 화면 공통 뼈대(:root, .app-shell, .btn 등)는 common-ui.css가, .grid 공통 모양(패딩 포함)은
+           grid.css가 담당한다. 여기는 이 화면에서만 다른 값(역할 select 폭)만 남긴다. */
         .grid td select{ width:110px; }
     </style>
 </head>
@@ -103,14 +32,7 @@
 
         <section>
             <table class="grid" id="userGrid">
-                <thead>
-                    <tr>
-                        <th class="chk"></th>
-                        <th>아이디</th>
-                        <th>비밀번호</th>
-                        <th>역할</th>
-                    </tr>
-                </thead>
+                <thead id="userGridHead"></thead>
                 <tbody id="userGridBody">
                     <tr><td class="empty" colspan="4">조회 중입니다...</td></tr>
                 </tbody>
@@ -119,79 +41,48 @@
     </main>
 </div>
 
+<script src="/js/grid.js"></script>
+<script src="/js/common-code.js"></script>
 <script th:inline="javascript">
     (function () {
         const API_URL = '/api/users';
         const gridBody = document.getElementById('userGridBody');
 
-        function createInput(value, type) {
-            const input = document.createElement('input');
-            input.type = type || 'text';
-            input.value = (value === null || value === undefined) ? '' : value;
-            return input;
-        }
+        // 역할 select 옵션은 공통코드관리 화면(그룹 "ROLE")에서 관리한다. fetchCodes로 한 번만
+        // 받아 캐시된 배열을 COLUMNS의 select 컬럼(options)이 그대로 재사용한다.
+        let roleCodes = [];
 
-        function createRoleSelect(value) {
-            const select = document.createElement('select');
-            ['ADMIN', 'USER'].forEach(function (role) {
-                const option = document.createElement('option');
-                option.value = role;
-                option.textContent = role;
-                if (role === value) option.selected = true;
-                select.appendChild(option);
-            });
-            return select;
-        }
-
-        function wrapCell(input) {
-            const td = document.createElement('td');
-            td.appendChild(input);
-            return td;
-        }
-
-        function buildRow(user) {
-            const tr = document.createElement('tr');
-            const isExisting = !!(user && user.id);
-            if (isExisting) {
+        function initRow(tr, user) {
+            tr._fields = {};
+            if (user && user.id) {
                 tr.dataset.id = user.id;
             }
+        }
 
-            const chkCell = document.createElement('td');
-            chkCell.className = 'chk';
-            const chk = document.createElement('input');
-            chk.type = 'checkbox';
-            chk.addEventListener('change', function () {
-                tr.classList.toggle('selected', chk.checked);
-            });
-            chkCell.appendChild(chk);
+        const COLUMNS = [
+            { type: 'row-select', width: 36, align: 'center' },
+            { id: 'username', label: '아이디', type: 'text' },
+            {
+                id: 'password', label: '비밀번호', type: 'password',
+                placeholder: function (user) { return (user && user.id) ? '변경 시에만 입력' : '필수 입력'; }
+            },
+            {
+                id: 'role', label: '역할', type: 'select',
+                options: function () {
+                    return roleCodes.map(function (code) { return { value: code.codeValue, label: code.codeName }; });
+                },
+                defaultValue: 'USER'
+            }
+        ];
 
-            const usernameInput = createInput(user ? user.username : '');
-            const passwordInput = createInput('', 'password');
-            passwordInput.placeholder = isExisting ? '변경 시에만 입력' : '필수 입력';
-            const roleSelect = createRoleSelect(user ? user.role : 'USER');
+        Grid.renderHeader(document.getElementById('userGridHead'), COLUMNS);
 
-            tr.appendChild(chkCell);
-            tr.appendChild(wrapCell(usernameInput));
-            tr.appendChild(wrapCell(passwordInput));
-            tr.appendChild(wrapCell(roleSelect));
-
-            tr._fields = { username: usernameInput, password: passwordInput, role: roleSelect };
-            return tr;
+        function buildRow(user) {
+            return Grid.buildRow(COLUMNS, user, { buildRow: initRow });
         }
 
         function renderRows(users) {
-            gridBody.innerHTML = '';
-
-            if (!users || users.length === 0) {
-                const emptyRow = document.createElement('tr');
-                emptyRow.innerHTML = '<td class="empty" colspan="4">등록된 사용자가 없습니다.</td>';
-                gridBody.appendChild(emptyRow);
-                return;
-            }
-
-            users.forEach(function (user) {
-                gridBody.appendChild(buildRow(user));
-            });
+            Grid.render(gridBody, COLUMNS, users, { emptyMessage: '등록된 사용자가 없습니다.', buildRow: initRow });
         }
 
         function searchUsers() {
@@ -312,7 +203,14 @@
         document.getElementById('btnDelete').addEventListener('click', deleteSelected);
         document.getElementById('btnReset').addEventListener('click', searchUsers);
 
-        searchUsers();
+        CommonCode.fetchCodes('ROLE')
+            .then(function (codes) {
+                roleCodes = codes;
+                searchUsers();
+            })
+            .catch(function (err) {
+                alert(err.message);
+            });
     })();
 </script>
 </body>

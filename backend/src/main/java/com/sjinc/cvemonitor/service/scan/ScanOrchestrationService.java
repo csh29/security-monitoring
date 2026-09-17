@@ -144,7 +144,7 @@ public class ScanOrchestrationService {
                 }
 
                 // 새로 저장된 CVE가 있을 때만 AI 판단 배치를 깨운다.
-                aiAssessmentTriggerService.triggerAsync();
+//                aiAssessmentTriggerService.triggerAsync();
             }
 
             return new ScanResult(repoUrl, branch, systemName, dependencies.size(), cveFindings.size(), findings);
