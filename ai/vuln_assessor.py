@@ -15,7 +15,7 @@ import os
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Optional
 
 import anthropic
@@ -77,6 +77,19 @@ ASSESS_MAX_TOKENS = 4096
 # 스트리밍으로 받으니 큰 값이어도 HTTP 타임아웃 걱정이 없고, 모델 출력 상한(128K) 안이다.
 # 한도는 상한일 뿐 실제로 쓴 만큼만 과금된다.
 FIX_PLAN_MAX_TOKENS = 64000
+
+
+def _system_prompt(text: str, use_cache: bool) -> list[dict]:
+    """시스템 프롬프트 블록. 같은 시스템 프롬프트로 이번 배치에서 요청이 2번 이상 갈 때만 캐시를 붙인다.
+
+    캐시 쓰기는 입력 단가의 1.25배, 읽기는 0.1배라 5분 안에 두 번 이상 읽혀야 이득이다. 실제 운영에선
+    자바가 결정론적으로 먼저 판정해서 CVE 판단은 거의 0건이고 fix-plan도 스캔 한 번에 앱 1건이라,
+    무조건 붙여 두면 읽히지 않는 캐시 쓰기 할증(0.25배)만 매번 냈다(ai-assessor.log에서 cache_read=0 확인).
+    """
+    block = {"type": "text", "text": text}
+    if use_cache:
+        block["cache_control"] = {"type": "ephemeral"}
+    return [block]
 
 # output_config.effort를 안 넘기면 claude-sonnet-5는 기본 "high"로 돈다. CVE 판단은 정해진
 # 스키마 안에서 고르는 분류 작업이라 medium으로 충분하다고 보고 낮춘다 — fix-plan(다중 CVE를
@@ -306,9 +319,10 @@ class CveMonitorClient:
 
 
 class VulnAssessorClient:
-    def __init__(self, api_key: Optional[str] = None, model: str = MODEL):
+    def __init__(self, api_key: Optional[str] = None, model: str = MODEL, use_cache: bool = False):
         self._client = anthropic.Anthropic(api_key=api_key or os.environ["ANTHROPIC_API_KEY"])
         self._model = model
+        self._use_cache = use_cache
         self.usage = TokenUsageTracker()
 
     def assess(self, ctx: DependencyContext) -> VulnAssessment:
@@ -316,13 +330,9 @@ class VulnAssessorClient:
             model=self._model,
             # 확장 사고가 붙으면 답이 나오기 전에 토큰을 다 쓸 수 있어 여유 있게 잡는다.
             max_tokens=ASSESS_MAX_TOKENS,
-            # 판정 룰은 prompts/assess.system.md 에 있다. CVE 건마다 같은 내용이
-            # 반복되므로 캐시를 붙여 둔다(두 번째 요청부터 입력 토큰 값이 1/10).
-            system=[{
-                "type": "text",
-                "text": load_prompt(ASSESS_SYSTEM),
-                "cache_control": {"type": "ephemeral"},
-            }],
+            # 판정 룰은 prompts/assess.system.md 에 있다. CVE 건마다 같은 내용이라, 판단할 CVE가
+            # 2건 이상인 배치에서만 캐시를 붙인다(두 번째 요청부터 입력 토큰 값이 1/10).
+            system=_system_prompt(load_prompt(ASSESS_SYSTEM), self._use_cache),
             # CVE 판단은 정해진 스키마 안에서 취약 여부/버전을 고르는 분류에 가까운 작업이라
             # (Claude API 가이드 기준 effort 미설정 시 기본값은 high) high까지는 필요 없다.
             # medium으로 낮춰서 품질 손해 없이 thinking/output 토큰을 아낀다.
@@ -372,9 +382,10 @@ class VulnAssessorClient:
 class FixPlanGeneratorClient:
     """stage 2: 앱 하나의 CVE 전체를 취합해서 pom.xml 수정안을 만든다."""
 
-    def __init__(self, api_key: Optional[str] = None, model: str = MODEL):
+    def __init__(self, api_key: Optional[str] = None, model: str = MODEL, use_cache: bool = False):
         self._client = anthropic.Anthropic(api_key=api_key or os.environ["ANTHROPIC_API_KEY"])
         self._model = model
+        self._use_cache = use_cache
         self.usage = TokenUsageTracker()
 
     def generate(self, target: AppFixPlanTarget) -> FixPlan:
@@ -383,11 +394,9 @@ class FixPlanGeneratorClient:
         with self._client.messages.stream(
             model=self._model,
             max_tokens=FIX_PLAN_MAX_TOKENS,
-            system=[{
-                "type": "text",
-                "text": load_prompt(FIX_PLAN_SYSTEM),
-                "cache_control": {"type": "ephemeral"},
-            }],
+            # 앱이 2건 이상인 배치에서만 캐시를 붙인다. 앱 하나의 생성이 5분(캐시 수명, 요청 시작 기준)을
+            # 넘기면 다음 앱은 어차피 못 읽지만, 그 경우 손해는 쓰기 할증 한 번뿐이다.
+            system=_system_prompt(load_prompt(FIX_PLAN_SYSTEM), self._use_cache),
             output_config={
                 "format": {"type": "json_schema", "schema": FIX_PLAN_SCHEMA},
             },
@@ -471,12 +480,12 @@ def _assess_one(ai_client: "VulnAssessorClient", backend: "CveMonitorClient",
 def main() -> None:
     backend = CveMonitorClient()
 
-    # stage 1: CVE 하나씩 개별 판단. 시스템 프롬프트가 CVE 건마다 동일해서 프롬프트
+    # stage 1: CVE 하나씩 개별 판단. 시스템 프롬프트가 CVE 건마다 동일해서 2건 이상이면 프롬프트
     # 캐시를 쓰는데, 처음부터 여러 건을 동시에 보내면 캐시가 만들어지기 전에 여러
     # 요청이 동시에 도착해 각자 따로 캐시를 써버릴 수 있다(cache_creation 중복).
     # 그래서 첫 건은 혼자 먼저 보내 캐시를 예열한 뒤, 나머지만 병렬로 처리한다.
-    ai_client = VulnAssessorClient()
     pending = backend.fetch_pending_vulnerabilities()
+    ai_client = VulnAssessorClient(use_cache=len(pending) > 1)
     print(f"판단할 취약점 {len(pending)}건")
 
     skipped_cves: list[tuple[str, str]] = []
@@ -501,8 +510,8 @@ def main() -> None:
                     handle_result(*future.result())
 
     # stage 2: 앱 단위로 취합해서 pom.xml 수정안 생성
-    fix_plan_client = FixPlanGeneratorClient()
     fix_plan_targets = backend.fetch_pending_fix_plans()
+    fix_plan_client = FixPlanGeneratorClient(use_cache=len(fix_plan_targets) > 1)
     print(f"fix-plan 생성할 앱 {len(fix_plan_targets)}건")
 
     skipped_apps: list[tuple[str, str]] = []
