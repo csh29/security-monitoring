@@ -117,14 +117,31 @@ public class ScanOrchestrationService {
                     : dependencyExtractor.buildTopLevelCauseMap(projectDir, mavenHome);
             Map<String, String> topLevelCauseByCoordinate = treeResult.topLevelCauseByCoordinate();
 
-            cveFindings.forEach(finding -> {
+            // NVD 조회는 외부 API라 한 건이 실패할 수 있다(호출 한도 초과, 일시 장애).
+            // 예전엔 여기에 예외 처리가 없어서 한 건만 실패해도 스캔 전체가 500으로 죽었다 — 그것도
+            // clone과 Maven 두 번을 이미 다 돌린 뒤에, 가장 비싼 작업을 버리는 시점에서. 게다가
+            // syncCveById는 건별 트랜잭션이라 앞쪽 CVE는 이미 저장된 채로 아래 해소 처리
+            // (resolveMissingVulnerabilities)만 실행되지 않아 DB가 어정쩡한 상태로 남았다.
+            // 한 건 실패는 그 건만 건너뛰고, 실패 건수는 응답으로 올려 사람이 알 수 있게 한다.
+            List<String> failedCveIds = new ArrayList<>();
+            for (DependencyFinding finding : cveFindings) {
                 String coordinate = finding.groupId() + ":" + finding.artifactId();
                 String broughtInBy = topLevelCauseByCoordinate.get(coordinate);
                 String key = finding.identifier() + "|" + finding.groupId() + ":" + finding.artifactId();
-                vulnerabilityService.syncCveById(
-                        finding.identifier(), appId, finding.groupId(), finding.artifactId(), finding.version(), broughtInBy,
-                        finding.knownFixedVersions(), detailByKey.get(key));
-            });
+                try {
+                    vulnerabilityService.syncCveById(
+                            finding.identifier(), appId, finding.groupId(), finding.artifactId(), finding.version(), broughtInBy,
+                            finding.knownFixedVersions(), detailByKey.get(key));
+                } catch (Exception e) {
+                    failedCveIds.add(finding.identifier());
+                    log.warn("[{}] {}:{} 동기화 실패, 이 건만 건너뜁니다: {}",
+                            finding.identifier(), finding.groupId(), finding.artifactId(), e.toString());
+                }
+            }
+            if (!failedCveIds.isEmpty()) {
+                log.warn("NVD 동기화 실패 {}건(스캔은 계속 진행됨): {}",
+                        failedCveIds.size(), String.join(", ", failedCveIds));
+            }
 
             // 라이브러리 삭제/업그레이드로 이번 스캔엔 안 걸린 기존 OPEN 건을 RESOLVED로 표시한다.
             // cveFindings가 비어있어도(전부 해소된 경우) 실행해야 하므로 이 블록 밖에서 처리한다.
@@ -145,7 +162,8 @@ public class ScanOrchestrationService {
                 scanSnapshotRepository.save(snapshot);
             }
 
-            return new ScanResult(repoUrl, branch, systemName, dependencies.size(), cveFindings.size(), findings);
+            return new ScanResult(repoUrl, branch, systemName, dependencies.size(), cveFindings.size(),
+                    failedCveIds.size(), findings);
         } finally {
             gitCloneService.cleanup(projectDir);
         }
