@@ -19,7 +19,7 @@ public interface AppRepository extends JpaRepository<App, Long> {
      * 0건으로 보여야 하니 left join으로 앱 전체를 기준으로 삼는다. 건수 내림차순 — 화면에서
      * 상위 N개만 자르면 그대로 "TOP N"이 된다.
      */
-    @Query("select new com.sjinc.cvemonitor.dto.vulnerability.AppVulnerabilityCount(a.id, a.systemName, count(v.id)) "
+    @Query("select new com.sjinc.cvemonitor.dto.vulnerability.AppVulnerabilityCount(a.systemName, count(v.id)) "
             + "from App a left join Vulnerability v on v.app = a and v.status = 'OPEN' "
             + "group by a.id, a.systemName "
             + "order by count(v.id) desc")

@@ -44,7 +44,7 @@
                         <button type="button" id="btnGroupDelete" th:if="${pageButtonIds.contains('btnDelete')}" data-hotkey="F5" class="btn danger">삭제</button>
                     </div>
                 </div>
-                <table class="grid" id="groupGrid">
+                <table class="grid">
                     <thead id="groupGridHead"></thead>
                     <tbody id="groupGridBody"></tbody>
                 </table>
@@ -59,7 +59,7 @@
                         <button type="button" id="btnCodeDelete" th:if="${pageButtonIds.contains('btnDelete')}" data-hotkey="F5" class="btn danger" disabled>삭제</button>
                     </div>
                 </div>
-                <table class="grid" id="codeGrid">
+                <table class="grid">
                     <thead id="codeGridHead"></thead>
                     <tbody id="codeGridBody"></tbody>
                 </table>
@@ -125,10 +125,13 @@
                 .then(function (groups) {
                     renderGroups(groups);
                     // 그리드를 통째로 다시 그리므로, 디테일에 보여주고 있던 그룹이 있으면 강조 표시를 되살린다.
+                    // 예전엔 tr[data-id=...]로 찾았는데 행에 data-id를 넣는 코드가 없어 항상 못 찾았고,
+                    // 그룹을 선택한 채 재조회하면 디테일이 매번 비워졌다. 행 데이터(Grid.getRows)로 찾는다.
                     if (currentGroup) {
-                        const tr = groupGridBody.querySelector('tr[data-id="' + CSS.escape(currentGroup) + '"]');
-                        if (tr) {
-                            tr.classList.add('current');
+                        const row = Grid.getRows(groupGridBody).find(function (r) { return r.codeGroup === currentGroup; });
+                        if (row) {
+                            // 방금 다시 그려 데이터 행만 있으므로 _rowIndex가 tbody.rows의 위치와 같다.
+                            groupGridBody.rows[row._rowIndex].classList.add('current');
                         } else {
                             clearDetail();
                         }

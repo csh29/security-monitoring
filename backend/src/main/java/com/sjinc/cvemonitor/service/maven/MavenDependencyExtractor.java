@@ -76,44 +76,17 @@ public class MavenDependencyExtractor {
                 dependencies.add(new MavenDependency(
                         matcher.group(1),  // groupId
                         matcher.group(2),  // artifactId
-                        matcher.group(5),  // version
-                        matcher.group(6)   // scope
+                        matcher.group(5)   // version
                 ));
             }
         }
         return dependencies;
     }
 
-    public String findDependencyPath(File projectDir, String groupId, String artifactId, String mavenHome) throws Exception {
-        Path outputFile = Files.createTempFile("dependency-tree-", ".txt");
-        try {
-            InvocationRequest request = new DefaultInvocationRequest();
-            request.setPomFile(new File(projectDir, "pom.xml"));
-            request.setGoals(List.of("dependency:tree"));
-
-            Properties props = new Properties();
-            props.setProperty("outputFile", outputFile.toAbsolutePath().toString());
-            props.setProperty("includes", groupId + ":" + artifactId); // 이 의존성만 필터링
-            request.setProperties(props);
-            request.setBatchMode(true);
-
-            Invoker invoker = new DefaultInvoker();
-            invoker.setMavenHome(new File(mavenHome));
-            InvocationResult result = invoker.execute(request);
-
-            if (result.getExitCode() != 0) {
-                throw new IllegalStateException("dependency:tree 실행 실패: " + projectDir);
-            }
-            return Files.readString(outputFile);
-        } finally {
-            Files.deleteIfExists(outputFile);
-        }
-    }
-
     /**
      * dependency:tree를 프로젝트당 딱 한 번만 실행해서, "groupId:artifactId" → 이를 끌고 들어온
      * 최상위(depth 1) 직접 의존성의 "groupId:artifactId" 매핑과, fix-plan 배치가 참고할 원문 텍스트를 함께 반환한다.
-     * CVE 건수만큼 매번 mvn 프로세스를 새로 띄우던 것(findDependencyPath 반복 호출)을 대체한다.
+     * CVE 건수만큼 매번 mvn 프로세스를 새로 띄우지 않도록 한 번만 실행한다.
      * 직접 의존성 자신은 스스로를 가리킨다. 실패하면 빈 결과를 반환한다(스캔 자체를 실패시키지 않음).
      */
     public DependencyTreeResult buildTopLevelCauseMap(File projectDir, String mavenHome) {

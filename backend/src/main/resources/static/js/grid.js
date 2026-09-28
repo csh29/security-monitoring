@@ -192,11 +192,11 @@
         }
     }
 
-    function clearAndAppendMessage(tbody, colspan, message, className) {
+    function clearAndAppendMessage(tbody, colspan, message) {
         tbody.innerHTML = '';
         const tr = document.createElement('tr');
         const td = document.createElement('td');
-        td.className = className || 'empty';
+        td.className = 'empty';
         td.colSpan = colspan;
         td.textContent = message;
         tr.appendChild(td);
@@ -487,7 +487,7 @@
 
         // col.optionsQuery가 붙은 select 컬럼은 그리는 것보다 먼저 공통코드에서 옵션을 받아와야
         // 한다. 한 번 받아오면 col.options에 캐시해두고(col._optionsResolved) 다음 render()부터는
-        // 다시 조회하지 않는다 — "신규" 버튼처럼 Grid.buildRow를 단독으로 호출하는 곳도 이
+        // 다시 조회하지 않는다 — "신규" 버튼(Grid.addRow)처럼 행 하나만 따로 만드는 곳도 이
         // col.options를 그대로 쓰므로, 조회 화면이 최초 한 번 render()를 호출한 뒤부터는 화면이
         // 신경 쓸 필요가 없다. 이런 컬럼이 없는(대다수) 그리드는 예전처럼 완전히 동기로 그려진다
         // — render() 호출 직후 tbody를 바로 조회하는 화면(공통코드관리 등)이 있어서, 있지도 않은
@@ -518,7 +518,6 @@
 
     global.Grid = {
         render: render,
-        buildRow: buildRow,
         renderMessage: renderMessage,
         renderHeader: renderHeader,
         getRows: getRows,

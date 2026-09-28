@@ -7,5 +7,4 @@ public class OsvBatchRequest {
 
     public OsvBatchRequest(List<OsvQuery> queries) { this.queries = queries; }
     public List<OsvQuery> getQueries() { return queries; }
-    public void setQueries(List<OsvQuery> queries) { this.queries = queries; }
 }

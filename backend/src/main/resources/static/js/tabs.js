@@ -15,7 +15,7 @@
         return;
     }
 
-    const tabs = []; // { url, title, menuKey, iframe, btn }
+    const tabs = []; // { url, menuKey, iframe, btn }
     let activeUrl = null; // null이면 홈 화면이 보이는 상태
 
     function findTab(url) {
@@ -79,7 +79,7 @@
             btn.appendChild(close);
             tabNav.appendChild(btn);
 
-            tab = { url: url, title: title, menuKey: menuKey, iframe: iframe, btn: btn };
+            tab = { url: url, menuKey: menuKey, iframe: iframe, btn: btn };
             tabs.push(tab);
 
             btn.addEventListener('click', function (e) {
