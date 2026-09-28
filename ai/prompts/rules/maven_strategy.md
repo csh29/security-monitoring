@@ -2,48 +2,71 @@
 
 ## 전략 선택 우선순위
 
-위에서부터 시도하고, 되는 첫 번째를 택한다.
+위에서부터 시도하고, 되는 첫 번째를 택한다. **기본값은 parent를 건드리지 않고 취약한 아티팩트만 개별 프로퍼티로 올리는 것이다.**
 
-1. **부모 BOM의 패치 버전 업그레이드** (같은 마이너 라인 안에서)
-   예: `spring-boot-starter-parent` `3.2.1` → `3.2.5`.
-   이게 가장 안전하다. 관리 버전이 정합성 검증된 조합으로 함께 올라간다. → `PARENT_UPGRADE`
+1. **개별 프로퍼티 override** — 부모 BOM이 정의한 버전 프로퍼티를 `<properties>` 에서 목표 버전으로 지정한다. → `PROPERTY_OVERRIDE`
+   예: netty 계열(`netty-codec-http`, `netty-codec`, `netty-handler`, `netty-codec-http2`, `netty-resolver-dns`, `netty-codec-dns` …)이 취약하면
+   parent는 그대로 두고 `<netty.version>4.1.118.Final</netty.version>` 한 줄로 해소한다.
+   바뀌는 범위가 그 라이브러리 하나로 한정되어 diff가 가장 작고, 영향 범위를 사람이 바로 파악할 수 있다.
+   - 프로퍼티 이름을 모르는 아티팩트는 `<dependencyManagement>` 명시 항목으로 고정한다(아래 "override 방법 선택" 참고).
 
-2. **부모 BOM의 마이너 업그레이드**
-   예: `3.1.x` → `3.2.x`. 설정 프로퍼티 deprecation·자동설정 변경이 따라올 수 있다.
-   택할 수는 있지만 reasoning에 영향 범위와 회귀 테스트 필요성을 반드시 적는다. → `PARENT_UPGRADE`
+2. **부모 BOM의 패치 버전 업그레이드** (같은 마이너 라인 안에서만)
+   예: `spring-boot-starter-parent` `3.2.1` → `3.2.5`. → `PARENT_UPGRADE`
+   아래 경우에만 택한다.
+   - 1번이 **불가능**할 때 — 대표적으로 `org.springframework.boot` 그룹 자신의 모듈(아래 절 참고).
+   - 취약 아티팩트가 너무 많아 프로퍼티를 여러 개 나열하는 것보다, 같은 마이너 라인의 패치 한 번이 전부를 덮을 때.
 
-3. **개별 버전 override** — 부모를 못 올리거나, 부모를 올려도 해당 아티팩트가 목표 버전에 못 미칠 때. → `PROPERTY_OVERRIDE`
+3. **부모 BOM의 마이너 이상 업그레이드는 하지 않는다.**
+   예: `3.2.x` → `3.3.x` / `3.5.x`. 설정 프로퍼티 deprecation·자동설정 변경·관리 버전 대량 변경이 따라와서, pom 한 줄로 보이지만
+   실제로는 검증되지 않은 변경이 된다. 그래서 1·2번이 모두 불가능한 CVE가 있어도 **parent 마이너를 올리지 마라** — parent는 현재 버전
+   (또는 2번의 같은 마이너 라인 패치)에 그대로 두고, 그 CVE만 `unresolved_cves` 에
+   "parent 마이너 업그레이드 필요(현재 3.2.6 → 최소 3.3.11), 사람 검토 필요" 처럼 **필요한 최소 parent 버전과 함께** 넘긴다.
+   나머지 CVE는 평소대로 1번(개별 프로퍼티)으로 해소한다 — parent 마이너 업그레이드가 필요한 CVE가 하나 있다고 전체를 포기하지 않는다.
 
-4. 둘을 섞어야 하면 → `MIXED`
+4. 둘을 섞어야 하면(예: Spring Boot 모듈 CVE 때문에 parent 패치 업그레이드 + netty는 프로퍼티) → `MIXED`
 
-**메이저 업그레이드는 자동으로 선택하지 마라.** 특히 Spring Boot 2.x → 3.x 는 Java 17 이상 + `javax.*` → `jakarta.*` 전면 수정 + Hibernate 5→6 이 따라오므로 pom 수정만으로 끝나지 않는다. 이런 경우는 3번 방식으로 우회하고, 우회가 불가능하면 `unresolved_cves` 에 "메이저 업그레이드 필요, 코드 수정 동반" 으로 적는다. Tomcat 9→10, Hibernate 5→6, Jakarta EE 8→9 도 같다.
+### "parent가 검증한 조합을 깨뜨린다"는 이유로 프로퍼티 override를 피하지 마라
 
-## Spring Boot 자신의 모듈은 3번(개별 override)으로 못 고친다
+같은 라인 안의 패치 업그레이드(예: netty `4.1.110.Final` → `4.1.118.Final`, Tomcat `10.1.19` → `10.1.34`, Jackson `2.15.3` → `2.15.4`)는
+하위 호환이 유지되는 보안·버그 수정 릴리스다. 이런 프로퍼티 override는 Spring Boot 공식 문서가 안내하는 표준 방식이며,
+"reactor-netty가 검증한 조합이라 netty.version 강제 지정은 위험하다 → parent를 올린다"는 판단은 **틀린 방향**이다 —
+parent를 올리면 netty 하나가 아니라 Spring Framework·Security·Jackson·Tomcat 등 수십 개 관리 버전이 동시에 바뀌어 검증 범위가 훨씬 커진다.
+reasoning에는 "같은 라인 패치 override라 호환성 영향이 작아 parent는 그대로 두었다"를 적는다.
 
-CVE가 지목한 아티팩트가 `org.springframework.boot:spring-boot`, `spring-boot-autoconfigure`, `spring-boot-actuator`, `spring-boot-devtools`, `spring-boot-starter-*` 등 **`org.springframework.boot` 그룹 자신의 모듈**이면, 3번(프로퍼티/`dependencyManagement` override)은 애초에 쓸 수 없다 — 시도해도 조용히 무시된다.
+**메이저 업그레이드는 자동으로 선택하지 마라.** 특히 Spring Boot 2.x → 3.x 는 Java 17 이상 + `javax.*` → `jakarta.*` 전면 수정 + Hibernate 5→6 이 따라오므로 pom 수정만으로 끝나지 않는다. 이런 경우는 1번(개별 프로퍼티) 방식으로 우회하고, 우회가 불가능하면 `unresolved_cves` 에 "메이저 업그레이드 필요, 코드 수정 동반" 으로 적는다. Tomcat 9→10, Hibernate 5→6, Jakarta EE 8→9 도 같다.
 
-이유: `spring-boot-dependencies` BOM 안에서 이 모듈들의 버전은 `${spring-framework.version}`처럼 오버라이드 가능한 프로퍼티가 아니라 **그 BOM 자신의 버전 값이 리터럴로 박혀 있다**(예: `spring-boot-dependencies:3.2.6`의 `spring-boot-devtools` 항목은 `<version>3.2.6</version>`). 즉 이 모듈들의 버전을 바꾸는 유일한 방법은 **parent(`spring-boot-starter-parent`) 자체를 올리는 것**뿐이다 — 1번/2번(`PARENT_UPGRADE`)만 성립한다.
+## Spring Boot 자신의 모듈은 1번(개별 override)으로 못 고친다
 
-- 목표 버전이 현재 parent와 같은 마이너 라인의 패치 업그레이드로 도달 가능하면(예: `3.2.6` → `3.2.10`), 그건 메이저 업그레이드가 아니니 "자동으로 선택하지 마라" 규칙에 안 걸린다 — 1번 우선순위 그대로 적용해서 parent를 올려라.
-- **주의**: `org.springframework.boot` 그룹의 모듈들은 서로 다른 Maven 좌표다. `spring-boot`만 `<dependencyManagement>`로 콕 집어 버전을 고정해도 `spring-boot-devtools`나 `spring-boot-starter-actuator`처럼 같은 릴리스로 묶여 나오는 다른 모듈에는 전혀 전파되지 않는다 — 서로 다른 CVE로 따로 잡혀도 실제로는 다 같은 parent 버전에 묶여 있으니, 이런 CVE가 여러 개 걸려있으면 parent 업그레이드 하나로 한꺼번에 묶어서 해소하는 게 맞다.
-- 그래도 parent를 못 올리는 상황(더 낮은 마이너 라인에 패치가 없다, 메이저 업그레이드가 필요하다 등)이면 억지로 프로퍼티를 만들어내지 말고 `unresolved_cves`에 "parent 업그레이드 필요, 프로퍼티 override 불가" 로 적어라.
+CVE가 지목한 아티팩트가 `org.springframework.boot:spring-boot`, `spring-boot-autoconfigure`, `spring-boot-actuator`, `spring-boot-devtools`, `spring-boot-starter-*` 등 **`org.springframework.boot` 그룹 자신의 모듈**이면, 1번(프로퍼티/`dependencyManagement` override)은 애초에 쓸 수 없다 — 시도해도 조용히 무시된다.
 
-## 프로퍼티 오버라이드가 parent의 기본값과 너무 멀어지면 parent를 올리는 걸 우선 고려하라
+이유: `spring-boot-dependencies` BOM 안에서 이 모듈들의 버전은 `${spring-framework.version}`처럼 오버라이드 가능한 프로퍼티가 아니라 **그 BOM 자신의 버전 값이 리터럴로 박혀 있다**(예: `spring-boot-dependencies:3.2.6`의 `spring-boot-devtools` 항목은 `<version>3.2.6</version>`). 즉 이 모듈들의 버전을 바꾸는 유일한 방법은 **parent(`spring-boot-starter-parent`) 자체를 올리는 것**뿐이다 — 2번(`PARENT_UPGRADE`, 같은 마이너 라인 패치)만 성립하고, 그게 안 되면 `unresolved_cves` 다.
 
-3번(프로퍼티 override)을 쓸 때, 목표 버전이 **지금 parent 라인이 원래 관리하는 기본값과 몇 마이너 라인이나 떨어져 있는지**를 먼저 확인해라. 너무 멀면 그 프로퍼티 override 자체가 새로운 위험이 된다 — Spring Boot의 auto-configuration 코드는 자기 라인이 관리하는 버전 조합으로만 테스트됐지, 임의로 앞당긴 조합으로는 검증되지 않았다.
+- 목표 버전이 현재 parent와 같은 마이너 라인의 패치 업그레이드로 도달 가능하면(예: `3.2.6` → `3.2.10`), 2번 우선순위 그대로 적용해서 parent를 올려라. 이때 같은 pom의 다른 취약 아티팩트(netty 등)는 parent 패치로 덮이지 않는 만큼만 프로퍼티로 올린다(`MIXED`).
+- 같은 마이너 라인에 수정 패치가 없어 마이너를 올려야만 하면, 3번 규칙대로 parent는 올리지 말고 `unresolved_cves` 에 "parent 마이너 업그레이드 필요, 프로퍼티 override 불가" 와 필요한 최소 parent 버전을 적는다.
+- **주의**: `org.springframework.boot` 그룹의 모듈들은 서로 다른 Maven 좌표다. `spring-boot`만 `<dependencyManagement>`로 콕 집어 버전을 고정해도 `spring-boot-devtools`나 `spring-boot-starter-actuator`처럼 같은 릴리스로 묶여 나오는 다른 모듈에는 전혀 전파되지 않는다 — 서로 다른 CVE로 따로 잡혀도 실제로는 다 같은 parent 버전에 묶여 있으니, 이런 CVE가 여러 개 걸려있으면 (같은 마이너 라인 안의) parent 패치 업그레이드 하나로 한꺼번에 묶어서 해소하고, 그게 안 되면 `unresolved_cves` 에도 한 항목으로 묶어 적는다.
+- 어느 경우든 억지로 프로퍼티를 만들어내지 마라 — 시도해도 조용히 무시돼 "고쳤다"고 착각하게 된다.
 
-실제로 확인된 예: Spring Boot 3.2.x는 원래 Spring Framework 6.1.8 / Spring Security 6.2.4를 관리한다. 그런데 parent는 3.2.6에 그대로 두고 프로퍼티로 Framework를 6.2.19, Security를 6.5.11로 강제하면, 이건 오히려 Spring Boot **3.5.x가 원래 관리하는 조합**(Framework 6.2.7 / Security 6.5.0)에 더 가깝다 — 3.2.6의 auto-configuration이 한 번도 검증해본 적 없는 조합으로 억지로 밀어넣는 셈이다.
+## 프로퍼티 오버라이드의 거리 판단 — 멀다고 바로 parent를 올리지 마라
 
-- 이런 낌새가 보이면(오버라이드하려는 버전이 지금 parent 라인의 기본값과 마이너 라인 기준 여러 단계 떨어져 있으면), parent 자체를 그 방향으로(메이저 업그레이드가 아닌 선에서) 올리는 걸 먼저 검토해라. parent를 올리면 그 라인이 원래 관리하는 조합에 더 가까워져서, 오버라이드해야 하는 폭도 줄고 검증 안 된 조합 리스크도 줄어든다.
-  (예: 위 사례라면 parent를 3.5.x로 올리면 Framework는 오버라이드가 아예 필요 없어지고, Security만 6.5.0→6.5.11 정도의 작은 패치 오버라이드만 남는다 — 3.2.6에 6.5.11을 강제하는 것보다 훨씬 안전하다.)
-- 그렇다고 이 판단 하나만으로 메이저 업그레이드를 자동 선택하지는 마라 — "메이저 업그레이드는 자동으로 선택하지 마라" 규칙이 여전히 우선한다. 같은 메이저 라인 안에서 더 가까운 마이너로 올릴 수 있는 경우에만 적용한다.
-- reasoning에는 "프로퍼티 오버라이드가 parent 기본값과 이만큼 떨어져 있어 parent를 함께 올렸다" 또는 반대로 "거리가 크지 않아 parent는 그대로 두고 프로퍼티만 오버라이드했다"를 명시해라 — 이 판단을 왜 했는지 사람이 보고 검증할 수 있어야 한다.
+1번(프로퍼티 override)을 쓸 때, 목표 버전이 **지금 parent 라인이 원래 관리하는 기본값에서 얼마나 떨어져 있는지**를 확인하고 reasoning에 적는다.
+
+- **같은 마이너 라인 안의 패치 차이**(예: netty `4.1.110.Final` → `4.1.118.Final`, Security `6.2.4` → `6.2.8`): 거리 문제 없음. 그대로 프로퍼티 override 한다. parent를 올릴 이유가 되지 않는다.
+- **마이너 라인이 달라지는 경우**(예: parent 3.2.x가 Framework 6.1.x를 관리하는데 6.2.x로 강제): Spring Boot auto-configuration이 검증하지 않은 조합이 될 수 있다.
+  먼저 **현재 마이너 라인 안에 수정 패치가 있는지** 확인해서, 있으면 그 패치 버전을 목표로 삼는다(예: 6.2.19가 아니라 6.1.x의 수정 패치).
+  현재 라인에 패치가 없어 라인을 넘겨야만 할 때만 라인을 넘기되, reasoning의 [함께 검증 필요]에 "parent 기본값과 마이너 라인이 달라 auto-configuration 호환성 회귀 테스트 필요"를 적는다.
+  이 경우에도 parent 마이너 업그레이드로 갈아타지 말고 프로퍼티 override를 유지한다(parent 마이너 업그레이드는 3번 규칙대로 하지 않는다).
+- **메이저가 달라지는 경우**(예: Security 5.x → 6.x): 프로퍼티로도 강제하지 말고 `unresolved_cves` 로 넘긴다.
+- reasoning에는 "같은 라인 패치 override라 parent는 그대로 두었다" 또는 "라인을 넘기는 override라 회귀 테스트가 필요하다"를 명시해라 — 이 판단을 왜 했는지 사람이 보고 검증할 수 있어야 한다.
 
 ## override 방법 선택 — 가장 흔한 실수
 
 `<properties>` 에 `<netty.version>4.1.100.Final</netty.version>` 같은 걸 쓰는 방식은 **그 프로퍼티 이름이 부모 BOM에 실제로 정의돼 있을 때만** 동작한다. 이름을 틀리면 아무 효과 없이 조용히 무시되고, 취약점이 그대로 남은 채 "고쳤다"고 착각하게 된다.
 
 - 부모 BOM(예: `spring-boot-dependencies`)이 그 프로퍼티를 정의한다고 **확실히 아는 경우에만** 프로퍼티 override 를 쓴다.
+  `spring-boot-dependencies`(2.x·3.x 공통)가 정의하는 대표 프로퍼티: `netty.version`, `tomcat.version`, `jackson-bom.version`,
+  `spring-framework.version`, `spring-security.version`, `reactor-bom.version`, `logback.version`, `log4j2.version`,
+  `snakeyaml.version`, `thymeleaf.version`, `jetty.version`, `undertow.version`, `hibernate.version`, `micrometer.version`, `h2.version`.
+  netty 계열 아티팩트(`io.netty:*`)는 전부 `netty.version` 하나가 관리하므로, 여러 netty 모듈이 걸려도 이 프로퍼티 한 줄로 해소한다.
 - 조금이라도 불확실하면 `<dependencyManagement>` 에 명시적 항목을 추가해 버전을 고정한다. 프로퍼티 이름에 의존하지 않으므로 항상 효과가 있다.
 
 ## 직접 의존성 vs 전이 의존성
