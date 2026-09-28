@@ -55,6 +55,9 @@ py -m pip install -r ../ai/requirements.txt
 - 버튼/패널/색상이 필요하면 → `common-ui.css`의 클래스와 `:root` 변수. 화면 `<style>`에는
   **그 화면에서만 다른 값**만 남긴다.
 - fetch 호출에 CSRF 헤더나 스피너를 직접 붙이지 않는다 — `loading-overlay` 래퍼가 이미 한다.
+- 새 화면의 첫 줄은 `<section th:replace="~{fragments/page-toolbar :: toolbar}"></section>` 한 줄이다. 공통 버튼(조회/신규/저장/삭제/초기화/기타1~5)은 **마크업에 쓰지 않는다** — 프로그램 관리·사용자별 권한관리 설정대로 서버가 그린다. 화면 JS는 `PageButtons.bind({ btnSearch: ..., btnAdd: ..., btnEtc1: ... })`로만 핸들러를 건다(`getElementById(...).addEventListener`로 걸면 권한 없는 사용자에게서 null 오류로 스크립트가 멈춘다). 단축키(F3/F4/F5/F9/F12)와 `[F3]` 표기는 자동이다.
+- 그리드 `<tbody>`는 비워 둔다. 첫 안내 행은 `Grid.renderHeader`가 넣고, 문구가 다르면 `{ initialMessage }`로 준다.
+- 조회영역은 마크업으로 쓰지 않고 `SearchForm.render`(`/js/search-form.js`)에 필드 정의로 넘긴다 — 그리드의 `COLUMNS`와 같은 방식.
 - 버전 비교가 필요하면 → `NvdVersionRangeChecker` / `OsvVersionRangeChecker` / `VersionLineSelector`.
   문자열 비교를 새로 짜지 않는다(`.RELEASE`, `.Final` 같은 접미사에서 반드시 틀린다).
 
@@ -85,6 +88,10 @@ py -m pip install -r ../ai/requirements.txt
   `VersionLineSelector`가 그렇다 — Spring 컨텍스트 없이 단위 테스트가 되기 때문에 테스트가 있다.
 - **이름을 정확히 쓴다.** 패키지명과 실제 역할이 어긋나면(과거 `dto.git`에 스캔 DTO가 있던 사례)
   그때그때 고친다. 이름이 맞지 않는 폴더는 곧 중복이 생기는 자리다.
+- **외부 HTTP 호출을 `@Transactional` 안에 두지 않는다.** 조회·외부 검증을 먼저 끝내고, 쓰기만
+  트랜잭션 안에서 한다. `VulnerabilityService.syncCveById` / `applyAiAssessment`가 일부러
+  `@Transactional`을 안 붙인 이유다(NVD·Maven Central·OSV를 부르는 동안 DB 커넥션이 묶인다).
+  순수 DB 작업(`resolveMissingVulnerabilities`)에는 그대로 붙인다.
 - 구조를 바꿨으면 **관련 주석과 문서까지 같이 고친다.** 설명이 틀린 주석은 없느니만 못하다.
 
 ### 2.4 주석은 "무엇"이 아니라 "왜"를 적는다
@@ -106,8 +113,12 @@ py -m pip install -r ../ai/requirements.txt
 - **권한(프로그램 단위)은 그렇지 않다** — `@RequiresProgram`을 안 붙인 API는 "로그인만 하면 되는
   API"로 열린다. 구조가 막아주지 않으므로 **관리 화면 API를 만들 때 어노테이션 부착은 사람이
   챙겨야 한다**(4장 체크리스트).
-- 부가 기능은 **본 작업을 실패시키지 않는다** — AI 배치를 못 띄워도 스캔 결과 저장은 이미 끝난
-  뒤이므로 `log.warn`만 남기고 넘어간다(`AiAssessmentTriggerService`).
+- **외부 호출 한 건의 실패가 전체를 죽이지 않는다** — 스캔의 CVE별 NVD 조회는 건별로 try/catch해서
+  그 건만 건너뛴다. 대신 **건너뛴 사실을 반드시 위로 올린다**(`ScanResult.failedCveCount` → 화면 알림).
+  조용히 넘어가면 "취약점이 없는 것"과 "조회를 못 한 것"을 구분할 수 없게 되는데, 이 프로젝트에서
+  그건 가장 나쁜 실패다.
+- **반복되는 외부 API 호출에는 간격·재시도·타임아웃을 반드시 건다** — CVE 건수만큼 도는 호출은
+  한도 초과(429)를 맞는 게 정상이다(`NvdClient`).
 
 ### 2.6 되돌릴 수 없는 일은 확인부터
 

@@ -67,6 +67,7 @@
 
             const btn = document.createElement('div');
             btn.className = 'tab-btn';
+            btn.title = title; // 탭 폭이 고정이라 잘린 이름을 마우스 오버로 전체 표시
             const label = document.createElement('span');
             label.className = 'tab-label';
             label.textContent = title;

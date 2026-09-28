@@ -23,8 +23,9 @@ public class Program {
     @Column(name = "program_id")
     private String programId;
 
-    @Column(nullable = false)
-    private String name;
+    /** 프로그램명(사이드바 메뉴·탭 제목에 그대로 보인다). */
+    @Column(name = "program_nm", nullable = false)
+    private String programNm;
 
     @Column(nullable = false)
     private String url;
@@ -35,4 +36,56 @@ public class Program {
     /** 사용여부. "Y" 또는 "N". */
     @Column(name = "use_yn", nullable = false)
     private String useYn;
+
+    // ── 화면 공통 버튼 사용 여부("Y"/"N"). 기타1~5는 이름을 넣으면 그 이름으로 버튼이 생긴다. ──
+    @Builder.Default
+    @Column(name = "search_yn", nullable = false)
+    private String searchYn = "N";
+    @Builder.Default
+    @Column(name = "new_yn", nullable = false)
+    private String newYn = "N";
+    @Builder.Default
+    @Column(name = "save_yn", nullable = false)
+    private String saveYn = "N";
+    @Builder.Default
+    @Column(name = "delete_yn", nullable = false)
+    private String deleteYn = "N";
+    @Builder.Default
+    @Column(name = "reset_yn", nullable = false)
+    private String resetYn = "N";
+    @Column(name = "etc1_nm")
+    private String etc1Nm;
+    @Column(name = "etc2_nm")
+    private String etc2Nm;
+    @Column(name = "etc3_nm")
+    private String etc3Nm;
+    @Column(name = "etc4_nm")
+    private String etc4Nm;
+    @Column(name = "etc5_nm")
+    private String etc5Nm;
+
+    /** 이 프로그램이 그 버튼을 쓰는가. 기타 버튼은 이름이 입력돼 있으면 쓰는 것으로 본다. */
+    public boolean uses(ProgramButton button) {
+        return switch (button) {
+            case SEARCH -> "Y".equals(searchYn);
+            case NEW -> "Y".equals(newYn);
+            case SAVE -> "Y".equals(saveYn);
+            case DELETE -> "Y".equals(deleteYn);
+            case RESET -> "Y".equals(resetYn);
+            default -> buttonLabel(button) != null;
+        };
+    }
+
+    /** 툴바에 보일 버튼 이름. 기타 버튼은 입력한 이름(비어 있으면 null), 나머지는 고정 이름. */
+    public String buttonLabel(ProgramButton button) {
+        String etc = switch (button) {
+            case ETC1 -> etc1Nm;
+            case ETC2 -> etc2Nm;
+            case ETC3 -> etc3Nm;
+            case ETC4 -> etc4Nm;
+            case ETC5 -> etc5Nm;
+            default -> button.getDefaultLabel();
+        };
+        return (etc == null || etc.isBlank()) ? null : etc.trim();
+    }
 }

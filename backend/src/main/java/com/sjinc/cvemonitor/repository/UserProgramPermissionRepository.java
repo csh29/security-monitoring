@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface UserProgramPermissionRepository extends JpaRepository<UserProgramPermission, Long> {
 
@@ -19,8 +20,8 @@ public interface UserProgramPermissionRepository extends JpaRepository<UserProgr
 
     List<UserProgramPermission> findByUserId(Long userId);
 
-    @Query("select perm.program.programId from UserProgramPermission perm where perm.user.id = :userId")
-    List<String> findProgramIdsByUserId(@Param("userId") Long userId);
+    /** 화면 툴바 버튼을 정할 때 쓴다 — 그 사용자의 그 프로그램 권한 행(없으면 접근 권한도 없음). */
+    Optional<UserProgramPermission> findByUserUsernameAndProgramProgramId(String username, String programId);
 
     /**
      * 벌크 DELETE로 즉시 실행된다(엔티티 삭제 큐잉과 달리 flush를 기다리지 않음).

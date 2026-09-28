@@ -25,6 +25,8 @@
     --line:          #e8e8f2;
 
     --radius-md: 14px;
+    /* 그리드와 조회영역 박스의 모서리. 두 곳이 같은 값이어야 화면이 한 벌로 보인다. */
+    --radius-box: 3px;
 
     --left-w:  220px;
     --top-h:   54px;
@@ -73,6 +75,12 @@ body{
 .panel-head{ display:flex; align-items:center; justify-content:space-between; }
 .panel-title{ font-size:13px; font-weight:700; color:var(--text-sub); }
 
+/* 모든 화면의 첫 줄(fragments/page-toolbar). 좌상단에 프로그램명, 우측 상단에 화면 공통 버튼
+   (조회/추가/저장/삭제/초기화)을 둔다. 버튼이 없는 화면은 프로그램명만 남는다. */
+.page-toolbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:34px; }
+.page-toolbar .btn-group{ margin-left:auto; }
+.page-name{ font-size:16px; font-weight:800; color:var(--text); }
+
 .btn-group{ display:flex; gap:8px; }
 .btn{
     padding:7px 16px; border-radius:8px; border:1px solid var(--line);
@@ -87,16 +95,17 @@ body{
 .btn.danger{ background:var(--accent-soft); color:var(--accent); border-color:transparent; }
 .btn.danger:hover{ background:var(--accent); color:#fff; }
 
-/* 검색/입력 바 한 줄(예: 취약점 관리의 .search-row, 사용자별 권한관리의 .form-row) —
-   두 화면 다 이름만 다르고 모양은 똑같아서 선택자를 묶어 하나로 관리한다. select의
-   min-width처럼 화면마다 다른 값만 그 화면 <style>에 남긴다. */
-.form-row, .search-row{
-    display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;
+/* 조회영역. 마크업은 화면이 직접 쓰지 않고 /js/search-form.js(SearchForm.render)가 필드 정의로
+   만든다. 필드마다 label과 입력을 한 줄로 가로 정렬하고, 필드가 많으면 다음 줄로 넘어간다.
+   입력 폭은 필드 정의의 width로 준다(화면 <style>에 min-width를 적지 않는다). */
+.search-row{
+    display:flex; gap:10px 24px; flex-wrap:wrap; align-items:center;
     background:var(--card); border:1px solid var(--line);
-    border-radius:var(--radius-md); padding:16px;
+    border-radius:var(--radius-box); padding:14px 16px;
 }
-.form-field, .search-field{ display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--text-sub); }
-.form-field select, .search-field select{
+.search-field{ display:flex; flex-direction:row; align-items:center; gap:8px; font-size:12px; color:var(--text-sub); }
+.search-field label{ font-weight:700; white-space:nowrap; }
+.search-field select, .search-field input[type="text"]{
     padding:8px 10px; border:1px solid var(--line); border-radius:8px;
     font-size:12.5px; font-family:inherit; color:var(--text);
 }

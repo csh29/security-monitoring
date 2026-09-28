@@ -12,11 +12,14 @@
             overflow-x:auto; flex:1; min-width:0;
         }
         .tab-btn{
-            display:flex; align-items:center; gap:8px; padding:0 14px;
+            display:flex; align-items:center; gap:6px; padding:0 8px 0 12px;
+            width:130px; box-sizing:border-box;
             font-size:12.5px; color:var(--text-sub); cursor:pointer;
             border-right:1px solid var(--line); white-space:nowrap; flex-shrink:0;
             user-select:none;
         }
+        /* 탭 폭이 고정이라 긴 프로그램명은 ...으로 자르고, 전체 이름은 마우스 오버 툴팁으로 보여준다 */
+        .tab-btn .tab-label{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; }
         .tab-btn:hover{ background:#fafafd; }
         .tab-btn.active{ color:var(--text); font-weight:700; background:#fafafd; box-shadow:inset 0 -2px 0 var(--accent); }
         .tab-btn .tab-close{

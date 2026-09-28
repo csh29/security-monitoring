@@ -21,7 +21,7 @@ Git 저장소(Maven 프로젝트)를 clone → 의존성 추출 → 취약점 DB
 | 모듈 | 역할 |
 | --- | --- |
 | `backend/` | Spring Boot 3.3.4 / Java 17 / Maven. 서버 + 화면(Thymeleaf) 전부 |
-| `ai/` | 파이썬 배치(`vuln_assessor.py`). 자바가 fire-and-forget으로 띄우고, 배치는 `/api/ai/**`를 직접 호출해 대기 중인 취약점을 스스로 가져가 판단 결과를 되돌려준다 |
+| `ai/` | 파이썬 배치(`vuln_assessor.py`). **배치가 드라이버다** — 사람이 직접 실행하면 배치가 `/api/ai/**`를 호출해 대기 중인 취약점을 스스로 가져가고, 판단 결과를 되돌려준다. 자바가 파이썬을 띄우지 않는다 |
 
 DB는 H2 in-memory(`ddl-auto=update`)다. **재기동하면 데이터가 사라지고** `DataInitializer`가
 초기 데이터를 다시 심는다 — "DB에 있던 값이 없어졌다"는 현상을 버그로 오해하지 않는다.
@@ -57,7 +57,21 @@ com.sjinc.cvemonitor
 3. `MavenDependencyExtractor` → `dependency:tree`로 의존성 + `broughtInBy`(전이 경로) 추출
 4. `OsvClient.queryBatch` → 취약점 조회
 5. `VulnerabilityService.upsertEntity` → NVD 보강 + 결정론 판정 + 저장
-6. `AiAssessmentTriggerService.triggerAsync` → 파이썬 배치 기동(결과를 기다리지 않음)
+6. `resolveMissingVulnerabilities` → 이번 스캔에 안 걸린 기존 OPEN 건을 RESOLVED로 표시
+7. `ScanSnapshot` 저장 (fix-plan이 나중에 참고할 pom.xml + tree 원문)
+
+**스캔은 여기서 끝난다 — 자바가 AI 배치를 띄우지 않는다.** AI 판단은 파이썬 배치를 사람이
+실행할 때 시작된다(1장). `AiAssessmentTriggerService`는 현재 어디서도 호출되지 않는 잔여 코드이고,
+`getStatus()`만 `/api/ai/status`에서 쓰인다.
+
+### 5단계의 실패 처리
+
+NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(429)·일시 장애가 실제로 난다.
+
+- `NvdClient`가 호출 간격(`nvd.api.min-interval-ms`)을 지키고, 429/5xx/타임아웃은 지수 백오프로 재시도한다.
+- 그래도 실패한 CVE는 **그 건만 건너뛰고 스캔은 계속된다.** 실패 건수는 `ScanResult.failedCveCount`로
+  올라가 화면 알림에 표시된다 — "스캔은 성공했는데 일부가 조용히 빠진" 상태를 만들지 않기 위함이다.
+- 실패한 CVE도 `currentKeys`에는 남으므로 6단계에서 잘못 RESOLVED 처리되지 않는다.
 
 ---
 
@@ -103,12 +117,16 @@ AI에게 넘기는 근거도 마찬가지다. OSV에서 뽑은 `knownFixedVersio
 
 | 파일 | 역할 |
 | --- | --- |
-| `/css/common-ui.css` | `:root` 변수, `.app-shell`, `.btn`, `.panel-head` 등 페이지 뼈대 |
+| `/css/common-ui.css` | `:root` 변수, `.app-shell`, `.btn`, `.panel-head`, `.page-toolbar` 등 페이지 뼈대. 화면 공통 버튼은 항상 우측 상단 — 제목과 한 줄이면 `.panel-head`, 조회조건 영역이 있으면 그 위에 `.page-toolbar` |
 | `/css/grid.css` | `.grid` 공통 모양 |
-| `/js/grid.js` | 컬럼 정의(`COLUMNS`)로 헤더·행·입력 셀까지 만드는 공통 그리드 렌더러 |
+| `/js/grid.js` | 컬럼 정의(`COLUMNS`)로 헤더·행·입력 셀까지 만드는 공통 그리드 렌더러. `renderHeader`가 tbody의 첫 안내 행("조회 중입니다...", colspan 자동)도 넣으므로 템플릿의 `<tbody>`는 비워 둔다. 또 table을 `.grid-scroll`로 감싸고 숫자 `width`를 최소 폭으로도 적용해, 화면보다 넓으면 가로 스크롤이 생긴다 |
 | `/js/common-code.js` | 공통코드로 select 옵션 채우기(그룹당 1회 캐시) |
 | `/js/tabs.js` | 홈 화면 탭 |
-| `fragments/loading-overlay.html` | 전역 스피너 + **CSRF 헤더를 붙이는 공통 fetch 래퍼** |
+| `/js/hotkeys.js` | 공통 펑션키 F3 조회 / F4 신규 / F5 삭제 / F9 저장 / F12 초기화. 버튼에 `data-hotkey="F3"`만 붙이면 되고, 버튼 글자 뒤 `[F3]` 표기도 이 파일이 자동으로 붙인다. `loading-overlay.html`이 싣는다 |
+| `/js/search-form.js` | 조회영역 공통 렌더러 `SearchForm.render(container, fields, {onSearch})` → `values()`/`reset()`/`field(id)`/`ready`. 화면은 `<section class="search-row" id="searchArea">`만 두고 label/input 마크업을 직접 쓰지 않는다 |
+| `fragments/page-toolbar.html` | 화면 첫 줄 — 좌상단 프로그램명 + 우측 상단 공통 버튼. 값(`programNm`, `pageButtons`, `pageButtonIds`)은 `ViewController`가 넣는다. 버튼은 마크업에 쓰지 않는다(아래 "화면 공통 버튼" 참고) |
+| `/js/page-buttons.js` | `PageButtons.bind({ btnSave: fn })` — 권한 때문에 안 그려진 버튼은 건너뛰고 핸들러를 건다. `loading-overlay.html`이 싣는다 |
+| `fragments/loading-overlay.html` | 전역 스피너 + **CSRF 헤더를 붙이는 공통 fetch 래퍼** + `hotkeys.js` 로드 |
 
 화면 코드에서 `fetch(...)`에 CSRF 헤더를 붙이는 부분을 찾아도 없다 — `loading-overlay.html`이
 `window.fetch` 자체를 감싸서 전역으로 처리한다.
@@ -125,11 +143,12 @@ AI에게 넘기는 근거도 마찬가지다. OSV에서 뽑은 `knownFixedVersio
 | 어노테이션이 없으면 | **로그인만 하면 통과한다**(= 권한 미요구 API로 간주) |
 | 예외 1건 | `CommonCodeController.getCodes`는 `@PreAuthorize` — `includeInactive`가 쿼리 파라미터라 메서드 단위 어노테이션으로 표현할 수 없기 때문 |
 | CSRF | `/api/**` 포함 전체 검증(`CookieCsrfTokenRepository`). 화면 JS는 공통 fetch 래퍼가 헤더를 붙인다. **`/api/ai/**`만 `ignoringRequestMatchers`로 제외** — 세션 쿠키가 아니라 헤더 토큰으로 인증하는 배치 전용 경로라 CSRF 전제가 성립하지 않고, 빼지 않으면 배치의 POST가 전부 403이 된다 |
+| 화면 공통 버튼 | 툴바 버튼 = **프로그램이 쓰는 버튼**(`programs`의 `search_yn`~`reset_yn`, 기타는 `etc1_nm`~`etc5_nm`에 이름이 있으면) **∩ 사용자에게 허용된 버튼**(`user_program_permissions`의 `search_yn`~`etc5_yn`). `ProgramService.getPageButtons`가 `ProgramButton` 순서로 만든다. 고정 메뉴는 `mvc/FixedMenu`에 버튼이 고정돼 있다. **화면 표시만 막는다** — API는 여전히 `@RequiresProgram`(프로그램 단위)만 본다 |
 | 화면 접근 | `ViewController.programPage`가 화면 이름(`Program.programId`와 같은 값)으로 Program 등록 여부를 보고, 등록돼 있으면 `ProgramAccessGuard`로 권한을 확인한다. 등록되지 않은 화면은 고정 메뉴라 로그인만으로 열린다. 화면 이름은 `[a-z0-9-]+`만 허용(경로 조작 차단) |
 | AI 배치 경로 | `/api/ai/**`는 세션 대신 `X-Internal-Token` 헤더로 자체 인증(`MessageDigest.isEqual`로 상수 시간 비교) |
 | 스캔 대상 | 앱 관리에 등록된 `repoUrl/branch` 조합만 허용. 등록 자체는 `RepoUrlValidator`가 https + 허용 호스트만 통과시킨다 |
 | 역할(`role`) | 공통코드 `ROLE` 그룹 값만 저장 가능. **다만 인가 판단에는 쓰이지 않는다** — 권한은 전적으로 `UserProgramPermission` 기준이고, `role`은 `CustomUserDetailsService`가 authority로 변환만 할 뿐 `hasRole(...)`을 보는 곳이 없다 |
-| H2 콘솔 | `spring.h2.console.enabled=false`로 완전 비활성 |
+| H2 콘솔 | 기본 `spring.h2.console.enabled=false`. 로컬에서 켜면 앱 로그인은 여전히 필요하고, `/h2-console/**`만 CSRF 검증에서 빠진다(`SecurityConfig`가 이 설정값을 읽어 켰을 때만 제외) |
 | 초기 관리자 | 기동할 때마다 무작위 비밀번호 생성 → 서버 로그에 1회만 출력 |
 
 > 권한을 추적할 때 `SecurityConfig`에서 URL 표를 찾지 말고 **해당 컨트롤러의 `@RequiresProgram`을
@@ -145,6 +164,9 @@ AI에게 넘기는 근거도 마찬가지다. OSV에서 뽑은 `knownFixedVersio
 | 키 | 용도 |
 | --- | --- |
 | `nvd.api.key` | NVD CVE API |
+| `nvd.api.min-interval-ms` | NVD 호출 사이 최소 간격(기본 700). NVD는 키가 있어도 30초당 50회가 상한이라 간격을 두지 않으면 반드시 429를 맞는다 |
+| `nvd.api.max-retries` | NVD 429/5xx 재시도 횟수(기본 3) |
+| `nvd.api.timeout-seconds` | NVD 호출 1회 타임아웃(기본 20) |
 | `git.access.token` / `git.user.name` | 스캔 대상 저장소 clone |
 | `maven.home` | `dependency:tree` 실행용 Maven 홈 |
 | `claude.api.key` | AI 판단 / fix-plan |

@@ -2,6 +2,7 @@ package com.sjinc.cvemonitor.config;
 
 import com.sjinc.cvemonitor.security.RequiresProgramAuthorizationManager;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -30,6 +31,10 @@ import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 public class SecurityConfig {
 
     private final RequiresProgramAuthorizationManager requiresProgramAuthorizationManager;
+
+    /** H2 콘솔을 켰을 때만 그 경로를 CSRF 검증에서 뺀다(아래 csrf 설정 주석 참고). */
+    @Value("${spring.h2.console.enabled:false}")
+    private boolean h2ConsoleEnabled;
 
     /** 로그인 없이 열어야 하는 것. */
     private static final String[] PUBLIC_URLS = {
@@ -70,12 +75,20 @@ public class SecurityConfig {
                         // 빼지 않으면 배치의 POST(판단 결과 저장, fix-plan 저장)가 전부 403으로
                         // 막힌다 — GET(pending 조회)은 통과하므로 "판단은 다 하고 저장만 실패"라는,
                         // 로그만 봐서는 알아채기 어려운 형태로 깨진다.
-                        .ignoringRequestMatchers("/api/ai/**")
+                        //
+                        // H2 콘솔(/h2-console/**)은 콘솔을 켰을 때만 제외한다. 콘솔 자체 로그인 폼이
+                        // 이 앱의 CSRF 토큰을 모르고 POST하기 때문에, 빼지 않으면 앱에 로그인한
+                        // 상태여도 콘솔 "Connect"가 403으로 막힌다. 꺼져 있을 때까지 빼 둘 이유는
+                        // 없으니 설정값에 묶는다 — 켜 둔 동안은 콘솔이 CSRF 보호 없이 열리는 셈이라
+                        // 로컬에서 잠깐 쓰고 반드시 다시 꺼야 한다.
+                        .ignoringRequestMatchers(h2ConsoleEnabled
+                                ? new String[]{"/api/ai/**", "/h2-console/**"}
+                                : new String[]{"/api/ai/**"})
                         .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                         .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler()))
-                // H2 콘솔은 완전히 비활성화한다(application.properties). 임의 SQL 실행 콘솔이라
+                // H2 콘솔은 기본으로 꺼둔다(application.properties). 임의 SQL 실행 콘솔이라
                 // 인증 없이 열려 있으면 CREATE ALIAS ... AS $$ ... $$로 원격 코드 실행까지 가능하다
-                // — 켜야 할 일이 생기면 그때 별도로 인증/권한을 붙여야지, 기본으로 열어두면 안 된다.
+                // — 로컬에서 켜더라도 PUBLIC_URLS에 넣지 않으므로 앱 로그인은 여전히 필요하다.
                 .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin())); // 홈 화면의 탭(iframe)이 같은 출처에서 화면을 띄우는 데 필요
 
         return http.build();

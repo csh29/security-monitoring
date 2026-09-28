@@ -1,7 +1,10 @@
 package com.sjinc.cvemonitor.mvc;
 
+import com.sjinc.cvemonitor.domain.Program;
+import com.sjinc.cvemonitor.dto.program.PageButtonView;
 import com.sjinc.cvemonitor.repository.ProgramRepository;
 import com.sjinc.cvemonitor.security.ProgramAccessGuard;
+import com.sjinc.cvemonitor.service.program.ProgramService;
 import com.sjinc.cvemonitor.service.vulnerability.VulnerabilityService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
@@ -13,7 +16,10 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 
 import java.security.Principal;
+import java.util.List;
+import java.util.Optional;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /** REST API(controller 패키지)와 구분되는, 화면(뷰)을 반환하는 페이지 컨트롤러. */
 @Controller
@@ -24,6 +30,7 @@ public class ViewController {
     private final VulnerabilityService vulnerabilityService;
     private final ProgramRepository programRepository;
     private final ProgramAccessGuard programAccess;
+    private final ProgramService programService;
 
     /** 대시보드 막대그래프에 보여줄 프로젝트 수. */
     private static final int DASHBOARD_TOP_APPS = 5;
@@ -81,6 +88,19 @@ public class ViewController {
         }
 
         model.addAttribute("activeMenu", view);
+        // 화면 첫 줄(fragments/page-toolbar)의 프로그램명과 공통 버튼. 등록된 프로그램은 프로그램 관리에서
+        // 바꾼 이름이 사이드바·탭 제목과 똑같이 따라오도록 DB 값을 쓰고, 버튼은 "프로그램이 쓰는 버튼 ∩
+        // 이 사용자에게 허용된 버튼"이다. 고정 메뉴는 FixedMenu에 적어 둔 값을 쓴다.
+        String username = principal != null ? principal.getName() : null;
+        Optional<FixedMenu> fixedMenu = FixedMenu.of(view);
+        List<PageButtonView> pageButtons = programService.getPageButtons(username, view)
+                .orElseGet(() -> fixedMenu.map(FixedMenu::pageButtons).orElse(List.of()));
+        model.addAttribute("programNm", programRepository.findById(view)
+                .map(Program::getProgramNm)
+                .orElseGet(() -> fixedMenu.map(FixedMenu::programNm).orElse("")));
+        model.addAttribute("pageButtons", pageButtons);
+        // 툴바가 아닌 자리에 버튼을 따로 두는 화면(공통코드관리의 그룹/상세 영역)이 th:if로 쓴다.
+        model.addAttribute("pageButtonIds", pageButtons.stream().map(PageButtonView::id).collect(Collectors.toSet()));
 
         Resource template = resourceLoader.getResource("classpath:/templates/program/" + view + ".html");
         if (!template.exists()) {

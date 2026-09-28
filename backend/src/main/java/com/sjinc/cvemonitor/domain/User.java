@@ -28,6 +28,10 @@ public class User {
     @Column(nullable = false, unique = true)
     private String username;
 
+    /** 사용자명(화면 표시용 이름). 로그인 아이디는 username이다. */
+    @Column(name = "user_nm", nullable = false)
+    private String userNm;
+
     @Column(nullable = false)
     private String password;
 

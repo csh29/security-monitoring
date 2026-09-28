@@ -53,6 +53,7 @@ public class UserService {
         User user = User.builder()
                 .id(request.id())
                 .username(request.username())
+                .userNm(request.userNm())
                 .password(password)
                 .role(request.role())
                 .build();

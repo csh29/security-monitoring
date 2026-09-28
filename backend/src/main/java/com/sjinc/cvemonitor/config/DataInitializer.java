@@ -19,6 +19,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 import java.security.SecureRandom;
+import java.util.List;
 
 /**
  * H2가 in-memory라 재기동 시마다 초기화되므로, 로그인용 초기 관리자 계정을 매번 심어둔다.
@@ -50,6 +51,7 @@ public class DataInitializer implements CommandLineRunner {
         String initialPassword = generateInitialPassword();
         User admin = userRepository.save(User.builder()
                 .username("admin")
+                .userNm("관리자")
                 .password(passwordEncoder.encode(initialPassword))
                 .role("ADMIN")
                 .build());
@@ -60,68 +62,77 @@ public class DataInitializer implements CommandLineRunner {
         // 실제 프로그램/URL로 교체하거나 관리 화면이 생기면 이 시드는 제거한다.
         Program programManagement = programRepository.save(Program.builder()
                 .programId("program-management")
-                .name("프로그램 관리")
+                .programNm("프로그램 관리")
                 .url("/program/program-management")
                 .sortOrder(1)
                 .useYn("Y")
+                .searchYn("Y")
+                .newYn("Y")
+                .saveYn("Y")
+                .deleteYn("Y")
+                .resetYn("Y")
                 .build());
 
         Program userManagement = programRepository.save(Program.builder()
                 .programId("user-management")
-                .name("사용자 관리")
+                .programNm("사용자 관리")
                 .url("/program/user-management")
                 .sortOrder(2)
                 .useYn("Y")
+                .searchYn("Y")
+                .newYn("Y")
+                .saveYn("Y")
+                .deleteYn("Y")
+                .resetYn("Y")
                 .build());
 
         Program userPermissionManagement = programRepository.save(Program.builder()
                 .programId("user-permission-management")
-                .name("사용자별 권한관리")
+                .programNm("사용자별 권한관리")
                 .url("/program/user-permission-management")
                 .sortOrder(3)
                 .useYn("Y")
+                .searchYn("Y")
+                .newYn("N")
+                .saveYn("Y")
+                .deleteYn("N")
+                .resetYn("Y")
                 .build());
 
         Program appManagement = programRepository.save(Program.builder()
                 .programId("app-management")
-                .name("앱 관리")
+                .programNm("앱 관리")
                 .url("/program/app-management")
                 .sortOrder(4)
                 .useYn("Y")
+                .searchYn("Y")
+                .newYn("Y")
+                .saveYn("Y")
+                .deleteYn("Y")
+                .resetYn("Y")
                 .build());
 
         Program commonCodeManagement = programRepository.save(Program.builder()
                 .programId("common-code-management")
-                .name("공통코드관리")
+                .programNm("공통코드관리")
                 .url("/program/common-code-management")
                 .sortOrder(5)
                 .useYn("Y")
+                .searchYn("Y")
+                .newYn("Y")
+                .saveYn("Y")
+                .deleteYn("Y")
+                .resetYn("N")
                 .build());
 
-        userProgramPermissionRepository.save(UserProgramPermission.builder()
-                .user(admin)
-                .program(programManagement)
-                .build());
+        // 초기 관리자는 모든 프로그램의 모든 공통 버튼을 쓸 수 있다(프로그램이 쓰지 않는 버튼은 어차피 안 보인다).
+        for (Program program : List.of(programManagement, userManagement, userPermissionManagement, appManagement, commonCodeManagement)) {
+            userProgramPermissionRepository.save(allButtonsPermission(admin, program));
+        }
 
-        userProgramPermissionRepository.save(UserProgramPermission.builder()
-                .user(admin)
-                .program(userManagement)
-                .build());
 
-        userProgramPermissionRepository.save(UserProgramPermission.builder()
-                .user(admin)
-                .program(userPermissionManagement)
-                .build());
 
-        userProgramPermissionRepository.save(UserProgramPermission.builder()
-                .user(admin)
-                .program(appManagement)
-                .build());
 
-        userProgramPermissionRepository.save(UserProgramPermission.builder()
-                .user(admin)
-                .program(commonCodeManagement)
-                .build());
 
         // 화면마다 하드코딩되던 select 옵션(역할/심각도/처리상태)을 공통코드로 관리한다. 마스터(그룹)를
         // 먼저 만들고, 값(codeValue)은 기존 화면 로직/뱃지 클래스가 그대로 참조하던 문자열과 동일하게 디테일을 심는다.
@@ -177,5 +188,14 @@ public class DataInitializer implements CommandLineRunner {
             password.append(INITIAL_PASSWORD_CHARS.charAt(random.nextInt(INITIAL_PASSWORD_CHARS.length())));
         }
         return password.toString();
+    }
+
+    private static UserProgramPermission allButtonsPermission(User user, Program program) {
+        return UserProgramPermission.builder()
+                .user(user)
+                .program(program)
+                .searchYn("Y").newYn("Y").saveYn("Y").deleteYn("Y").resetYn("Y")
+                .etc1Yn("Y").etc2Yn("Y").etc3Yn("Y").etc4Yn("Y").etc5Yn("Y")
+                .build();
     }
 }

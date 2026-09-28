@@ -19,29 +19,25 @@
     <div th:replace="~{fragments/loading-overlay :: overlay}"></div>
 
     <main class="area-main">
+        <section th:replace="~{fragments/page-toolbar :: toolbar}"></section>
+
+        <section class="search-row" id="searchArea"></section>
+
         <section class="panel-head">
             <div class="panel-title">프로그램 목록</div>
-            <div class="btn-group">
-                <button type="button" id="btnSearch" class="btn">조회</button>
-                <button type="button" id="btnAdd" class="btn">추가</button>
-                <button type="button" id="btnSave" class="btn primary">저장</button>
-                <button type="button" id="btnDelete" class="btn danger">삭제</button>
-                <button type="button" id="btnReset" class="btn">초기화</button>
-            </div>
         </section>
 
         <section>
             <table class="grid" id="programGrid">
                 <thead id="programGridHead"></thead>
-                <tbody id="programGridBody">
-                    <tr><td class="empty" colspan="6">조회 중입니다...</td></tr>
-                </tbody>
+                <tbody id="programGridBody"></tbody>
             </table>
         </section>
     </main>
 </div>
 
 <script src="/js/grid.js"></script>
+<script src="/js/search-form.js"></script>
 <script th:inline="javascript">
     (function () {
         const API_URL = '/api/programs';
@@ -54,6 +50,22 @@
             }
         }
 
+        // 화면 공통 버튼 설정 — 이 프로그램 화면 우측 상단에 어떤 버튼을 그릴지(fragments/page-toolbar).
+        // 조회~초기화는 사용 여부(Y/N), 기타1~5는 버튼 이름이다(비우면 그 버튼은 안 쓴다).
+        // 실제로 보이는 건 여기서 쓰기로 한 버튼 중 사용자별 권한관리에서 그 사용자에게 허용한 것뿐이다.
+        const BUTTON_YN_COLUMNS = [
+            { id: 'searchYn', label: '조회' },
+            { id: 'newYn', label: '신규' },
+            { id: 'saveYn', label: '저장' },
+            { id: 'deleteYn', label: '삭제' },
+            { id: 'resetYn', label: '초기화' }
+        ].map(function (col) {
+            return Object.assign({ type: 'checkbox', width: 56, align: 'center' }, col);
+        });
+        const BUTTON_ETC_COLUMNS = [1, 2, 3, 4, 5].map(function (n) {
+            return { id: 'etc' + n + 'Nm', label: '기타' + n, type: 'text', width: 120 };
+        });
+
         const COLUMNS = [
             { type: 'row-select', width: 36, align: 'center' },
             {
@@ -62,11 +74,11 @@
                 // disabled면 그 input에서 click 자체가 안 떠서 행 클릭(강조 표시)이 안 먹히니 readOnly를 쓴다.
                 readOnly: function (value, program) { return !!(program && program.programId); }
             },
-            { id: 'name', label: '이름', type: 'text' },
+            { id: 'programNm', label: '프로그램명', type: 'text' },
             { id: 'url', label: 'URL', type: 'text' },
             { id: 'sortOrder', label: '정렬순서', type: 'number' },
-            { id: 'useYn', label: '사용여부', type: 'checkbox', width: 70, align: 'center' }
-        ];
+            { id: 'useYn', label: '사용여부', type: 'checkbox', width: 80, align: 'center' }
+        ].concat(BUTTON_YN_COLUMNS, BUTTON_ETC_COLUMNS);
 
         Grid.renderHeader(document.getElementById('programGridHead'), COLUMNS);
 
@@ -77,9 +89,25 @@
         // 이 화면 자신을 가리키는 프로그램은 그리드에서 수정/삭제하지 못하도록 숨긴다.
         const SELF_PROGRAM_ID = 'program-management';
 
+        const search = SearchForm.render(document.getElementById('searchArea'), [
+            { id: 'programId', label: '프로그램ID', type: 'text' },
+            { id: 'programNm', label: '프로그램명', type: 'text' }
+        ], { onSearch: searchPrograms });
+
+        // 조회조건은 화면에서 거른다 — 프로그램은 건수가 적고, /api/programs는 사용자별 권한관리
+        // 화면도 전체 목록으로 쓰므로 API는 그대로 둔다. 대소문자 구분 없는 부분 일치.
+        function matchesCondition(program) {
+            const cond = search.values();
+            return contains(program.programId, cond.programId) && contains(program.programNm, cond.programNm);
+        }
+
+        function contains(value, keyword) {
+            return !keyword || (value || '').toLowerCase().indexOf(keyword.toLowerCase()) >= 0;
+        }
+
         function renderRows(allPrograms) {
             const programs = (allPrograms || []).filter(function (program) {
-                return program.programId !== SELF_PROGRAM_ID;
+                return program.programId !== SELF_PROGRAM_ID && matchesCondition(program);
             });
             Grid.render(gridBody, COLUMNS, programs, { emptyMessage: '등록된 프로그램이 없습니다.', buildRow: initRow });
         }
@@ -114,25 +142,31 @@
 
             for (const tr of rows) {
                 const programId = tr._fields.programId.value.trim();
-                const name = tr._fields.name.value.trim();
+                const programNm = tr._fields.programNm.value.trim();
                 const url = tr._fields.url.value.trim();
                 const sortOrder = tr._fields.sortOrder.value.trim();
 
-                if (!programId && !name && !url) {
+                if (!programId && !programNm && !url) {
                     continue;
                 }
-                if (!programId || !name || !url) {
-                    alert('프로그램ID, 이름, URL은 필수입니다.');
+                if (!programId || !programNm || !url) {
+                    alert('프로그램ID, 프로그램명, URL은 필수입니다.');
                     return;
                 }
 
                 const payload = {
                     id: programId,
-                    name: name,
+                    programNm: programNm,
                     url: url,
                     sortOrder: sortOrder ? Number(sortOrder) : null,
                     useYn: tr._fields.useYn.checked ? 'Y' : 'N'
                 };
+                BUTTON_YN_COLUMNS.forEach(function (col) {
+                    payload[col.id] = tr._fields[col.id].checked ? 'Y' : 'N';
+                });
+                BUTTON_ETC_COLUMNS.forEach(function (col) {
+                    payload[col.id] = tr._fields[col.id].value.trim();
+                });
 
                 requests.push(fetch(API_URL, {
                     method: 'POST',
@@ -193,11 +227,16 @@
                 });
         }
 
-        document.getElementById('btnSearch').addEventListener('click', searchPrograms);
-        document.getElementById('btnAdd').addEventListener('click', addRow);
-        document.getElementById('btnSave').addEventListener('click', saveAll);
-        document.getElementById('btnDelete').addEventListener('click', deleteSelected);
-        document.getElementById('btnReset').addEventListener('click', searchPrograms);
+        PageButtons.bind({
+            btnSearch: searchPrograms,
+            btnAdd: addRow,
+            btnSave: saveAll,
+            btnDelete: deleteSelected,
+            btnReset: function () {
+                search.reset();
+                searchPrograms();
+            }
+        });
 
         searchPrograms();
     })();

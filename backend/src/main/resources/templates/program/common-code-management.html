@@ -31,22 +31,22 @@
     <div th:replace="~{fragments/loading-overlay :: overlay}"></div>
 
     <main class="area-main">
+        <section th:replace="~{fragments/page-toolbar :: nameOnly}"></section>
+
         <section class="master-detail">
             <div class="panel master-panel">
                 <div class="panel-head">
                     <div class="panel-title">그룹 목록</div>
                     <div class="btn-group">
-                        <button type="button" id="btnGroupSearch" class="btn">조회</button>
-                        <button type="button" id="btnGroupAdd" class="btn">추가</button>
-                        <button type="button" id="btnGroupSave" class="btn primary">저장</button>
-                        <button type="button" id="btnGroupDelete" class="btn danger">삭제</button>
+                        <button type="button" id="btnGroupSearch" th:if="${pageButtonIds.contains('btnSearch')}" data-hotkey="F3" class="btn">조회</button>
+                        <button type="button" id="btnGroupAdd" th:if="${pageButtonIds.contains('btnAdd')}" data-hotkey="F4" class="btn">신규</button>
+                        <button type="button" id="btnGroupSave" th:if="${pageButtonIds.contains('btnSave')}" data-hotkey="F9" class="btn primary">저장</button>
+                        <button type="button" id="btnGroupDelete" th:if="${pageButtonIds.contains('btnDelete')}" data-hotkey="F5" class="btn danger">삭제</button>
                     </div>
                 </div>
                 <table class="grid" id="groupGrid">
                     <thead id="groupGridHead"></thead>
-                    <tbody id="groupGridBody">
-                        <tr><td class="empty" colspan="5">조회 중입니다...</td></tr>
-                    </tbody>
+                    <tbody id="groupGridBody"></tbody>
                 </table>
             </div>
 
@@ -54,16 +54,14 @@
                 <div class="panel-head">
                     <div class="panel-title">상세 코드 <span class="sub" id="detailGroupLabel"></span></div>
                     <div class="btn-group">
-                        <button type="button" id="btnCodeAdd" class="btn" disabled>추가</button>
-                        <button type="button" id="btnCodeSave" class="btn primary" disabled>저장</button>
-                        <button type="button" id="btnCodeDelete" class="btn danger" disabled>삭제</button>
+                        <button type="button" id="btnCodeAdd" th:if="${pageButtonIds.contains('btnAdd')}" data-hotkey="F4" class="btn" disabled>신규</button>
+                        <button type="button" id="btnCodeSave" th:if="${pageButtonIds.contains('btnSave')}" data-hotkey="F9" class="btn primary" disabled>저장</button>
+                        <button type="button" id="btnCodeDelete" th:if="${pageButtonIds.contains('btnDelete')}" data-hotkey="F5" class="btn danger" disabled>삭제</button>
                     </div>
                 </div>
                 <table class="grid" id="codeGrid">
                     <thead id="codeGridHead"></thead>
-                    <tbody id="codeGridBody">
-                        <tr><td class="empty" colspan="5">좌측에서 그룹을 선택하세요.</td></tr>
-                    </tbody>
+                    <tbody id="codeGridBody"></tbody>
                 </table>
             </div>
         </section>
@@ -79,9 +77,8 @@
         const groupGridBody = document.getElementById('groupGridBody');
         const codeGridBody = document.getElementById('codeGridBody');
         const detailGroupLabel = document.getElementById('detailGroupLabel');
-        const btnCodeAdd = document.getElementById('btnCodeAdd');
-        const btnCodeSave = document.getElementById('btnCodeSave');
-        const btnCodeDelete = document.getElementById('btnCodeDelete');
+        // 그룹/상세 영역의 버튼은 툴바 공통 버튼과 같은 권한(신규/저장/삭제)을 따라 서버에서 빠질 수 있다 — 없으면 null.
+        const detailButtons = ['btnCodeAdd', 'btnCodeSave', 'btnCodeDelete'].map(PageButtons.get).filter(Boolean);
 
         // 우측 디테일 그리드가 지금 보여주고 있는 그룹코드. null이면 그룹 미선택 상태.
         let currentGroup = null;
@@ -274,7 +271,7 @@
             { id: 'useYn', label: '사용', type: 'checkbox', width: 70, align: 'center' }
         ];
 
-        Grid.renderHeader(document.getElementById('codeGridHead'), CODE_COLUMNS);
+        Grid.renderHeader(document.getElementById('codeGridHead'), CODE_COLUMNS, { initialMessage: '좌측에서 그룹을 선택하세요.' });
 
         function buildCodeRow(code) {
             return Grid.buildRow(CODE_COLUMNS, code, { buildRow: initCodeRow });
@@ -285,9 +282,7 @@
         }
 
         function setDetailButtonsEnabled(enabled) {
-            btnCodeAdd.disabled = !enabled;
-            btnCodeSave.disabled = !enabled;
-            btnCodeDelete.disabled = !enabled;
+            detailButtons.forEach(function (btn) { btn.disabled = !enabled; });
         }
 
         function clearDetail() {
@@ -428,14 +423,15 @@
                 });
         }
 
-        document.getElementById('btnGroupSearch').addEventListener('click', searchGroups);
-        document.getElementById('btnGroupAdd').addEventListener('click', addGroupRow);
-        document.getElementById('btnGroupSave').addEventListener('click', saveGroups);
-        document.getElementById('btnGroupDelete').addEventListener('click', deleteGroups);
-
-        btnCodeAdd.addEventListener('click', addCodeRow);
-        btnCodeSave.addEventListener('click', saveCodes);
-        btnCodeDelete.addEventListener('click', deleteCodes);
+        PageButtons.bind({
+            btnGroupSearch: searchGroups,
+            btnGroupAdd: addGroupRow,
+            btnGroupSave: saveGroups,
+            btnGroupDelete: deleteGroups,
+            btnCodeAdd: addCodeRow,
+            btnCodeSave: saveCodes,
+            btnCodeDelete: deleteCodes
+        });
 
         searchGroups();
     })();

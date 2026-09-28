@@ -147,6 +147,10 @@ com.sjinc.cvemonitor
 | `/js/grid.js` | 컬럼 정의로 헤더·행·입력 셀까지 만드는 공통 그리드 렌더러 |
 | `/js/common-code.js` | 공통코드로 select 옵션 채우기 (그룹당 1회 캐시) |
 | `/js/tabs.js` | 홈 화면 탭 |
+| `/js/hotkeys.js` | 공통 펑션키(F3 조회, F4 신규, F5 삭제, F9 저장, F12 초기화) — 버튼에 `data-hotkey` 속성으로 지정 |
+| `/js/search-form.js` | 조회영역 공통 렌더러 — 필드 정의로 label + 입력을 만든다 |
+| `fragments/page-toolbar.html` | 화면 첫 줄(프로그램명 + 권한에 따른 공통 버튼) |
+| `/js/page-buttons.js` | 공통 버튼 핸들러 연결(`PageButtons.bind`) |
 | `fragments/loading-overlay.html` | 전역 로딩 스피너 + CSRF 헤더를 붙이는 공통 fetch 래퍼 |
 
 ## 개발 지침

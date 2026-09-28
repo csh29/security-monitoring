@@ -18,23 +18,16 @@
     <div th:replace="~{fragments/loading-overlay :: overlay}"></div>
 
     <main class="area-main">
+        <section th:replace="~{fragments/page-toolbar :: toolbar}"></section>
+
         <section class="panel-head">
             <div class="panel-title">앱 목록</div>
-            <div class="btn-group">
-                <button type="button" id="btnSearch" class="btn">조회</button>
-                <button type="button" id="btnAdd" class="btn">추가</button>
-                <button type="button" id="btnSave" class="btn primary">저장</button>
-                <button type="button" id="btnDelete" class="btn danger">삭제</button>
-                <button type="button" id="btnReset" class="btn">초기화</button>
-            </div>
         </section>
 
         <section>
             <table class="grid" id="appGrid">
                 <thead id="appGridHead"></thead>
-                <tbody id="appGridBody">
-                    <tr><td class="empty" colspan="5">조회 중입니다...</td></tr>
-                </tbody>
+                <tbody id="appGridBody"></tbody>
             </table>
         </section>
     </main>
@@ -180,11 +173,13 @@
                 });
         }
 
-        document.getElementById('btnSearch').addEventListener('click', searchApps);
-        document.getElementById('btnAdd').addEventListener('click', addRow);
-        document.getElementById('btnSave').addEventListener('click', saveAll);
-        document.getElementById('btnDelete').addEventListener('click', deleteSelected);
-        document.getElementById('btnReset').addEventListener('click', searchApps);
+        PageButtons.bind({
+            btnSearch: searchApps,
+            btnAdd: addRow,
+            btnSave: saveAll,
+            btnDelete: deleteSelected,
+            btnReset: searchApps
+        });
 
         searchApps();
     })();

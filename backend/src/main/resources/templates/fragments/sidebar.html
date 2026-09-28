@@ -40,8 +40,8 @@
         <a th:href="@{/program/vulnerability-management}" data-menu="vulnerability-management" data-title="취약점 관리" th:classappend="${activeMenu == 'vulnerability-management'} ? 'is-active'"><span class="ico">⚠</span>취약점 관리</a>
         <a th:href="@{/program/vulnerability-search}" data-menu="vulnerability-search" data-title="취약점 조회" th:classappend="${activeMenu == 'vulnerability-search'} ? 'is-active'"><span class="ico">⌕</span>취약점 조회</a>
         <a th:href="@{/program/report}" data-menu="report" data-title="리포트" th:classappend="${activeMenu == 'report'} ? 'is-active'"><span class="ico">📄</span>리포트</a>
-        <a th:each="program : ${extraPrograms}" th:attr="data-menu=${program.programId},data-title=${program.name}" th:classappend="${activeMenu == program.programId} ? 'is-active'" th:href="@{${program.url}}">
-            <span class="ico">⚙</span><span th:text="${program.name}">프로그램</span>
+        <a th:each="program : ${extraPrograms}" th:attr="data-menu=${program.programId},data-title=${program.programNm}" th:classappend="${activeMenu == program.programId} ? 'is-active'" th:href="@{${program.url}}">
+            <span class="ico">⚙</span><span th:text="${program.programNm}">프로그램</span>
         </a>
     </nav>
 </aside>

@@ -6,7 +6,7 @@
  * 실행되기 전까지 스타일이 없어 화면이 깜빡인다).
  *
  * 사용법:
- *   Grid.renderHeader(thead, columns);
+ *   Grid.renderHeader(thead, columns, { initialMessage });
  *   Grid.render(tbody, columns, rows, options);
  *
  * columns: [{ id, label, width, align, cursor, className, headerClassName, type, render(value, row, td, tr), title(value, row) }]
@@ -15,7 +15,8 @@
  *   - label     : 헤더 th에 표시할 텍스트. 생략하면 빈 th(체크박스 열 등).
  *   - width     : 컬럼 폭. 숫자면 px, 문자열이면 그대로(예: '20%') th/td에 inline style로 적용된다.
  *                 화면 <style> 태그에 ".grid th.xxx{width:...}" 식으로 적지 않고 이 값 하나로 통일한다.
- *   - align     : th/td의 text-align('center'/'right'/'left'). 배지·체크박스·버튼 열 정렬에 사용.
+ *   - align     : td의 text-align('center'/'right'/'left'). 배지·체크박스·버튼 열 정렬에 사용.
+ *                 헤더(th) label은 모든 그리드에서 가운데 정렬이라(grid.css) 여기에 영향받지 않는다.
  *   - cursor    : td의 cursor 스타일(예: 'pointer'). onDblClick으로 팝업을 여는 열 등에 사용.
  *   - className : td에 적용할 클래스. headerClassName이 없으면 th에도 그대로 적용된다.
  *   - headerClassName : th에만 다른 클래스를 적용하고 싶을 때만 지정.
@@ -48,8 +49,9 @@
  *   - title     : true면 텍스트 값을 그대로 title(툴팁)로 쓰고, 함수면 (value, row)의 리턴값을 쓴다.
  *   - onDblClick: (value, row)를 받는 콜백 — 더블클릭 시 실행(설명 팝업 등에 사용).
  *
- * type이 있는 셀은 전부 엔터 키로 다음 셀(우측, 마지막 셀이면 다음 행 첫 셀)로 자동 이동한다
- * — 화면이 따로 처리할 필요 없이 buildRow가 붙여준다. 넘어갈 셀이 없으면 그냥 끝난다.
+ * type이 있는 셀은 전부 엔터 키로 다음 셀(우측, 마지막 셀이면 다음 행 첫 셀)로, 위/아래 방향키로
+ * 윗/아랫 행의 같은 열 셀로 자동 이동한다 — 화면이 따로 처리할 필요 없이 buildRow가 붙여준다.
+ * 넘어갈 셀이 없으면 그냥 끝난다. select 셀에서는 방향키가 옵션 선택이라 이동하지 않는다.
  *
  * options:
  *   - emptyMessage : rows가 없을 때 보여줄 문구.
@@ -60,12 +62,19 @@
  *                       이 콜백에 얹으면 된다.
  */
 (function (global) {
-    /** width/align 같은 컬럼별 스타일을 화면 <style> 태그 대신 이 inline style로 적용한다. */
-    function applyColumnStyle(cell, col) {
+    /**
+     * width/align 같은 컬럼별 스타일을 화면 <style> 태그 대신 이 inline style로 적용한다.
+     * 숫자(px) width는 최소 폭도 된다 — 컬럼이 많아 화면보다 넓으면 컬럼을 찌그러뜨리지 않고
+     * 그리드에 가로 스크롤이 생긴다(ensureScrollWrapper).
+     */
+    function applyColumnStyle(cell, col, isHeader) {
         if (col.width !== undefined && col.width !== null) {
             cell.style.width = typeof col.width === 'number' ? col.width + 'px' : col.width;
+            if (typeof col.width === 'number') {
+                cell.style.minWidth = col.width + 'px';
+            }
         }
-        if (col.align) {
+        if (col.align && !isHeader) {
             cell.style.textAlign = col.align;
         }
     }
@@ -112,8 +121,36 @@
         return input;
     }
 
-    /** columns 정의로 thead 한 줄(th 목록)을 만든다. 화면마다 <thead>에 th를 직접 적지 않고 이걸로 통일한다. */
-    function renderHeader(thead, columns) {
+    /**
+     * 그리드가 화면보다 넓어지면 가로 스크롤이 생기도록 table을 .grid-scroll로 한 번 감싼다.
+     * 화면이 이미 스크롤 영역(.grid-wrap — 취약점 관리처럼 세로 스크롤을 직접 두는 화면)으로
+     * 감싸 두었으면 그대로 둔다.
+     */
+    function ensureScrollWrapper(table) {
+        const parent = table && table.parentElement;
+        if (!parent || parent.classList.contains('grid-scroll') || parent.classList.contains('grid-wrap')) {
+            return;
+        }
+        const wrapper = document.createElement('div');
+        wrapper.className = 'grid-scroll';
+        parent.insertBefore(wrapper, table);
+        wrapper.appendChild(table);
+    }
+
+    /** 첫 조회 결과가 오기 전까지 tbody에 보여줄 기본 문구. */
+    const DEFAULT_INITIAL_MESSAGE = '조회 중입니다...';
+
+    /**
+     * columns 정의로 thead 한 줄(th 목록)을 만든다. 화면마다 <thead>에 th를 직접 적지 않고 이걸로 통일한다.
+     *
+     * 같은 table의 tbody에는 첫 조회 결과가 오기 전까지 보여줄 안내 행을 같이 넣는다 — 화면마다
+     * <tbody>에 "조회 중입니다..." 행과 colspan을 직접 적던 것을 대신한다(colspan은 컬럼 수로 자동).
+     * 문구는 options.initialMessage로 바꾼다(예: '좌측에서 그룹을 선택하세요.').
+     * tbody에 이미 행이 있으면(헤더만 다시 그리는 경우) 건드리지 않는다.
+     */
+    function renderHeader(thead, columns, options) {
+        options = options || {};
+        ensureScrollWrapper(thead.closest('table'));
         thead.innerHTML = '';
         const tr = document.createElement('tr');
 
@@ -123,12 +160,18 @@
             if (className) {
                 th.className = className;
             }
-            applyColumnStyle(th, col);
+            applyColumnStyle(th, col, true);
             th.textContent = col.label || '';
             tr.appendChild(th);
         });
 
         thead.appendChild(tr);
+
+        const table = thead.closest('table');
+        const tbody = table && table.tBodies[0];
+        if (tbody && tbody.rows.length === 0) {
+            clearAndAppendMessage(tbody, columns.length, options.initialMessage || DEFAULT_INITIAL_MESSAGE);
+        }
     }
 
     function clearAndAppendMessage(tbody, colspan, message, className) {
@@ -159,14 +202,50 @@
         }
     }
 
+    /** 다른 행의 입력 필드로 포커스를 옮기고, 클릭했을 때와 똑같이 그 행을 'current'로 강조한다. */
+    function focusRowField(row, field) {
+        field.focus();
+        if (row.parentElement) {
+            markRowCurrent(row.parentElement, row);
+        }
+    }
+
+    /**
+     * 위/아래 방향키: 윗/아랫 행의 같은 열(같은 순번의 입력 필드)로 포커스를 옮긴다. 그 행의 입력
+     * 필드가 더 적으면 마지막 필드로 간다. 입력 필드가 없는 행(빈 메시지 행 등)은 건너뛰지 않고
+     * 거기서 멈춘다 — 그리드 끝에서 누르면 아무 일도 없다.
+     *
+     * select는 방향키가 옵션을 바꾸는 키라 가로채지 않는다. number 입력은 방향키가 값 증감이지만
+     * 그리드에서는 행 이동이 우선이라 가로챈다(값은 직접 입력). 한글 조합 중에는 무시한다 —
+     * 조합이 끝나기 전에 포커스가 넘어가면 마지막 글자가 다음 셀로 새어 들어간다.
+     */
+    function moveVertical(e, field, tr) {
+        if (field.tagName === 'SELECT' || e.isComposing) {
+            return;
+        }
+        e.preventDefault();
+
+        const index = (tr._orderedFields || []).indexOf(field);
+        const target = e.key === 'ArrowUp' ? tr.previousElementSibling : tr.nextElementSibling;
+        if (index === -1 || !target || !target._orderedFields || target._orderedFields.length === 0) {
+            return;
+        }
+        focusRowField(target, target._orderedFields[Math.min(index, target._orderedFields.length - 1)]);
+    }
+
     /**
      * type이 있는 셀에서 엔터를 누르면 같은 행의 다음 입력 필드로, 그 행의 마지막 필드였으면
      * 다음 tr의 첫 번째 입력 필드로 포커스를 옮긴다(스프레드시트 Tab처럼). 다음 행이 없거나
      * 다음 행에 입력 필드가 없으면 그냥 끝낸다 — 아무 데도 안 옮기고 이벤트만 소비한다.
      * 다음 행으로 넘어갈 때는 클릭했을 때와 똑같이 그 행을 'current'로 강조한다.
+     * 위/아래 방향키는 moveVertical이 처리한다.
      */
-    function bindEnterNavigation(field, tr) {
+    function bindKeyNavigation(field, tr) {
         field.addEventListener('keydown', function (e) {
+            if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                moveVertical(e, field, tr);
+                return;
+            }
             if (e.key !== 'Enter') {
                 return;
             }
@@ -185,16 +264,12 @@
 
             const nextRow = tr.nextElementSibling;
             if (nextRow && nextRow._orderedFields && nextRow._orderedFields.length > 0) {
-                nextRow._orderedFields[0].focus();
-                const tbody = nextRow.parentElement;
-                if (tbody) {
-                    markRowCurrent(tbody, nextRow);
-                }
+                focusRowField(nextRow, nextRow._orderedFields[0]);
             }
         });
     }
 
-    /** rows 하나를 tr 하나로 만든다. 화면 전체를 다시 그리지 않고 한 행만 추가/교체할 때(예: "추가" 버튼)도 재사용. */
+    /** rows 하나를 tr 하나로 만든다. 화면 전체를 다시 그리지 않고 한 행만 추가/교체할 때(예: "신규" 버튼)도 재사용. */
     function buildRow(columns, row, options) {
         options = options || {};
         const tr = document.createElement('tr');
@@ -241,10 +316,10 @@
                     tr._fields[col.id] = field;
                 }
                 // type이 있는(입력 가능한) 셀은 전부 왼쪽→오른쪽 순서로 tr._orderedFields에 쌓아서
-                // 엔터 키 이동(다음 셀, 마지막 셀이면 다음 행 첫 셀)에 쓴다.
+                // 엔터 키 이동(다음 셀, 마지막 셀이면 다음 행 첫 셀)과 위/아래 방향키 이동에 쓴다.
                 tr._orderedFields = tr._orderedFields || [];
                 tr._orderedFields.push(field);
-                bindEnterNavigation(field, tr);
+                bindKeyNavigation(field, tr);
                 td.appendChild(field);
             } else {
                 td.textContent = (value === null || value === undefined) ? '' : value;
@@ -307,7 +382,7 @@
 
         // col.optionsQuery가 붙은 select 컬럼은 그리는 것보다 먼저 공통코드에서 옵션을 받아와야
         // 한다. 한 번 받아오면 col.options에 캐시해두고(col._optionsResolved) 다음 render()부터는
-        // 다시 조회하지 않는다 — "추가" 버튼처럼 Grid.buildRow를 단독으로 호출하는 곳도 이
+        // 다시 조회하지 않는다 — "신규" 버튼처럼 Grid.buildRow를 단독으로 호출하는 곳도 이
         // col.options를 그대로 쓰므로, 조회 화면이 최초 한 번 render()를 호출한 뒤부터는 화면이
         // 신경 쓸 필요가 없다. 이런 컬럼이 없는(대다수) 그리드는 예전처럼 완전히 동기로 그려진다
         // — render() 호출 직후 tbody를 바로 조회하는 화면(공통코드관리 등)이 있어서, 있지도 않은

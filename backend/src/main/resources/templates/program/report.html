@@ -8,7 +8,6 @@
     <style>
         /* 화면 공통 뼈대(:root, .app-shell 등)는 common-ui.css가 담당한다. */
         .area-main{ align-items:center; justify-content:center; gap:10px; }
-        .placeholder-title{ font-size:16px; font-weight:800; color:var(--text); }
         .placeholder-desc{ font-size:13px; color:var(--text-sub); }
     </style>
 </head>
@@ -19,7 +18,7 @@
     <div th:replace="~{fragments/loading-overlay :: overlay}"></div>
 
     <main class="area-main">
-        <div class="placeholder-title">리포트</div>
+        <section th:replace="~{fragments/page-toolbar :: toolbar}"></section>
         <div class="placeholder-desc">해당 기능은 준비 중입니다.</div>
     </main>
 </div>

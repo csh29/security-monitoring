@@ -19,6 +19,10 @@
         <div class="spinner"></div>
     </div>
 
+    <!-- 화면 공통 펑션키(F3 조회/F4 신규/F5 삭제/F9 저장/F12 초기화). 모든 화면이 이 조각을 포함하므로 여기서 싣는다. -->
+    <script src="/js/hotkeys.js"></script>
+    <!-- 권한에 따라 있을 수도 없을 수도 있는 공통 버튼에 핸들러를 거는 헬퍼(PageButtons.bind). -->
+    <script src="/js/page-buttons.js"></script>
     <script>
         (function () {
             var overlay = document.getElementById('globalLoadingOverlay');

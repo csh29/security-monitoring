@@ -1,6 +1,7 @@
 package com.sjinc.cvemonitor.service.permission;
 
 import com.sjinc.cvemonitor.domain.UserProgramPermission;
+import com.sjinc.cvemonitor.dto.permission.ProgramPermissionItem;
 import com.sjinc.cvemonitor.repository.ProgramRepository;
 import com.sjinc.cvemonitor.repository.UserProgramPermissionRepository;
 import com.sjinc.cvemonitor.repository.UserRepository;
@@ -19,25 +20,42 @@ public class UserPermissionService {
     private final ProgramRepository programRepository;
     private final UserProgramPermissionRepository userProgramPermissionRepository;
 
-    /** 해당 사용자가 현재 권한을 가진 프로그램 id(program_id) 목록. */
+    /** 해당 사용자가 현재 권한을 가진 프로그램과 그 버튼 권한 목록. */
     @Transactional(readOnly = true)
-    public List<String> getGrantedProgramIds(Long userId) {
-        return userProgramPermissionRepository.findProgramIdsByUserId(userId);
+    public List<ProgramPermissionItem> getPermissions(Long userId) {
+        return userProgramPermissionRepository.findByUserId(userId).stream()
+                .map(ProgramPermissionItem::from)
+                .toList();
     }
 
-    /** 해당 사용자의 프로그램 권한을 programIds로 완전히 대체한다. */
+    /** 해당 사용자의 프로그램·버튼 권한을 items로 완전히 대체한다. */
     @Transactional
-    public void replacePermissions(Long userId, List<String> programIds) {
+    public void replacePermissions(Long userId, List<ProgramPermissionItem> items) {
         userProgramPermissionRepository.deleteByUserId(userId);
 
         var user = userRepository.getReferenceById(userId);
-        var permissions = programIds.stream()
-                .map(programId -> UserProgramPermission.builder()
+        var permissions = items.stream()
+                .map(item -> UserProgramPermission.builder()
                         .user(user)
-                        .program(programRepository.getReferenceById(programId))
+                        .program(programRepository.getReferenceById(item.programId()))
+                        .searchYn(yn(item.searchYn()))
+                        .newYn(yn(item.newYn()))
+                        .saveYn(yn(item.saveYn()))
+                        .deleteYn(yn(item.deleteYn()))
+                        .resetYn(yn(item.resetYn()))
+                        .etc1Yn(yn(item.etc1Yn()))
+                        .etc2Yn(yn(item.etc2Yn()))
+                        .etc3Yn(yn(item.etc3Yn()))
+                        .etc4Yn(yn(item.etc4Yn()))
+                        .etc5Yn(yn(item.etc5Yn()))
                         .build())
                 .toList();
 
         userProgramPermissionRepository.saveAll(permissions);
+    }
+
+    /** "Y"만 Y, 그 외(null 포함)는 전부 N — 컬럼이 NOT NULL이라 빈 값이 그대로 들어가지 않게 한다. */
+    private static String yn(String value) {
+        return "Y".equals(value) ? "Y" : "N";
     }
 }

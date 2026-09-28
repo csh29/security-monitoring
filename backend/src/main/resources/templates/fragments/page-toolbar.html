@@ -1,0 +1,26 @@
+<!--
+    모든 화면의 첫 줄: 좌상단 프로그램명 + 우측 상단 공통 버튼. 화면은 버튼을 마크업에 직접 쓰지 않는다.
+    값은 화면을 열 때 ViewController가 넣는다.
+      - programNm   : Program 테이블의 프로그램명(고정 메뉴는 FixedMenu).
+      - pageButtons : 프로그램 관리에서 그 프로그램이 쓰도록 한 버튼 ∩ 사용자별 권한관리에서 이 사용자에게
+                      허용한 버튼(ProgramService.getPageButtons). 고정 메뉴는 FixedMenu에 적힌 버튼.
+    버튼 id(btnSearch/btnAdd/btnSave/btnDelete/btnReset/btnEtc1~5)는 ProgramButton에 정해져 있고,
+    화면 JS는 PageButtons.bind({ btnSearch: fn, ... })로 핸들러를 건다 — 권한이 없어 안 그려진 버튼은
+    조용히 건너뛴다. 단축키 표기([F3])와 키 처리는 hotkeys.js가 data-hotkey를 보고 한다.
+
+    사용: <section th:replace="~{fragments/page-toolbar :: toolbar}"></section>
+         버튼을 툴바가 아닌 자리에 따로 두는 화면(공통코드관리)은 :: nameOnly 를 쓰고, 그 버튼들에
+         th:if="${pageButtonIds.contains('btnSave')}"처럼 같은 권한을 건다.
+-->
+<section th:fragment="toolbar" class="page-toolbar">
+    <div class="page-name" th:text="${programNm}">프로그램명</div>
+    <div class="btn-group">
+        <button th:each="button : ${pageButtons}" type="button"
+                th:id="${button.id}" th:class="|btn ${button.cssClass}|"
+                th:attr="data-hotkey=${button.hotkey}" th:text="${button.label}">조회</button>
+    </div>
+</section>
+
+<section th:fragment="nameOnly" class="page-toolbar">
+    <div class="page-name" th:text="${programNm}">프로그램명</div>
+</section>

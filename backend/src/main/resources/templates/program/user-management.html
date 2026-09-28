@@ -19,29 +19,25 @@
     <div th:replace="~{fragments/loading-overlay :: overlay}"></div>
 
     <main class="area-main">
+        <section th:replace="~{fragments/page-toolbar :: toolbar}"></section>
+
+        <section class="search-row" id="searchArea"></section>
+
         <section class="panel-head">
             <div class="panel-title">사용자 목록</div>
-            <div class="btn-group">
-                <button type="button" id="btnSearch" class="btn">조회</button>
-                <button type="button" id="btnAdd" class="btn">추가</button>
-                <button type="button" id="btnSave" class="btn primary">저장</button>
-                <button type="button" id="btnDelete" class="btn danger">삭제</button>
-                <button type="button" id="btnReset" class="btn">초기화</button>
-            </div>
         </section>
 
         <section>
             <table class="grid" id="userGrid">
                 <thead id="userGridHead"></thead>
-                <tbody id="userGridBody">
-                    <tr><td class="empty" colspan="4">조회 중입니다...</td></tr>
-                </tbody>
+                <tbody id="userGridBody"></tbody>
             </table>
         </section>
     </main>
 </div>
 
 <script src="/js/grid.js"></script>
+<script src="/js/search-form.js"></script>
 <script src="/js/common-code.js"></script>
 <script th:inline="javascript">
     (function () {
@@ -58,6 +54,7 @@
         const COLUMNS = [
             { type: 'row-select', width: 36, align: 'center' },
             { id: 'username', label: '아이디', type: 'text' },
+            { id: 'userNm', label: '사용자명', type: 'text' },
             {
                 id: 'password', label: '비밀번호', type: 'password',
                 placeholder: function (user) { return (user && user.id) ? '변경 시에만 입력' : '필수 입력'; }
@@ -75,8 +72,24 @@
             return Grid.buildRow(COLUMNS, user, { buildRow: initRow });
         }
 
+        const search = SearchForm.render(document.getElementById('searchArea'), [
+            { id: 'username', label: '아이디', type: 'text' },
+            { id: 'userNm', label: '사용자명', type: 'text' }
+        ], { onSearch: searchUsers });
+
+        // 조회조건은 화면에서 거른다 — /api/users는 사용자별 권한관리 화면도 전체 목록으로 쓰므로
+        // API는 그대로 둔다(프로그램 관리 화면과 같은 방식). 대소문자 구분 없는 부분 일치.
+        function matchesCondition(user) {
+            const cond = search.values();
+            return contains(user.username, cond.username) && contains(user.userNm, cond.userNm);
+        }
+
+        function contains(value, keyword) {
+            return !keyword || (value || '').toLowerCase().indexOf(keyword.toLowerCase()) >= 0;
+        }
+
         function renderRows(users) {
-            Grid.render(gridBody, COLUMNS, users, { emptyMessage: '등록된 사용자가 없습니다.', buildRow: initRow });
+            Grid.render(gridBody, COLUMNS, (users || []).filter(matchesCondition), { emptyMessage: '등록된 사용자가 없습니다.', buildRow: initRow });
         }
 
         function searchUsers() {
@@ -109,15 +122,16 @@
 
             for (const tr of rows) {
                 const username = tr._fields.username.value.trim();
+                const userNm = tr._fields.userNm.value.trim();
                 const password = tr._fields.password.value.trim();
                 const role = tr._fields.role.value;
                 const isExisting = !!tr.dataset.id;
 
-                if (!username && !password) {
+                if (!username && !userNm && !password) {
                     continue;
                 }
-                if (!username) {
-                    alert('아이디는 필수입니다.');
+                if (!username || !userNm) {
+                    alert('아이디, 사용자명은 필수입니다.');
                     return;
                 }
                 if (!isExisting && !password) {
@@ -128,6 +142,7 @@
                 const payload = {
                     id: isExisting ? Number(tr.dataset.id) : null,
                     username: username,
+                    userNm: userNm,
                     password: password,
                     role: role
                 };
@@ -191,11 +206,16 @@
                 });
         }
 
-        document.getElementById('btnSearch').addEventListener('click', searchUsers);
-        document.getElementById('btnAdd').addEventListener('click', addRow);
-        document.getElementById('btnSave').addEventListener('click', saveAll);
-        document.getElementById('btnDelete').addEventListener('click', deleteSelected);
-        document.getElementById('btnReset').addEventListener('click', searchUsers);
+        PageButtons.bind({
+            btnSearch: searchUsers,
+            btnAdd: addRow,
+            btnSave: saveAll,
+            btnDelete: deleteSelected,
+            btnReset: function () {
+                search.reset();
+                searchUsers();
+            }
+        });
 
         // 역할 select 옵션(공통코드 "ROLE") 조회는 Grid.render가 알아서 하므로 바로 조회하면 된다.
         searchUsers();
