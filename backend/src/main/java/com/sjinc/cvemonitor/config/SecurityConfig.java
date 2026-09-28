@@ -1,25 +1,39 @@
 package com.sjinc.cvemonitor.config;
 
+import com.sjinc.cvemonitor.security.RequiresProgramAuthorizationManager;
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 
 /**
- * 폼 로그인 기반 세션 인증의 기본 구조.
+ * 폼 로그인 기반 세션 인증 + 추가 프로그램(관리 화면) API 접근 제어 정책.
  *
- * <p>{@code /login} 화면(뷰)만 비로그인 상태로 열어두고, 그 외 모든 요청은 인증을 요구한다.
- * {@code /api/**}는 화면단 AJAX 호출이 CSRF 토큰을 싣지 않는 것을 전제로 CSRF 검증에서 제외했다.
+ * <p>기본 태도는 "허용 목록에 없으면 막는다"(fail closed)다 — {@code anyRequest()}가
+ * {@link RequiresProgramAuthorizationManager} 하나로 떨어지고, 그 매니저가 로그인 여부와
+ * (컨트롤러에 붙은 {@code @RequiresProgram} 어노테이션이 있다면) 프로그램 권한까지 함께
+ * 판단한다. URL 패턴을 여기 나열하지 않으므로, 새 관리 화면 API를 추가할 때 SecurityConfig를
+ * 고칠 필요가 없다 — 그 컨트롤러에 {@code @RequiresProgram("app-management")}처럼 어노테이션만
+ * 붙이면 된다(자세한 설명은 그 어노테이션과 매니저의 클래스 주석 참고).
  */
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity
+@RequiredArgsConstructor
 public class SecurityConfig {
 
+    private final RequiresProgramAuthorizationManager requiresProgramAuthorizationManager;
+
+    /** 로그인 없이 열어야 하는 것. */
     private static final String[] PUBLIC_URLS = {
-            "/login", "/css/**", "/js/**", "/assets/**", "/favicon.ico", "/h2-console/**",
+            "/login", "/css/**", "/js/**", "/assets/**", "/favicon.ico",
             "/api/ai/**", // 세션 로그인이 없는 파이썬 AI 배치용 API. 대신 X-Internal-Token 헤더로 자체 인증한다.
             "/error" // 없으면 sendError()로 인한 /error 내부 포워딩까지 인증을 요구해서, 401/404 응답이 로그인 리다이렉트로 바뀌어 버린다.
     };
@@ -31,10 +45,9 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
-        http
-                .authorizeHttpRequests(auth -> auth
+        http.authorizeHttpRequests(auth -> auth
                         .requestMatchers(PUBLIC_URLS).permitAll()
-                        .anyRequest().authenticated())
+                        .anyRequest().access(requiresProgramAuthorizationManager))
                 .formLogin(form -> form
                         .loginPage("/login")
                         .defaultSuccessUrl("/", true)
@@ -42,8 +55,28 @@ public class SecurityConfig {
                 .logout(logout -> logout
                         .logoutSuccessUrl("/login?logout")
                         .permitAll())
-                .csrf(csrf -> csrf.ignoringRequestMatchers("/api/**", "/h2-console/**"))
-                .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin())); // h2-console iframe 허용
+                // /api/**도 (바로 아래 /api/ai/** 하나만 빼고) CSRF 검증을 받는다. 쿠키에 담은 토큰 값을 화면 JS가 그대로
+                // X-XSRF-TOKEN 헤더로 실어 보내는 방식(CookieCsrfTokenRepository +
+                // 일반 CsrfTokenRequestAttributeHandler, BREACH 방지용 XOR 인코딩 없이 원문 비교)
+                // — loading-overlay.html이 감싸는 공통 fetch 래퍼가 모든 화면에서 자동으로 붙여준다.
+                // 예전엔 /api/**를 통째로 CSRF 검증에서 제외했는데, 그러면 로그인한 관리자가
+                // 악성 페이지를 열기만 해도 그 브라우저가 대신 POST /api/scan, /api/users 같은
+                // 상태 변경 요청을 쏠 수 있었다.
+                .csrf(csrf -> csrf
+                        // 단, /api/ai/**는 제외한다. CSRF는 "브라우저가 쿠키를 자동으로 실어
+                        // 보내기 때문에 남의 페이지에서도 인증된 요청이 나간다"는 것이 전제인데,
+                        // 이 경로는 세션 쿠키가 아니라 X-Internal-Token 헤더로만 인증하는
+                        // 파이썬 배치 전용이라 그 전제 자체가 성립하지 않는다.
+                        // 빼지 않으면 배치의 POST(판단 결과 저장, fix-plan 저장)가 전부 403으로
+                        // 막힌다 — GET(pending 조회)은 통과하므로 "판단은 다 하고 저장만 실패"라는,
+                        // 로그만 봐서는 알아채기 어려운 형태로 깨진다.
+                        .ignoringRequestMatchers("/api/ai/**")
+                        .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                        .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler()))
+                // H2 콘솔은 완전히 비활성화한다(application.properties). 임의 SQL 실행 콘솔이라
+                // 인증 없이 열려 있으면 CREATE ALIAS ... AS $$ ... $$로 원격 코드 실행까지 가능하다
+                // — 켜야 할 일이 생기면 그때 별도로 인증/권한을 붙여야지, 기본으로 열어두면 안 된다.
+                .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin())); // 홈 화면의 탭(iframe)이 같은 출처에서 화면을 띄우는 데 필요
 
         return http.build();
     }

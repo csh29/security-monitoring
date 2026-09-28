@@ -28,13 +28,20 @@
         <span class="name">보안취약점 모니터링</span>
     </div>
 
+    <!--
+        tabs.js(홈 화면에서만 로드)가 이 목록을 읽어 "홈 제외 클릭 시 탭으로 연다"를 구현한다.
+        home 링크는 class="home-link"로 구분하고, 나머지는 data-menu(activeMenu 값과 동일 —
+        탭을 활성화할 때 사이드바 강조 표시를 서버 재렌더링 없이 그대로 흉내내는 데 쓴다)와
+        data-title(탭에 보여줄 라벨)을 들고 있다. tabs.js가 없는 화면(단위 화면을 직접 열었을
+        때)에서는 그냥 평범한 링크로 동작한다 — data-* 속성은 무시된다.
+    -->
     <nav class="nav">
-        <a th:href="@{/}" th:classappend="${activeMenu == 'home'} ? 'is-active'"><span class="ico">▤</span>홈</a>
-        <a th:href="@{/program/vulnerability-management}" th:classappend="${activeMenu == 'vulnerability-management'} ? 'is-active'"><span class="ico">⚠</span>취약점 관리</a>
-        <a th:href="@{/program/vulnerability-search}" th:classappend="${activeMenu == 'vulnerability-search'} ? 'is-active'"><span class="ico">⌕</span>취약점 조회</a>
-        <a th:href="@{/program/report}" th:classappend="${activeMenu == 'report'} ? 'is-active'"><span class="ico">▥</span>리포트</a>
-        <a th:each="program : ${extraPrograms}" th:classappend="${activeMenu == program.programId} ? 'is-active'" th:href="@{${program.url}}">
-            <span class="ico">▧</span><span th:text="${program.name}">프로그램</span>
+        <a th:href="@{/}" class="home-link" th:classappend="${activeMenu == 'home'} ? 'is-active'"><span class="ico">▤</span>홈</a>
+        <a th:href="@{/program/vulnerability-management}" data-menu="vulnerability-management" data-title="취약점 관리" th:classappend="${activeMenu == 'vulnerability-management'} ? 'is-active'"><span class="ico">⚠</span>취약점 관리</a>
+        <a th:href="@{/program/vulnerability-search}" data-menu="vulnerability-search" data-title="취약점 조회" th:classappend="${activeMenu == 'vulnerability-search'} ? 'is-active'"><span class="ico">⌕</span>취약점 조회</a>
+        <a th:href="@{/program/report}" data-menu="report" data-title="리포트" th:classappend="${activeMenu == 'report'} ? 'is-active'"><span class="ico">📄</span>리포트</a>
+        <a th:each="program : ${extraPrograms}" th:attr="data-menu=${program.programId},data-title=${program.name}" th:classappend="${activeMenu == program.programId} ? 'is-active'" th:href="@{${program.url}}">
+            <span class="ico">⚙</span><span th:text="${program.name}">프로그램</span>
         </a>
     </nav>
 </aside>

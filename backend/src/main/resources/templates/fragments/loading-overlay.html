@@ -39,13 +39,41 @@
                 }
             }
 
+            // CSRF 쿠키(XSRF-TOKEN, SecurityConfig의 CookieCsrfTokenRepository가 심어준다)를
+            // 읽어서 상태를 바꾸는 요청(POST/PUT/PATCH/DELETE)에 X-XSRF-TOKEN 헤더로 그대로
+            // 실어 보낸다. 화면마다 fetch 호출 자리에서 따로 챙기지 않도록, 아래에서 감싸는
+            // 공통 fetch 래퍼 한 곳에서 처리한다.
+            var CSRF_COOKIE_NAME = 'XSRF-TOKEN';
+            var CSRF_HEADER_NAME = 'X-XSRF-TOKEN';
+            var STATE_CHANGING_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
+
+            function readCsrfCookie() {
+                var match = document.cookie.match(new RegExp('(?:^|; )' + CSRF_COOKIE_NAME + '=([^;]*)'));
+                return match ? decodeURIComponent(match[1]) : null;
+            }
+
+            function withCsrfHeader(input, init) {
+                var isRequestObject = typeof Request !== 'undefined' && input instanceof Request;
+                var method = ((init && init.method) || (isRequestObject ? input.method : 'GET') || 'GET').toUpperCase();
+                if (STATE_CHANGING_METHODS.indexOf(method) === -1) {
+                    return init;
+                }
+                var token = readCsrfCookie();
+                if (!token) {
+                    return init;
+                }
+                var headers = new Headers((init && init.headers) || (isRequestObject ? input.headers : undefined));
+                headers.set(CSRF_HEADER_NAME, token);
+                return Object.assign({}, init, { headers: headers });
+            }
+
             // 화면의 조회/저장/삭제 버튼은 전부 fetch로 API를 호출하므로,
             // fetch 자체를 감싸서 어떤 화면이든 API 호출 중에는 전체 화면에 스피너를 띄우고
             // 오버레이가 클릭/키 이벤트를 가로채 아래 화면과의 상호작용을 막는다.
             var originalFetch = window.fetch;
-            window.fetch = function () {
+            window.fetch = function (input, init) {
                 show();
-                return originalFetch.apply(this, arguments).finally(hide);
+                return originalFetch.call(window, input, withCsrfHeader(input, init)).finally(hide);
             };
         })();
     </script>

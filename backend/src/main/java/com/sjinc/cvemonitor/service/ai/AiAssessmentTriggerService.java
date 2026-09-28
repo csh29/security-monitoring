@@ -43,7 +43,17 @@ public class AiAssessmentTriggerService {
     private volatile LocalDateTime lastFinishedAt;
     private volatile Integer lastExitCode;
 
-    public void triggerAsync() {
+    /**
+     * synchronized로 "이미 떠 있으면 건너뛴다" 판단과 새 프로세스 시작 사이에 경합이 생기지
+     * 않게 한다 — 이게 없으면 스캔을 연속 호출할 때마다 파이썬 프로세스가 계속 쌓이고, 그
+     * 각각이 Claude API를 호출해서(과금) 사실상 DoS가 된다.
+     */
+    public synchronized void triggerAsync() {
+        if (currentProcess != null && currentProcess.isAlive()) {
+            log.info("AI 판단 배치가 이미 실행 중이라 이번 트리거는 건너뜁니다.");
+            return;
+        }
+
         try {
             // -u(unbuffered): 표준출력이 터미널이 아니라 파일로 리다이렉트되면 파이썬이 기본적으로
             // 블록 버퍼링을 해서, 프로세스가 끝나거나 버퍼가 다 찰 때까지 ai-assessor.log에 아무것도

@@ -31,7 +31,11 @@
  *                      주면 그 값을 대신 쓴다 — 체크박스가 row[col.id]가 아닌 다른 데이터(예: 권한
  *                      부여 여부 Set)에 묶여 있는 경우에 쓴다.
  *       - 'select'   : <select>. col.options(row) 또는 [{value,label}] 배열로 옵션을 채우고, 선택값은
- *                      row[col.id](신규 행이면 col.defaultValue).
+ *                      row[col.id](신규 행이면 col.defaultValue). col.options 대신 col.optionsQuery에
+ *                      공통코드 그룹명(예: 'ROLE')을 주면, 화면이 직접 조회하지 않아도 render()가
+ *                      CommonCode.fetchCodes(optionsQuery) 결과로 옵션을 채워준다(codeValue→value,
+ *                      codeName→label). 그리드마다 반복되던 "그룹 조회 → 캐시 변수 → options 함수"
+ *                      배선을 없애는 용도라, 이 화면은 /js/common-code.js를 같이 불러와야 한다.
  *       - 'row-select': 그리드 상단 "삭제" 버튼이 쓰는 행 선택 체크박스 — 값을 저장하지 않고
  *                      change 시 tr에 'selected' 클래스만 토글한다. col.id는 필요 없다.
  *     만들어진 엘리먼트는 col.id가 있으면 tr._fields[col.id]에 저장돼, 기존처럼 저장 로직에서
@@ -43,6 +47,9 @@
  *     동작이 걸려 있는 화면에서 체크박스 클릭과 충돌하지 않게 하기 위함).
  *   - title     : true면 텍스트 값을 그대로 title(툴팁)로 쓰고, 함수면 (value, row)의 리턴값을 쓴다.
  *   - onDblClick: (value, row)를 받는 콜백 — 더블클릭 시 실행(설명 팝업 등에 사용).
+ *
+ * type이 있는 셀은 전부 엔터 키로 다음 셀(우측, 마지막 셀이면 다음 행 첫 셀)로 자동 이동한다
+ * — 화면이 따로 처리할 필요 없이 buildRow가 붙여준다. 넘어갈 셀이 없으면 그냥 끝난다.
  *
  * options:
  *   - emptyMessage : rows가 없을 때 보여줄 문구.
@@ -135,6 +142,58 @@
         tbody.appendChild(tr);
     }
 
+    /**
+     * tr을 그 tbody 안에서 유일한 'current'(강조 표시) 행으로 만들고 onRowClick도 호출한다.
+     * 클릭으로 행이 바뀔 때와, 엔터로 다음 행으로 넘어가 행이 바뀔 때 둘 다 이걸 쓴다 —
+     * 어느 쪽으로 행이 바뀌었든 강조색과 onRowClick 부수효과가 항상 같이 따라오게 하기 위함.
+     */
+    function markRowCurrent(tbody, tr) {
+        Array.from(tbody.querySelectorAll('tr.current')).forEach(function (other) {
+            if (other !== tr) {
+                other.classList.remove('current');
+            }
+        });
+        tr.classList.add('current');
+        if (typeof tbody._gridOnRowClick === 'function') {
+            tbody._gridOnRowClick(tr);
+        }
+    }
+
+    /**
+     * type이 있는 셀에서 엔터를 누르면 같은 행의 다음 입력 필드로, 그 행의 마지막 필드였으면
+     * 다음 tr의 첫 번째 입력 필드로 포커스를 옮긴다(스프레드시트 Tab처럼). 다음 행이 없거나
+     * 다음 행에 입력 필드가 없으면 그냥 끝낸다 — 아무 데도 안 옮기고 이벤트만 소비한다.
+     * 다음 행으로 넘어갈 때는 클릭했을 때와 똑같이 그 행을 'current'로 강조한다.
+     */
+    function bindEnterNavigation(field, tr) {
+        field.addEventListener('keydown', function (e) {
+            if (e.key !== 'Enter') {
+                return;
+            }
+            e.preventDefault();
+
+            const fields = tr._orderedFields || [];
+            const index = fields.indexOf(field);
+            if (index === -1) {
+                return;
+            }
+
+            if (index < fields.length - 1) {
+                fields[index + 1].focus();
+                return;
+            }
+
+            const nextRow = tr.nextElementSibling;
+            if (nextRow && nextRow._orderedFields && nextRow._orderedFields.length > 0) {
+                nextRow._orderedFields[0].focus();
+                const tbody = nextRow.parentElement;
+                if (tbody) {
+                    markRowCurrent(tbody, nextRow);
+                }
+            }
+        });
+    }
+
     /** rows 하나를 tr 하나로 만든다. 화면 전체를 다시 그리지 않고 한 행만 추가/교체할 때(예: "추가" 버튼)도 재사용. */
     function buildRow(columns, row, options) {
         options = options || {};
@@ -181,6 +240,11 @@
                     tr._fields = tr._fields || {};
                     tr._fields[col.id] = field;
                 }
+                // type이 있는(입력 가능한) 셀은 전부 왼쪽→오른쪽 순서로 tr._orderedFields에 쌓아서
+                // 엔터 키 이동(다음 셀, 마지막 셀이면 다음 행 첫 셀)에 쓴다.
+                tr._orderedFields = tr._orderedFields || [];
+                tr._orderedFields.push(field);
+                bindEnterNavigation(field, tr);
                 td.appendChild(field);
             } else {
                 td.textContent = (value === null || value === undefined) ? '' : value;
@@ -216,15 +280,7 @@
             if (!tr || tr.parentElement !== tbody || tr.querySelector(':scope > td.empty')) {
                 return;
             }
-            Array.from(tbody.querySelectorAll('tr.current')).forEach(function (other) {
-                if (other !== tr) {
-                    other.classList.remove('current');
-                }
-            });
-            tr.classList.add('current');
-            if (typeof tbody._gridOnRowClick === 'function') {
-                tbody._gridOnRowClick(tr);
-            }
+            markRowCurrent(tbody, tr);
         });
         tbody._gridClickBound = true;
     }
@@ -236,16 +292,43 @@
             bindRowClickHighlight(tbody);
         }
 
-        tbody.innerHTML = '';
+        function paint() {
+            tbody.innerHTML = '';
 
-        if (!rows || rows.length === 0) {
-            clearAndAppendMessage(tbody, columns.length, options.emptyMessage || '조회된 데이터가 없습니다.');
+            if (!rows || rows.length === 0) {
+                clearAndAppendMessage(tbody, columns.length, options.emptyMessage || '조회된 데이터가 없습니다.');
+                return;
+            }
+
+            rows.forEach(function (row) {
+                tbody.appendChild(buildRow(columns, row, options));
+            });
+        }
+
+        // col.optionsQuery가 붙은 select 컬럼은 그리는 것보다 먼저 공통코드에서 옵션을 받아와야
+        // 한다. 한 번 받아오면 col.options에 캐시해두고(col._optionsResolved) 다음 render()부터는
+        // 다시 조회하지 않는다 — "추가" 버튼처럼 Grid.buildRow를 단독으로 호출하는 곳도 이
+        // col.options를 그대로 쓰므로, 조회 화면이 최초 한 번 render()를 호출한 뒤부터는 화면이
+        // 신경 쓸 필요가 없다. 이런 컬럼이 없는(대다수) 그리드는 예전처럼 완전히 동기로 그려진다
+        // — render() 호출 직후 tbody를 바로 조회하는 화면(공통코드관리 등)이 있어서, 있지도 않은
+        // 비동기 대기를 끼워 넣으면 안 된다.
+        const pendingOptionColumns = columns.filter(function (col) {
+            return col.type === 'select' && col.optionsQuery && !col._optionsResolved;
+        });
+
+        if (pendingOptionColumns.length === 0) {
+            paint();
             return;
         }
 
-        rows.forEach(function (row) {
-            tbody.appendChild(buildRow(columns, row, options));
-        });
+        Promise.all(pendingOptionColumns.map(function (col) {
+            return global.CommonCode.fetchCodes(col.optionsQuery).then(function (codes) {
+                col.options = codes.map(function (code) {
+                    return { value: code.codeValue, label: code.codeName };
+                });
+                col._optionsResolved = true;
+            });
+        })).then(paint);
     }
 
     /** 조회 실패 등 에러 문구를 같은 모양(colspan 하나짜리 행)으로 보여줄 때 사용. */

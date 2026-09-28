@@ -13,7 +13,7 @@
     </style>
 </head>
 <body>
-<div class="app-shell">
+<div class="app-shell" th:classappend="${param.embed} ? 'app-shell--embedded'">
     <div th:replace="~{fragments/sidebar :: sidebar}"></div>
     <div th:replace="~{fragments/topbar :: topbar}"></div>
     <div th:replace="~{fragments/loading-overlay :: overlay}"></div>
@@ -48,10 +48,6 @@
         const API_URL = '/api/users';
         const gridBody = document.getElementById('userGridBody');
 
-        // 역할 select 옵션은 공통코드관리 화면(그룹 "ROLE")에서 관리한다. fetchCodes로 한 번만
-        // 받아 캐시된 배열을 COLUMNS의 select 컬럼(options)이 그대로 재사용한다.
-        let roleCodes = [];
-
         function initRow(tr, user) {
             tr._fields = {};
             if (user && user.id) {
@@ -67,11 +63,9 @@
                 placeholder: function (user) { return (user && user.id) ? '변경 시에만 입력' : '필수 입력'; }
             },
             {
-                id: 'role', label: '역할', type: 'select',
-                options: function () {
-                    return roleCodes.map(function (code) { return { value: code.codeValue, label: code.codeName }; });
-                },
-                defaultValue: 'USER'
+                // 역할 select 옵션은 공통코드관리 화면(그룹 "ROLE")에서 관리한다. 화면이 직접
+                // 조회하지 않고, optionsQuery만 주면 render()가 공통코드에서 채워온다.
+                id: 'role', label: '역할', type: 'select', optionsQuery: 'ROLE', defaultValue: 'USER'
             }
         ];
 
@@ -203,14 +197,8 @@
         document.getElementById('btnDelete').addEventListener('click', deleteSelected);
         document.getElementById('btnReset').addEventListener('click', searchUsers);
 
-        CommonCode.fetchCodes('ROLE')
-            .then(function (codes) {
-                roleCodes = codes;
-                searchUsers();
-            })
-            .catch(function (err) {
-                alert(err.message);
-            });
+        // 역할 select 옵션(공통코드 "ROLE") 조회는 Grid.render가 알아서 하므로 바로 조회하면 된다.
+        searchUsers();
     })();
 </script>
 </body>

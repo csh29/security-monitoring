@@ -19,7 +19,7 @@
         .kpi .lbl{ font-size:12px; color:#c9c9dd; margin-top:10px; }
 
         /* 가로 막대 차트 */
-        .panel-title{ font-size:13px; font-weight:700; color:var(--text-sub); }
+        #homePanel .panel-title{ margin-top:10px; }
         .bars{ display:flex; flex-direction:column; gap:8px; margin-top:12px; }
         .bar-row{ display:grid; grid-template-columns:110px 1fr; align-items:center; gap:12px; }
         .bar-row .cap{ font-size:12px; text-align:right; }
@@ -27,12 +27,13 @@
         .bar-row .fill{ height:12px; border-radius:3px; background:var(--accent); }
         .bar-row .num{ font-size:11px; color:var(--text-sub); }
 
-        /* 검색 바 */
+        /* 검색 바 — .bars 아래와 10px 더 띄운다(.area-main의 기본 gap:20px에 추가). */
         .search{
             display:flex; align-items:center; gap:10px;
             border:1px solid var(--line); border-radius:var(--radius-md);
             padding:13px 16px; background:#fafafd;
             font-size:13px; color:#b6b6cc;
+            margin-top:10px;
         }
 
         /* 결과 박스 */
@@ -47,6 +48,14 @@
         @media (max-width:760px){
             .kpi-row{ grid-template-columns:1fr; }
         }
+
+        /* 홈 화면이 탭 셸 역할도 한다 — 사이드바에서 홈 외 메뉴를 열면 이 안에 탭(iframe)이
+           쌓인다. 탭이 있을 땐 홈 내용을 숨기고 탭 영역을 그 자리(.area-main)에 꽉 채운다. */
+        .area-main{ position:relative; }
+        #homePanel.hidden{ display:none; }
+        #tabPanels{ display:none; position:absolute; inset:0; background:var(--bg); }
+        #tabPanels.active{ display:block; }
+        #tabPanels .tab-iframe{ display:none; width:100%; height:100%; border:none; }
     </style>
 </head>
 <body>
@@ -56,35 +65,41 @@
     <div th:replace="~{fragments/loading-overlay :: overlay}"></div>
 
     <main class="area-main">
-        <section class="kpi-row">
-            <div class="kpi"><div class="val" th:text="|${totalOpenVulnerabilities}건|">12건</div><div class="lbl">전체 미해결 취약점</div></div>
-            <div class="kpi"><div class="val" th:text="|${openCriticalRate}%|">95%</div><div class="lbl">미해결 크리티컬 비율</div></div>
-            <div class="kpi"><div class="val" th:text="|${averageResolutionRate}%|">78%</div><div class="lbl">평균 조치 완료율</div></div>
-        </section>
+        <div id="homePanel">
+            <section class="kpi-row">
+                <div class="kpi"><div class="val" th:text="|${totalOpenVulnerabilities}건|">12건</div><div class="lbl">전체 미해결 취약점</div></div>
+                <div class="kpi"><div class="val" th:text="|${openCriticalRate}%|">95%</div><div class="lbl">미해결 크리티컬 비율</div></div>
+                <div class="kpi"><div class="val" th:text="|${averageResolutionRate}%|">78%</div><div class="lbl">평균 조치 완료율</div></div>
+            </section>
 
-        <section>
-            <div class="panel-title">프로젝트별 미해결 취약점 TOP 5 (건수)</div>
-            <div class="bars" th:if="${not #lists.isEmpty(appVulnerabilityCounts)}">
-                <div class="bar-row" th:each="count : ${appVulnerabilityCounts}">
-                    <span class="cap" th:text="${count.systemName}">시스템명</span>
-                    <span class="track">
-                        <i class="fill" th:style="|width:${appVulnerabilityCounts[0].openCount > 0 ? count.openCount * 100 / appVulnerabilityCounts[0].openCount : 0}%|"></i>
-                        <span class="num" th:text="${count.openCount}">0</span>
-                    </span>
+            <section>
+                <div class="panel-title">프로젝트별 미해결 취약점 TOP 5 (건수)</div>
+                <div class="bars" th:if="${not #lists.isEmpty(appVulnerabilityCounts)}">
+                    <div class="bar-row" th:each="count : ${appVulnerabilityCounts}">
+                        <span class="cap" th:text="${count.systemName}">시스템명</span>
+                        <span class="track">
+                            <i class="fill" th:style="|width:${appVulnerabilityCounts[0].openCount > 0 ? count.openCount * 100 / appVulnerabilityCounts[0].openCount : 0}%|"></i>
+                            <span class="num" th:text="${count.openCount}">0</span>
+                        </span>
+                    </div>
                 </div>
+                <p th:if="${#lists.isEmpty(appVulnerabilityCounts)}" style="font-size:13px; color:var(--text-sub);">
+                    미해결 취약점이 없습니다.
+                </p>
+            </section>
+
+            <div class="search"><span>⌕</span><span>이번주 크리티컬 등급 취약점은?</span></div>
+
+            <div class="result">
+                <p>CRM 프로젝트의 lodash 4.17.15가 CVE-2021-23337(CVSS 7.2)에 해당하며 즉시 조치가 필요합니다.</p>
+                <span class="src">출처 · NVD·OSV.dev 2026.08</span>
             </div>
-            <p th:if="${#lists.isEmpty(appVulnerabilityCounts)}" style="font-size:13px; color:var(--text-sub);">
-                미해결 취약점이 없습니다.
-            </p>
-        </section>
-
-        <div class="search"><span>⌕</span><span>이번주 크리티컬 등급 취약점은?</span></div>
-
-        <div class="result">
-            <p>CRM 프로젝트의 lodash 4.17.15가 CVE-2021-23337(CVSS 7.2)에 해당하며 즉시 조치가 필요합니다.</p>
-            <span class="src">출처 · NVD·OSV.dev 2026.08</span>
         </div>
+
+        <div id="tabPanels"></div>
     </main>
 </div>
+
+<script src="/js/tabs.js"></script>
 </body>
 </html>

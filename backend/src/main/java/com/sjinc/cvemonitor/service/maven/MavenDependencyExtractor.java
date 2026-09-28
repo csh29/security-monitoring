@@ -48,12 +48,9 @@ public class MavenDependencyExtractor {
             }
 
             return parse(Files.readAllLines(outputFile));
-        } catch(Exception e ) {
-            System.out.println(e);
-        }finally {
+        } finally {
             Files.deleteIfExists(outputFile);
         }
-        return null;
     }
 
     private Properties outputProperties(Path outputFile) {

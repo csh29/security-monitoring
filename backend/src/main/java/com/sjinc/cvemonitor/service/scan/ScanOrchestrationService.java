@@ -9,7 +9,6 @@ import com.sjinc.cvemonitor.dto.scan.ScanResult;
 import com.sjinc.cvemonitor.dto.scan.ScanResult.DependencyFinding;
 import com.sjinc.cvemonitor.repository.AppRepository;
 import com.sjinc.cvemonitor.repository.ScanSnapshotRepository;
-import com.sjinc.cvemonitor.service.ai.AiAssessmentTriggerService;
 import com.sjinc.cvemonitor.service.maven.MavenDependencyExtractor;
 import com.sjinc.cvemonitor.service.maven.MavenDependencyExtractor.DependencyTreeResult;
 import com.sjinc.cvemonitor.dto.osv.OsvVulnDetail;
@@ -42,7 +41,6 @@ public class ScanOrchestrationService {
     private final VulnerabilityService vulnerabilityService;
     private final AppRepository appRepository;
     private final ScanSnapshotRepository scanSnapshotRepository;
-    private final AiAssessmentTriggerService aiAssessmentTriggerService;
 
     @Value("${git.access.token}")
     private String gitAccessToken;
@@ -54,9 +52,16 @@ public class ScanOrchestrationService {
     private String mavenHome;
 
     public ScanResult scanRepository(String repoUrl, String branch) throws Exception {
-        App app = appRepository.findByRepoUrlAndBranch(repoUrl, branch).orElse(null);
-        String systemName = app != null ? app.getSystemName() : null;
-        Long appId = app != null ? app.getId() : null;
+        // repoUrl/branch를 검증 없이 그대로 clone하면, 앱 관리에 등록되지 않은 임의 URL도 스캔
+        // 대상이 될 수 있다 — GitLab PAT를 공격자 서버로 그대로 보내거나(자격증명 유출), 공격자가
+        // 만든 pom.xml의 <repositories>/build extension을 Maven이 그대로 실행하거나, repoUrl에
+        // 내부망 주소·file:// 경로를 넣어 SSRF/로컬 파일 접근에 악용될 수 있다. 앱 관리("app-management"
+        // 권한이 있어야 등록 가능)에 이미 등록된 조합만 스캔을 허용해서 이 경로를 원천 차단한다.
+        App app = appRepository.findByRepoUrlAndBranch(repoUrl, branch)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "앱 관리에 등록되지 않은 저장소/브랜치입니다: " + repoUrl + " (" + branch + ")"));
+        String systemName = app.getSystemName();
+        Long appId = app.getId();
 
         File projectDir = gitCloneService.cloneRepository(repoUrl, branch, gitUserName, gitAccessToken);
         try {
@@ -121,30 +126,23 @@ public class ScanOrchestrationService {
                         finding.knownFixedVersions(), detailByKey.get(key));
             });
 
-            if (app != null) {
-                // 라이브러리 삭제/업그레이드로 이번 스캔엔 안 걸린 기존 OPEN 건을 RESOLVED로 표시한다.
-                // cveFindings가 비어있어도(전부 해소된 경우) 실행해야 하므로 이 블록 밖에서 처리한다.
-                // CVE ID만으로 비교하면 안 된다 — 같은 CVE가 여러 아티팩트에 걸린 경우, 한쪽
-                // 아티팩트가 해소돼도 다른 아티팩트가 여전히 걸려있으면(같은 CVE ID) 잘못 RESOLVED
-                // 처리될 수 있다. (cveId, groupId, artifactId) 조합 단위로 비교해야 정확하다.
-                Set<String> currentKeys = cveFindings.stream()
-                        .map(f -> f.identifier() + "|" + f.groupId() + ":" + f.artifactId())
-                        .collect(Collectors.toSet());
-                vulnerabilityService.resolveMissingVulnerabilities(appId, currentKeys);
-            }
+            // 라이브러리 삭제/업그레이드로 이번 스캔엔 안 걸린 기존 OPEN 건을 RESOLVED로 표시한다.
+            // cveFindings가 비어있어도(전부 해소된 경우) 실행해야 하므로 이 블록 밖에서 처리한다.
+            // CVE ID만으로 비교하면 안 된다 — 같은 CVE가 여러 아티팩트에 걸린 경우, 한쪽
+            // 아티팩트가 해소돼도 다른 아티팩트가 여전히 걸려있으면(같은 CVE ID) 잘못 RESOLVED
+            // 처리될 수 있다. (cveId, groupId, artifactId) 조합 단위로 비교해야 정확하다.
+            Set<String> currentKeys = cveFindings.stream()
+                    .map(f -> f.identifier() + "|" + f.groupId() + ":" + f.artifactId())
+                    .collect(Collectors.toSet());
+            vulnerabilityService.resolveMissingVulnerabilities(appId, currentKeys);
 
             if (!cveFindings.isEmpty()) {
                 // fix-plan 배치가 나중에 pom.xml/tree를 참고할 수 있도록, clone 디렉터리를 지우기 전에 스냅샷으로 남겨둔다.
-                if (app != null) {
-                    String pomXml = Files.readString(new File(projectDir, "pom.xml").toPath());
-                    ScanSnapshot snapshot = scanSnapshotRepository.findByAppId(appId)
-                            .orElseGet(() -> ScanSnapshot.builder().app(app).build());
-                    snapshot.updateSnapshot(pomXml, treeResult.rawText());
-                    scanSnapshotRepository.save(snapshot);
-                }
-
-                // 새로 저장된 CVE가 있을 때만 AI 판단 배치를 깨운다.
-//                aiAssessmentTriggerService.triggerAsync();
+                String pomXml = Files.readString(new File(projectDir, "pom.xml").toPath());
+                ScanSnapshot snapshot = scanSnapshotRepository.findByAppId(appId)
+                        .orElseGet(() -> ScanSnapshot.builder().app(app).build());
+                snapshot.updateSnapshot(pomXml, treeResult.rawText());
+                scanSnapshotRepository.save(snapshot);
             }
 
             return new ScanResult(repoUrl, branch, systemName, dependencies.size(), cveFindings.size(), findings);

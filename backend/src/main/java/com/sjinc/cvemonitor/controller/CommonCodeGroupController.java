@@ -2,6 +2,7 @@ package com.sjinc.cvemonitor.controller;
 
 import com.sjinc.cvemonitor.domain.CommonCodeGroup;
 import com.sjinc.cvemonitor.dto.commoncode.CommonCodeGroupRequest;
+import com.sjinc.cvemonitor.security.RequiresProgram;
 import com.sjinc.cvemonitor.service.commoncode.CommonCodeGroupService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -14,10 +15,14 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-/** 공통코드관리 화면 좌측(마스터) 그룹 목록이 호출하는 REST API. */
+/**
+ * 공통코드관리 화면 좌측(마스터) 그룹 목록이 호출하는 REST API.
+ * "common-code-management" 권한이 있어야 한다.
+ */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/common-code-groups")
+@RequiresProgram("common-code-management")
 public class CommonCodeGroupController {
 
     private final CommonCodeGroupService commonCodeGroupService;

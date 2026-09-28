@@ -25,7 +25,7 @@
     </style>
 </head>
 <body>
-<div class="app-shell">
+<div class="app-shell" th:classappend="${param.embed} ? 'app-shell--embedded'">
     <div th:replace="~{fragments/sidebar :: sidebar}"></div>
     <div th:replace="~{fragments/topbar :: topbar}"></div>
     <div th:replace="~{fragments/loading-overlay :: overlay}"></div>
@@ -106,7 +106,7 @@
             },
             { id: 'groupName', label: '그룹명', type: 'text' },
             { id: 'sortOrder', label: '정렬순서', type: 'number', width: 90 },
-            { id: 'useYn', label: '사용여부', type: 'checkbox', width: 70, align: 'center' }
+            { id: 'useYn', label: '사용', type: 'checkbox', width: 70, align: 'center' }
         ];
 
         Grid.renderHeader(document.getElementById('groupGridHead'), GROUP_COLUMNS);
@@ -271,7 +271,7 @@
             { id: 'codeValue', label: '코드값', type: 'text' },
             { id: 'codeName', label: '코드명', type: 'text' },
             { id: 'sortOrder', label: '정렬순서', type: 'number', width: 90 },
-            { id: 'useYn', label: '사용여부', type: 'checkbox', width: 70, align: 'center' }
+            { id: 'useYn', label: '사용', type: 'checkbox', width: 70, align: 'center' }
         ];
 
         Grid.renderHeader(document.getElementById('codeGridHead'), CODE_COLUMNS);

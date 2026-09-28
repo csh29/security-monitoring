@@ -20,6 +20,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.List;
 
 /**
@@ -75,7 +77,12 @@ public class AiAssessmentController {
     }
 
     private void verifyToken(String token) {
-        if (!internalToken.equals(token)) {
+        // String.equals()는 첫 불일치 문자에서 바로 반환해서 비교에 걸리는 시간이 일치하는
+        // 접두사 길이에 비례한다 — 이론상 타이밍 공격으로 토큰을 한 글자씩 알아낼 수 있다.
+        // MessageDigest.isEqual은 항상 배열 전체를 비교해서 이 시간차를 없앤다.
+        boolean valid = token != null
+                && MessageDigest.isEqual(internalToken.getBytes(StandardCharsets.UTF_8), token.getBytes(StandardCharsets.UTF_8));
+        if (!valid) {
             // Security의 AccessDeniedException을 쓰면 익명 사용자는 /login으로 리다이렉트되어 버리므로,
             // API답게 401을 그대로 내려주기 위해 Security와 무관한 예외를 사용한다.
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "유효하지 않은 내부 토큰입니다.");

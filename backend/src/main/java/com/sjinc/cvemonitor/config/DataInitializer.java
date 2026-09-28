@@ -13,14 +13,27 @@ import com.sjinc.cvemonitor.repository.ProgramRepository;
 import com.sjinc.cvemonitor.repository.UserProgramPermissionRepository;
 import com.sjinc.cvemonitor.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
-/** H2가 in-memory라 재기동 시마다 초기화되므로, 로그인 테스트용 기본 관리자 계정을 매번 심어둔다. */
+import java.security.SecureRandom;
+
+/**
+ * H2가 in-memory라 재기동 시마다 초기화되므로, 로그인용 초기 관리자 계정을 매번 심어둔다.
+ *
+ * <p>비밀번호는 소스에 평문으로 박아두지 않는다 — 그 상태로 배포되면 계정이 공개된 것과 같다.
+ * 대신 기동할 때마다 무작위로 생성해서 로그 한 줄로만 알려준다(운영자는 서버 로그에서 최초 1회
+ * 확인하고, 첫 로그인 후 반드시 비밀번호를 바꿔야 한다).
+ */
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class DataInitializer implements CommandLineRunner {
+
+    private static final String INITIAL_PASSWORD_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    private static final int INITIAL_PASSWORD_LENGTH = 20;
 
     private final UserRepository userRepository;
     private final ProgramRepository programRepository;
@@ -34,11 +47,14 @@ public class DataInitializer implements CommandLineRunner {
     public void run(String... args) {
         if (userRepository.count() > 0) return;
 
+        String initialPassword = generateInitialPassword();
         User admin = userRepository.save(User.builder()
                 .username("admin")
-                .password(passwordEncoder.encode("admin1234!"))
+                .password(passwordEncoder.encode(initialPassword))
                 .role("ADMIN")
                 .build());
+        log.warn("초기 관리자 계정을 생성했습니다. username=admin, password={} "
+                + "(이 로그에만 한 번 출력됩니다 — 로그인 후 반드시 비밀번호를 변경하세요)", initialPassword);
 
         // 사이드바 고정 메뉴 외에 권한 기반으로 노출되는 추가 프로그램 예시.
         // 실제 프로그램/URL로 교체하거나 관리 화면이 생기면 이 시드는 제거한다.
@@ -151,5 +167,15 @@ public class DataInitializer implements CommandLineRunner {
                 .systemName("CRM_BATCH")
                 .description("CRM 배치")
                 .build());
+    }
+
+    /** 혼동되기 쉬운 문자(0/O, 1/l/I 등)를 뺀 문자셋에서 무작위로 뽑은 초기 비밀번호. */
+    private String generateInitialPassword() {
+        SecureRandom random = new SecureRandom();
+        StringBuilder password = new StringBuilder(INITIAL_PASSWORD_LENGTH);
+        for (int i = 0; i < INITIAL_PASSWORD_LENGTH; i++) {
+            password.append(INITIAL_PASSWORD_CHARS.charAt(random.nextInt(INITIAL_PASSWORD_CHARS.length())));
+        }
+        return password.toString();
     }
 }
