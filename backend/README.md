@@ -9,7 +9,7 @@ Git 저장소(Maven 프로젝트)를 clone 해서 의존성을 뽑고, OSV/NVD�
 | 모듈 | 역할 |
 | --- | --- |
 | `backend/` | Spring Boot 서버 + 화면(Thymeleaf). 스캔·판정·조회 전부 |
-| `ai/` | 파이썬 AI 판단 배치(`vuln_assessor.py`). 스캔 직후 서버가 띄우고, 배치는 `/api/ai/**`를 직접 호출해 대기 중인 취약점을 가져가 결과를 되돌려준다 |
+| `ai/` | 파이썬 AI 판단 배치(`vuln_assessor.py`). 스캔 직후 AI 판단·fix-plan 대기 건이 있으면 서버가 띄우고, 배치는 `/api/ai/**`를 직접 호출해 대기 중인 취약점을 가져가 결과를 되돌려준다 |
 
 ## 개발 환경
 

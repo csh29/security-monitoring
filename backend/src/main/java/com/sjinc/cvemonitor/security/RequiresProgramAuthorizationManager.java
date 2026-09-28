@@ -3,6 +3,8 @@ package com.sjinc.cvemonitor.security;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.authentication.AuthenticationTrustResolver;
+import org.springframework.security.authentication.AuthenticationTrustResolverImpl;
 import org.springframework.security.authorization.AuthorizationDecision;
 import org.springframework.security.authorization.AuthorizationManager;
 import org.springframework.security.core.Authentication;
@@ -34,13 +36,19 @@ import java.util.function.Supplier;
 @Slf4j
 public class RequiresProgramAuthorizationManager implements AuthorizationManager<RequestAuthorizationContext> {
 
+    private static final AuthenticationTrustResolver TRUST_RESOLVER = new AuthenticationTrustResolverImpl();
+
     private final RequestMappingHandlerMapping requestMappingHandlerMapping;
     private final ProgramAccessGuard programAccess;
 
     @Override
     public AuthorizationDecision check(Supplier<Authentication> authenticationSupplier, RequestAuthorizationContext context) {
         Authentication authentication = authenticationSupplier.get();
-        if (authentication == null || !authentication.isAuthenticated()) {
+        // 로그인하지 않은 요청도 Spring Security는 익명 토큰(AnonymousAuthenticationToken)을 넣어 주고,
+        // 그 토큰의 isAuthenticated()는 true다. isAuthenticated()만 보면 비로그인 사용자가 "로그인만 하면
+        // 되는" 화면·API(홈, 취약점 관리/조회, @RequiresProgram 없는 API)를 그대로 통과한다 — 실제로 그랬다.
+        // 익명이면 거부해야 ExceptionTranslationFilter가 로그인 페이지(화면) / 401(API)로 보낸다.
+        if (authentication == null || !authentication.isAuthenticated() || TRUST_RESOLVER.isAnonymous(authentication)) {
             return new AuthorizationDecision(false);
         }
 

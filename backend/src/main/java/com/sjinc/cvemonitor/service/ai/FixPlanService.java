@@ -35,7 +35,10 @@ public class FixPlanService {
     private final AppRepository appRepository;
     private final MavenDependencyExtractor mavenDependencyExtractor;
 
-    /** VulnerabilityService와 같은 기준. 이 등급 밖의 CVE들을 "낮은 등급 코멘트"로 요약해서 남긴다. */
+    /**
+     * VulnerabilityService와 같은 기준. fix-plan은 이 등급의 취약 확정 CVE만 다루고, 이 등급 밖의 CVE들은
+     * "낮은 등급 코멘트"로 요약해서 남긴다.
+     */
     @Value("#{'${ai.assessment.severities:HIGH,CRITICAL}'.split(',')}")
     private List<String> aiAssessmentSeverities;
 
@@ -49,7 +52,7 @@ public class FixPlanService {
 
     private AppFixPlanTarget toTarget(ScanSnapshot snapshot) {
         Long appId = snapshot.getApp().getId();
-        List<Vulnerability> vulnerabilities = vulnerabilityRepository.findConfirmedVulnerable(appId, "OPEN");
+        List<Vulnerability> vulnerabilities = vulnerabilityRepository.findConfirmedVulnerable(appId, "OPEN", aiAssessmentSeverities);
 
         Set<String> targetCoordinates = vulnerabilities.stream()
                 .map(v -> v.getGroupId() + ":" + v.getArtifactId())
@@ -112,7 +115,7 @@ public class FixPlanService {
     }
 
     /**
-     * AI 판단 대상(HIGH/CRITICAL)에서 빠진 LOW/MEDIUM CVE를 "artifact@version: CVE, CVE (N건)" 형태로
+     * AI 판단·fix-plan 대상(HIGH/CRITICAL)에서 빠진 LOW/MEDIUM CVE를 "artifact@version: CVE, CVE (N건)" 형태로
      * 아티팩트별로 묶어서 요약한다. AI가 만드는 게 아니라 DB 조회만으로 자바가 직접 만든다.
      */
     private String buildLowSeverityNote(Long appId) {
@@ -132,7 +135,7 @@ public class FixPlanService {
                         entry.getKey(), String.join(", ", entry.getValue()), entry.getValue().size()))
                 .collect(Collectors.joining("\n"));
 
-        return "LOW/MEDIUM 등급 %d건은 AI 판단 대상(%s)에서 제외됨:\n%s".formatted(
+        return "LOW/MEDIUM 등급 %d건은 AI 판단·fix-plan 대상(%s)에서 제외됨:\n%s".formatted(
                 lowSeverity.size(), String.join("/", aiAssessmentSeverities), detail);
     }
 

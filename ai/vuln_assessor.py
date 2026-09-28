@@ -68,9 +68,15 @@ FIX_PLAN_SCHEMA = {
     "additionalProperties": False,
 }
 
-# pom.xml 전문을 그대로 받아야 해서 출력이 길다. 8192로는 큰 pom에서 잘린다.
 ASSESS_MAX_TOKENS = 4096
-FIX_PLAN_MAX_TOKENS = 32000
+
+# fix-plan은 pom.xml 전문 + reasoning을 그대로 받아야 해서 출력이 길다. 게다가 claude-sonnet-5는
+# thinking 파라미터를 안 넘겨도 adaptive thinking이 켜진 채로 돌고(effort 기본 high), thinking
+# 토큰도 max_tokens 한도를 같이 쓴다. 그래서 같은 앱이라도 thinking 양에 따라 출력이 9천~3만 토큰으로
+# 들쭉날쭉했고, 32000에서는 CRM_BACK이 실제로 잘렸다(_reject_if_truncated가 저장을 막음).
+# 스트리밍으로 받으니 큰 값이어도 HTTP 타임아웃 걱정이 없고, 모델 출력 상한(128K) 안이다.
+# 한도는 상한일 뿐 실제로 쓴 만큼만 과금된다.
+FIX_PLAN_MAX_TOKENS = 64000
 
 # output_config.effort를 안 넘기면 claude-sonnet-5는 기본 "high"로 돈다. CVE 판단은 정해진
 # 스키마 안에서 고르는 분류 작업이라 medium으로 충분하다고 보고 낮춘다 — fix-plan(다중 CVE를

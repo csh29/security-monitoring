@@ -21,7 +21,7 @@ Git 저장소(Maven 프로젝트)를 clone → 의존성 추출 → 취약점 DB
 | 모듈 | 역할 |
 | --- | --- |
 | `backend/` | Spring Boot 3.3.4 / Java 17 / Maven. 서버 + 화면(Thymeleaf) 전부 |
-| `ai/` | 파이썬 배치(`vuln_assessor.py`). **배치가 드라이버다** — 사람이 직접 실행하면 배치가 `/api/ai/**`를 호출해 대기 중인 취약점을 스스로 가져가고, 판단 결과를 되돌려준다. 자바가 파이썬을 띄우지 않는다 |
+| `ai/` | 파이썬 배치(`vuln_assessor.py`). 스캔이 끝나면 할 일이 있을 때 서버가 띄우고(`AiAssessmentTriggerService`, 아래 4장), 사람이 직접 실행해도 된다. 어느 쪽이든 **배치가 드라이버다** — 배치가 `/api/ai/**`를 호출해 대기 중인 취약점·fix-plan을 스스로 가져가고 결과를 되돌려준다. 자바는 띄우기만 하고 결과를 기다리지 않는다 |
 
 DB는 H2 in-memory(`ddl-auto=update`)다. **재기동하면 데이터가 사라지고** `DataInitializer`가
 초기 데이터를 다시 심는다 — "DB에 있던 값이 없어졌다"는 현상을 버그로 오해하지 않는다.
@@ -59,10 +59,12 @@ com.sjinc.cvemonitor
 5. `VulnerabilityService.upsertEntity` → NVD 보강 + 결정론 판정 + 저장
 6. `resolveMissingVulnerabilities` → 이번 스캔에 안 걸린 기존 OPEN 건을 RESOLVED로 표시
 7. `ScanSnapshot` 저장 (fix-plan이 나중에 참고할 pom.xml + tree 원문)
-
-**스캔은 여기서 끝난다 — 자바가 AI 배치를 띄우지 않는다.** AI 판단은 파이썬 배치를 사람이
-실행할 때 시작된다(1장). `AiAssessmentTriggerService`는 현재 어디서도 호출되지 않는 잔여 코드이고,
-`getStatus()`만 `/api/ai/status`에서 쓰인다.
+8. `triggerAiAssessmentIfNeeded` → AI 판단 대기(`getUnassessedVulnerabilities`)나 fix-plan 대기
+   (`getPendingFixPlanTargets`)가 하나라도 있으면 `AiAssessmentTriggerService.triggerAsync()`로 파이썬
+   배치를 백그라운드로 띄운다(fire-and-forget, 이미 떠 있으면 건너뜀). "새 CVE가 저장됐는가"가 아니라
+   배치가 가져갈 대기열로 판단한다 — 새 CVE가 결정론 자동판정으로 끝나면 AI가 볼 게 없고, 새 CVE가
+   없어도 스냅샷이 갱신되면 fix-plan은 다시 대기가 된다. 배치는 Claude API를 호출하므로(과금) 스캔마다
+   비용이 생길 수 있다. 실행 상태는 `/api/ai/status`(`getStatus()`)로 본다.
 
 ### 5단계의 실패 처리
 
@@ -86,7 +88,10 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
    스캔 때 받아둔 `OsvVulnDetail`을 재사용하므로 OSV를 다시 호출하지 않는다.
 3. **AI 판단** — 위 둘 다 판단 불가일 때만. 대상도 `ai.assessment.severities`(기본 HIGH/CRITICAL)로
    좁힌다.
-4. **fix-plan** — "취약함"으로 확정된 CVE만 앱 단위로 모아 한 번에 pom.xml 수정안을 만든다.
+4. **fix-plan** — "취약함"으로 확정된 CVE 중 **`ai.assessment.severities` 등급(기본 HIGH/CRITICAL)만** 앱 단위로
+   모아 한 번에 pom.xml 수정안을 만든다(`findConfirmedVulnerable`의 등급 조건). 1·2번 자동판정은 등급과 무관하게
+   모든 CVE에 돌아 LOW/MEDIUM에도 `aiVulnerable`을 매기므로, 등급 조건이 없으면 LOW/MEDIUM이 fix-plan에 대량으로
+   섞인다(실제로 그랬다 — 출력 잘림·CVE 누락의 원인). 등급 밖 CVE는 fix-plan의 "제외됨" 메모로만 남는다.
 
 AI에게 넘기는 근거도 마찬가지다. OSV에서 뽑은 `knownFixedVersions`가 있으면 AI가 설명 프로즈를
 다시 해석해 유추하지 않도록 그 값을 최우선으로 쓰게 한다.
@@ -138,6 +143,7 @@ AI에게 넘기는 근거도 마찬가지다. OSV에서 뽑은 `knownFixedVersio
 | 계층 | 어떻게 동작하는가 |
 | --- | --- |
 | 인증 | 폼 로그인 세션. `PUBLIC_URLS`(`/login`, 정적 자원, `/api/ai/**`, `/error`) 외에는 전부 로그인 필요 |
+| 비로그인·세션 만료 | `RequiresProgramAuthorizationManager`가 **익명 토큰도 거부**한다(`isAuthenticated()`는 익명에게도 true라 그것만 보면 비로그인 사용자가 통과한다 — 실제로 그랬다). 거부된 요청은 화면이면 `/login`으로 302, `/api/**`면 **401**(`SecurityConfig.authenticationEntryPoint`). 401은 공통 fetch 래퍼(`loading-overlay.html`)가 받아 창 전체(`window.top`)를 로그인 페이지로 보내고, 화면의 then/catch는 실행되지 않는다. 탭(iframe) 안에서 로그인 페이지가 뜨면 `login.html`이 창 전체로 옮긴다 |
 | 인가 진입점 | `SecurityConfig`는 `anyRequest().access(requiresProgramAuthorizationManager)` 한 줄뿐 — **URL 패턴 목록이 없다** |
 | 프로그램 권한 | `RequiresProgramAuthorizationManager`가 요청을 처리할 컨트롤러(메서드 우선, 없으면 클래스)의 `@RequiresProgram`을 리플렉션으로 읽어 판단 |
 | 어노테이션이 없으면 | **로그인만 하면 통과한다**(= 권한 미요구 API로 간주) |

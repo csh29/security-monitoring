@@ -9,6 +9,8 @@ import com.sjinc.cvemonitor.dto.scan.ScanResult;
 import com.sjinc.cvemonitor.dto.scan.ScanResult.DependencyFinding;
 import com.sjinc.cvemonitor.repository.AppRepository;
 import com.sjinc.cvemonitor.repository.ScanSnapshotRepository;
+import com.sjinc.cvemonitor.service.ai.AiAssessmentTriggerService;
+import com.sjinc.cvemonitor.service.ai.FixPlanService;
 import com.sjinc.cvemonitor.service.maven.MavenDependencyExtractor;
 import com.sjinc.cvemonitor.service.maven.MavenDependencyExtractor.DependencyTreeResult;
 import com.sjinc.cvemonitor.dto.osv.OsvVulnDetail;
@@ -41,6 +43,8 @@ public class ScanOrchestrationService {
     private final VulnerabilityService vulnerabilityService;
     private final AppRepository appRepository;
     private final ScanSnapshotRepository scanSnapshotRepository;
+    private final AiAssessmentTriggerService aiAssessmentTriggerService;
+    private final FixPlanService fixPlanService;
 
     @Value("${git.access.token}")
     private String gitAccessToken;
@@ -162,10 +166,40 @@ public class ScanOrchestrationService {
                 scanSnapshotRepository.save(snapshot);
             }
 
+            // 스캔 결과를 다 저장한 뒤(스냅샷 포함 — fix-plan 대상 판단에 필요) AI 판단 배치를 깨운다.
+            triggerAiAssessmentIfNeeded();
+
             return new ScanResult(repoUrl, branch, systemName, dependencies.size(), cveFindings.size(),
                     failedCveIds.size(), findings);
         } finally {
             gitCloneService.cleanup(projectDir);
+        }
+    }
+
+    /**
+     * 파이썬 AI 배치(ai/vuln_assessor.py)가 할 일이 있을 때만 백그라운드로 띄운다.
+     *
+     * <p>"새로 저장된 CVE가 있는가"가 아니라 배치가 실제로 가져갈 대기열 두 개를 기준으로 본다 —
+     * 새 CVE라도 결정론적 자동판정으로 끝나면 AI가 볼 게 없고(괜히 띄우면 할 일 없이 뜨는 프로세스),
+     * 반대로 새 CVE가 없어도 이번 스캔이 스냅샷을 갱신했으면 fix-plan이 다시 대기 상태가 된다.
+     *   - AI 판단 대기: {@link VulnerabilityService#getUnassessedVulnerabilities()} (/api/ai/vulnerabilities/pending)
+     *   - fix-plan 대기: {@link FixPlanService#getPendingFixPlanTargets()} (/api/ai/fix-plans/pending)
+     *
+     * <p>배치는 Claude API를 호출한다(과금). 이미 떠 있으면 {@code triggerAsync}가 건너뛰므로 스캔을
+     * 연달아 돌려도 프로세스가 쌓이지 않는다. 여기서 실패해도 스캔 결과는 이미 저장됐으니 스캔은
+     * 성공으로 끝내고 로그만 남긴다.
+     */
+    private void triggerAiAssessmentIfNeeded() {
+        try {
+            boolean hasPendingAssessment = !vulnerabilityService.getUnassessedVulnerabilities().isEmpty();
+            boolean hasPendingFixPlan = !fixPlanService.getPendingFixPlanTargets().isEmpty();
+            if (hasPendingAssessment || hasPendingFixPlan) {
+                aiAssessmentTriggerService.triggerAsync();
+            } else {
+                log.info("AI 판단·fix-plan 대기 건이 없어 AI 배치를 띄우지 않습니다.");
+            }
+        } catch (Exception e) {
+            log.warn("AI 배치 실행 판단/시작에 실패했습니다(스캔 결과는 저장됨): {}", e.toString());
         }
     }
 

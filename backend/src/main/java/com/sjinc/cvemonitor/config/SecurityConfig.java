@@ -5,14 +5,23 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.DelegatingAuthenticationEntryPoint;
+import org.springframework.security.web.authentication.HttpStatusEntryPoint;
+import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
+import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
+
+import java.util.LinkedHashMap;
 
 /**
  * 폼 로그인 기반 세션 인증 + 추가 프로그램(관리 화면) API 접근 제어 정책.
@@ -60,6 +69,12 @@ public class SecurityConfig {
                 .logout(logout -> logout
                         .logoutSuccessUrl("/login?logout")
                         .permitAll())
+                // 로그인 안 된(세션 만료·서버 재기동 포함) /api/** 요청은 로그인 페이지로 302를 보내지 않고
+                // 401로 끝낸다. 302를 보내면 화면의 fetch가 리다이렉트를 조용히 따라가 로그인 페이지 HTML을
+                // 200으로 받고, 그걸 JSON으로 읽다가 "Unexpected token '<'" 같은 엉뚱한 오류가 난다.
+                // 401을 받은 화면은 공통 fetch 래퍼(loading-overlay.html)가 로그인 페이지로 보낸다.
+                // 화면(페이지) 요청은 지금처럼 로그인 페이지로 리다이렉트한다.
+                .exceptionHandling(ex -> ex.authenticationEntryPoint(authenticationEntryPoint()))
                 // /api/**도 (바로 아래 /api/ai/** 하나만 빼고) CSRF 검증을 받는다. 쿠키에 담은 토큰 값을 화면 JS가 그대로
                 // X-XSRF-TOKEN 헤더로 실어 보내는 방식(CookieCsrfTokenRepository +
                 // 일반 CsrfTokenRequestAttributeHandler, BREACH 방지용 XOR 인코딩 없이 원문 비교)
@@ -92,5 +107,20 @@ public class SecurityConfig {
                 .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin())); // 홈 화면의 탭(iframe)이 같은 출처에서 화면을 띄우는 데 필요
 
         return http.build();
+    }
+
+    /**
+     * 로그인이 필요한데 안 된 요청을 어떻게 끝낼지. /api/**는 401, 나머지(화면)는 로그인 페이지로.
+     *
+     * <p>defaultAuthenticationEntryPointFor로 API용만 덧붙이면, formLogin이 등록하는 로그인 페이지
+     * 진입점이 "브라우저가 text/html을 요청할 때"로 한정돼 있어서 Accept에 text/html이 없는 화면 요청은
+     * 먼저 등록된 API용(401)으로 떨어진다. 그래서 둘을 여기서 명시적으로 나눈다.
+     */
+    private DelegatingAuthenticationEntryPoint authenticationEntryPoint() {
+        LinkedHashMap<RequestMatcher, AuthenticationEntryPoint> entryPoints = new LinkedHashMap<>();
+        entryPoints.put(AntPathRequestMatcher.antMatcher("/api/**"), new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED));
+        DelegatingAuthenticationEntryPoint entryPoint = new DelegatingAuthenticationEntryPoint(entryPoints);
+        entryPoint.setDefaultEntryPoint(new LoginUrlAuthenticationEntryPoint("/login"));
+        return entryPoint;
     }
 }
