@@ -84,13 +84,6 @@
         let currentGroup = null;
 
         // ── 좌측: 그룹(마스터) ──────────────────────────────────────
-        function initGroupRow(tr, group) {
-            tr._fields = {};
-            if (group && group.codeGroup) {
-                tr.dataset.id = group.codeGroup;
-            }
-        }
-
         const GROUP_COLUMNS = [
             // 체크박스 클릭은 삭제 대상 선택용이라, stopPropagation으로 우측 디테일을 바꾸는 행 클릭과 분리한다.
             { type: 'row-select', width: 36, align: 'center', stopPropagation: true },
@@ -108,22 +101,17 @@
 
         Grid.renderHeader(document.getElementById('groupGridHead'), GROUP_COLUMNS);
 
-        function buildGroupRow(group) {
-            return Grid.buildRow(GROUP_COLUMNS, group, { buildRow: initGroupRow });
-        }
-
         function renderGroups(groups) {
             Grid.render(groupGridBody, GROUP_COLUMNS, groups, {
                 emptyMessage: '등록된 그룹이 없습니다.',
-                buildRow: initGroupRow,
                 // 행을 클릭하면(체크박스 제외) 우측 디테일 그리드를 그 그룹의 코드로 채운다.
                 // 강조 표시(.current)는 Grid.render가 알아서 붙여주므로 여기서는 신경 쓰지 않는다.
-                onRowClick: function (tr) {
-                    if (!tr.dataset.id) {
+                onRowClick: function (tr, row) {
+                    if (row._isNew) {
                         clearDetail();
                         return;
                     }
-                    selectGroup(tr.dataset.id, tr._fields.groupName.value);
+                    selectGroup(row.codeGroup, row.groupName);
                 }
             });
         }
@@ -156,25 +144,16 @@
             // 다른 그룹의 코드가 그대로 남아있으면 혼동되니 비워둔다.
             clearDetail();
 
-            const emptyRow = groupGridBody.querySelector('.empty');
-            if (emptyRow) {
-                emptyRow.closest('tr').remove();
-            }
-            const tr = buildGroupRow(null);
-            groupGridBody.insertBefore(tr, groupGridBody.firstChild);
-            tr._fields.codeGroup.focus();
+            Grid.addRow(groupGridBody);
         }
 
         function saveGroups() {
-            const rows = Array.from(groupGridBody.querySelectorAll('tr')).filter(function (tr) {
-                return !!tr._fields;
-            });
             const requests = [];
 
-            for (const tr of rows) {
-                const codeGroup = tr._fields.codeGroup.value.trim();
-                const groupName = tr._fields.groupName.value.trim();
-                const sortOrder = tr._fields.sortOrder.value.trim();
+            for (const row of Grid.getRows(groupGridBody)) {
+                const codeGroup = row.codeGroup;
+                const groupName = row.groupName;
+                const sortOrder = row.sortOrder;
 
                 if (!codeGroup && !groupName) {
                     continue;
@@ -188,7 +167,7 @@
                     codeGroup: codeGroup,
                     groupName: groupName,
                     sortOrder: sortOrder ? Number(sortOrder) : null,
-                    useYn: tr._fields.useYn.checked ? 'Y' : 'N'
+                    useYn: row.useYn
                 };
 
                 requests.push(fetch(GROUPS_URL, {
@@ -215,7 +194,7 @@
         }
 
         function deleteGroups() {
-            const rows = Array.from(groupGridBody.querySelectorAll('tr.selected'));
+            const rows = Grid.getRows(groupGridBody).filter(function (row) { return row._selected; });
             if (rows.length === 0) {
                 alert('삭제할 그룹을 목록에서 선택하세요.');
                 return;
@@ -224,17 +203,14 @@
                 return;
             }
 
-            const deletesCurrentGroup = rows.some(function (tr) { return tr.dataset.id === currentGroup; });
+            const deletesCurrentGroup = rows.some(function (row) { return !row._isNew && row.codeGroup === currentGroup; });
 
             const requests = rows
-                .filter(function (tr) { return !!tr.dataset.id; })
-                .map(function (tr) { return fetch(GROUPS_URL + '/' + encodeURIComponent(tr.dataset.id), { method: 'DELETE' }); });
+                .filter(function (row) { return !row._isNew; })
+                .map(function (row) { return fetch(GROUPS_URL + '/' + encodeURIComponent(row.codeGroup), { method: 'DELETE' }); });
 
-            rows.forEach(function (tr) {
-                if (!tr.dataset.id) {
-                    tr.remove();
-                }
-            });
+            // 저장 전 신규 행은 서버에 없으니 화면에서만 지운다.
+            Grid.removeRows(groupGridBody, rows.filter(function (row) { return row._isNew; }));
 
             if (requests.length === 0) {
                 return;
@@ -256,13 +232,6 @@
         }
 
         // ── 우측: 코드(디테일) ──────────────────────────────────────
-        function initCodeRow(tr, code) {
-            tr._fields = {};
-            if (code && code.id) {
-                tr.dataset.id = code.id;
-            }
-        }
-
         const CODE_COLUMNS = [
             { type: 'row-select', width: 36, align: 'center' },
             { id: 'codeValue', label: '코드값', type: 'text' },
@@ -273,12 +242,8 @@
 
         Grid.renderHeader(document.getElementById('codeGridHead'), CODE_COLUMNS, { initialMessage: '좌측에서 그룹을 선택하세요.' });
 
-        function buildCodeRow(code) {
-            return Grid.buildRow(CODE_COLUMNS, code, { buildRow: initCodeRow });
-        }
-
         function renderCodes(codes) {
-            Grid.render(codeGridBody, CODE_COLUMNS, codes, { emptyMessage: '등록된 코드가 없습니다.', buildRow: initCodeRow });
+            Grid.render(codeGridBody, CODE_COLUMNS, codes, { emptyMessage: '등록된 코드가 없습니다.' });
         }
 
         function setDetailButtonsEnabled(enabled) {
@@ -324,28 +289,19 @@
             if (!currentGroup) {
                 return;
             }
-            const emptyRow = codeGridBody.querySelector('.empty');
-            if (emptyRow) {
-                emptyRow.closest('tr').remove();
-            }
-            const tr = buildCodeRow(null);
-            codeGridBody.insertBefore(tr, codeGridBody.firstChild);
-            tr._fields.codeValue.focus();
+            Grid.addRow(codeGridBody);
         }
 
         function saveCodes() {
             if (!currentGroup) {
                 return;
             }
-            const rows = Array.from(codeGridBody.querySelectorAll('tr')).filter(function (tr) {
-                return !!tr._fields;
-            });
             const requests = [];
 
-            for (const tr of rows) {
-                const codeValue = tr._fields.codeValue.value.trim();
-                const codeName = tr._fields.codeName.value.trim();
-                const sortOrder = tr._fields.sortOrder.value.trim();
+            for (const row of Grid.getRows(codeGridBody)) {
+                const codeValue = row.codeValue;
+                const codeName = row.codeName;
+                const sortOrder = row.sortOrder;
 
                 if (!codeValue && !codeName) {
                     continue;
@@ -356,12 +312,12 @@
                 }
 
                 const payload = {
-                    id: tr.dataset.id ? Number(tr.dataset.id) : null,
+                    id: row._isNew ? null : row.id,
                     codeGroup: currentGroup,
                     codeValue: codeValue,
                     codeName: codeName,
                     sortOrder: sortOrder ? Number(sortOrder) : null,
-                    useYn: tr._fields.useYn.checked ? 'Y' : 'N'
+                    useYn: row.useYn
                 };
 
                 requests.push(fetch(CODES_URL, {
@@ -388,7 +344,7 @@
         }
 
         function deleteCodes() {
-            const rows = Array.from(codeGridBody.querySelectorAll('tr.selected'));
+            const rows = Grid.getRows(codeGridBody).filter(function (row) { return row._selected; });
             if (rows.length === 0) {
                 alert('삭제할 코드를 목록에서 선택하세요.');
                 return;
@@ -398,14 +354,11 @@
             }
 
             const requests = rows
-                .filter(function (tr) { return !!tr.dataset.id; })
-                .map(function (tr) { return fetch(CODES_URL + '/' + tr.dataset.id, { method: 'DELETE' }); });
+                .filter(function (row) { return !row._isNew; })
+                .map(function (row) { return fetch(CODES_URL + '/' + row.id, { method: 'DELETE' }); });
 
-            rows.forEach(function (tr) {
-                if (!tr.dataset.id) {
-                    tr.remove();
-                }
-            });
+            // 저장 전 신규 행은 서버에 없으니 화면에서만 지운다.
+            Grid.removeRows(codeGridBody, rows.filter(function (row) { return row._isNew; }));
 
             if (requests.length === 0) {
                 return;

@@ -43,13 +43,6 @@
         const API_URL = '/api/programs';
         const gridBody = document.getElementById('programGridBody');
 
-        function initRow(tr, program) {
-            tr._fields = {};
-            if (program && program.programId) {
-                tr.dataset.id = program.programId;
-            }
-        }
-
         // 화면 공통 버튼 설정 — 이 프로그램 화면 우측 상단에 어떤 버튼을 그릴지(fragments/page-toolbar).
         // 조회~초기화는 사용 여부(Y/N), 기타1~5는 버튼 이름이다(비우면 그 버튼은 안 쓴다).
         // 실제로 보이는 건 여기서 쓰기로 한 버튼 중 사용자별 권한관리에서 그 사용자에게 허용한 것뿐이다.
@@ -82,10 +75,6 @@
 
         Grid.renderHeader(document.getElementById('programGridHead'), COLUMNS);
 
-        function buildRow(program) {
-            return Grid.buildRow(COLUMNS, program, { buildRow: initRow });
-        }
-
         // 이 화면 자신을 가리키는 프로그램은 그리드에서 수정/삭제하지 못하도록 숨긴다.
         const SELF_PROGRAM_ID = 'program-management';
 
@@ -109,7 +98,7 @@
             const programs = (allPrograms || []).filter(function (program) {
                 return program.programId !== SELF_PROGRAM_ID && matchesCondition(program);
             });
-            Grid.render(gridBody, COLUMNS, programs, { emptyMessage: '등록된 프로그램이 없습니다.', buildRow: initRow });
+            Grid.render(gridBody, COLUMNS, programs, { emptyMessage: '등록된 프로그램이 없습니다.' });
         }
 
         function searchPrograms() {
@@ -125,26 +114,17 @@
         }
 
         function addRow() {
-            const emptyRow = gridBody.querySelector('.empty');
-            if (emptyRow) {
-                emptyRow.closest('tr').remove();
-            }
-            const tr = buildRow(null);
-            gridBody.insertBefore(tr, gridBody.firstChild);
-            tr._fields.programId.focus();
+            Grid.addRow(gridBody);
         }
 
         function saveAll() {
-            const rows = Array.from(gridBody.querySelectorAll('tr')).filter(function (tr) {
-                return !!tr._fields;
-            });
             const requests = [];
 
-            for (const tr of rows) {
-                const programId = tr._fields.programId.value.trim();
-                const programNm = tr._fields.programNm.value.trim();
-                const url = tr._fields.url.value.trim();
-                const sortOrder = tr._fields.sortOrder.value.trim();
+            for (const row of Grid.getRows(gridBody)) {
+                const programId = row.programId;
+                const programNm = row.programNm;
+                const url = row.url;
+                const sortOrder = row.sortOrder;
 
                 if (!programId && !programNm && !url) {
                     continue;
@@ -159,13 +139,10 @@
                     programNm: programNm,
                     url: url,
                     sortOrder: sortOrder ? Number(sortOrder) : null,
-                    useYn: tr._fields.useYn.checked ? 'Y' : 'N'
+                    useYn: row.useYn
                 };
-                BUTTON_YN_COLUMNS.forEach(function (col) {
-                    payload[col.id] = tr._fields[col.id].checked ? 'Y' : 'N';
-                });
-                BUTTON_ETC_COLUMNS.forEach(function (col) {
-                    payload[col.id] = tr._fields[col.id].value.trim();
+                BUTTON_YN_COLUMNS.concat(BUTTON_ETC_COLUMNS).forEach(function (col) {
+                    payload[col.id] = row[col.id];
                 });
 
                 requests.push(fetch(API_URL, {
@@ -192,7 +169,7 @@
         }
 
         function deleteSelected() {
-            const rows = Array.from(gridBody.querySelectorAll('tr.selected'));
+            const rows = Grid.getRows(gridBody).filter(function (row) { return row._selected; });
             if (rows.length === 0) {
                 alert('삭제할 프로그램을 목록에서 선택하세요.');
                 return;
@@ -202,14 +179,11 @@
             }
 
             const requests = rows
-                .filter(function (tr) { return !!tr.dataset.id; })
-                .map(function (tr) { return fetch(API_URL + '/' + tr.dataset.id, { method: 'DELETE' }); });
+                .filter(function (row) { return !row._isNew; })
+                .map(function (row) { return fetch(API_URL + '/' + encodeURIComponent(row.programId), { method: 'DELETE' }); });
 
-            rows.forEach(function (tr) {
-                if (!tr.dataset.id) {
-                    tr.remove();
-                }
-            });
+            // 저장 전 신규 행은 서버에 없으니 화면에서만 지운다.
+            Grid.removeRows(gridBody, rows.filter(function (row) { return row._isNew; }));
 
             if (requests.length === 0) {
                 return;

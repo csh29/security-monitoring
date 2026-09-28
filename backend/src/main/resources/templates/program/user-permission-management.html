@@ -6,11 +6,6 @@
     <title>사용자별 권한관리 · 보안취약점 모니터링 대시보드</title>
     <link rel="stylesheet" href="/css/common-ui.css">
     <link rel="stylesheet" href="/css/grid.css">
-    <style>
-        /* 화면 공통 뼈대(:root, .app-shell, .btn, .search-row 등)는 common-ui.css가,
-           .grid 공통 모양은 grid.css가 담당한다. 여기는 이 화면에서만 다른 값만 남긴다. */
-        .grid td{ padding:12px 14px; }
-    </style>
 </head>
 <body>
 <div class="app-shell" th:classappend="${param.embed} ? 'app-shell--embedded'">
@@ -57,52 +52,44 @@
             };
         }));
 
-        function checkbox(checked, disabled) {
-            const chk = document.createElement('input');
-            chk.type = 'checkbox';
-            chk.checked = checked;
-            chk.disabled = disabled;
-            return chk;
-        }
-
+        // 권한·버튼 칸은 전부 Grid의 checkbox 컬럼이라, 저장할 때 Grid.getRows로 'Y'/'N' 값을 그대로 읽는다.
+        // 체크 여부의 출처는 행 데이터(프로그램)가 아니라 이 사용자의 권한(tr._perm)이라 checked 함수로 준다.
         const COLUMNS = [
             {
-                label: '권한',
-                width: 44,
-                align: 'center',
-                render: function (value, program, td, tr) {
-                    tr._accessChk = checkbox(!!tr._perm, false);
-                    // 권한을 주면 그 프로그램이 쓰는 버튼을 모두 켜고, 권한을 빼면 버튼도 모두 끈다.
-                    tr._accessChk.addEventListener('change', function () {
-                        Object.keys(tr._buttonChks).forEach(function (id) {
-                            const chk = tr._buttonChks[id];
-                            if (!chk.disabled) chk.checked = tr._accessChk.checked;
-                        });
-                    });
-                    return tr._accessChk;
-                }
+                id: 'granted', label: '권한', type: 'checkbox', width: 44, align: 'center',
+                checked: function (value, program, tr) { return !!tr._perm; }
             },
             { id: 'programId', label: '프로그램ID' },
             { id: 'programNm', label: '프로그램명' },
             { id: 'url', label: 'URL' }
         ].concat(BUTTONS.map(function (button) {
             return {
-                label: button.label,
-                width: button.etcName ? 82 : 52,
-                align: 'center',
+                id: button.id, label: button.label, type: 'checkbox',
+                width: button.etcName ? 82 : 52, align: 'center',
                 title: button.etcName ? function (value, program) { return program[button.etcName] || ''; } : undefined,
-                render: function (value, program, td, tr) {
-                    const used = button.uses(program);
-                    const chk = checkbox(used && !!tr._perm && tr._perm[button.id] === 'Y', !used);
-                    // 버튼 하나라도 주면 화면 접근 권한도 같이 준다(버튼만 있고 화면은 못 여는 상태는 의미가 없다).
-                    chk.addEventListener('change', function () {
-                        if (chk.checked) tr._accessChk.checked = true;
-                    });
-                    tr._buttonChks[button.id] = chk;
-                    return chk;
-                }
+                checked: function (value, program, tr) {
+                    return button.uses(program) && !!tr._perm && tr._perm[button.id] === 'Y';
+                },
+                disabled: function (value, program) { return !button.uses(program); }
             };
         }));
+
+        // 권한을 주면 그 프로그램이 쓰는 버튼을 모두 켜고, 권한을 빼면 버튼도 모두 끈다.
+        // 반대로 버튼을 하나라도 주면 화면 접근 권한도 같이 준다(버튼만 있고 화면은 못 여는 상태는 의미가 없다).
+        gridBody.addEventListener('change', function (e) {
+            const tr = e.target.closest('tr');
+            if (!tr || !tr._fields || !tr._fields.granted) {
+                return;
+            }
+            if (e.target === tr._fields.granted) {
+                BUTTONS.forEach(function (button) {
+                    const chk = tr._fields[button.id];
+                    if (!chk.disabled) chk.checked = e.target.checked;
+                });
+            } else if (e.target.checked) {
+                tr._fields.granted.checked = true;
+            }
+        });
 
         Grid.renderHeader(document.getElementById('permissionGridHead'), COLUMNS, { initialMessage: '사용자를 선택하고 조회하세요.' });
 
@@ -120,9 +107,7 @@
             (permissions || []).forEach(function (perm) { permByProgram[perm.programId] = perm; });
             Grid.render(gridBody, COLUMNS, programs, {
                 buildRow: function (tr, program) {
-                    tr.dataset.id = program.programId;
                     tr._perm = permByProgram[program.programId] || null;
-                    tr._buttonChks = {};
                 }
             });
         }
@@ -186,12 +171,12 @@
             }
 
             // 권한을 준 행만 보낸다 — 서버는 이 목록으로 그 사용자의 권한을 통째로 교체한다.
-            const permissions = Array.from(gridBody.querySelectorAll('tr[data-id]'))
-                .filter(function (tr) { return tr._accessChk.checked; })
-                .map(function (tr) {
-                    const item = { programId: tr.dataset.id };
+            const permissions = Grid.getRows(gridBody)
+                .filter(function (row) { return row.granted === 'Y'; })
+                .map(function (row) {
+                    const item = { programId: row.programId };
                     BUTTONS.forEach(function (button) {
-                        item[button.id] = tr._buttonChks[button.id].checked ? 'Y' : 'N';
+                        item[button.id] = row[button.id];
                     });
                     return item;
                 });

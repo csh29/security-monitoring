@@ -119,7 +119,7 @@ AI에게 넘기는 근거도 마찬가지다. OSV에서 뽑은 `knownFixedVersio
 | --- | --- |
 | `/css/common-ui.css` | `:root` 변수, `.app-shell`, `.btn`, `.panel-head`, `.page-toolbar` 등 페이지 뼈대. 화면 공통 버튼은 항상 우측 상단 — 제목과 한 줄이면 `.panel-head`, 조회조건 영역이 있으면 그 위에 `.page-toolbar` |
 | `/css/grid.css` | `.grid` 공통 모양 |
-| `/js/grid.js` | 컬럼 정의(`COLUMNS`)로 헤더·행·입력 셀까지 만드는 공통 그리드 렌더러. `renderHeader`가 tbody의 첫 안내 행("조회 중입니다...", colspan 자동)도 넣으므로 템플릿의 `<tbody>`는 비워 둔다. 또 table을 `.grid-scroll`로 감싸고 숫자 `width`를 최소 폭으로도 적용해, 화면보다 넓으면 가로 스크롤이 생긴다 |
+| `/js/grid.js` | 컬럼 정의(`COLUMNS`)로 헤더·행·입력 셀까지 만드는 공통 그리드 렌더러. `renderHeader`가 tbody의 첫 안내 행("조회 중입니다...", colspan 자동)도 넣으므로 템플릿의 `<tbody>`는 비워 둔다. 행 데이터는 `getRows`/`getRow`(원본 row + 입력 셀 현재 값, `_rowIndex`/`_isNew`/`_selected`)로 읽고 `onRowClick(tr, row)`도 같은 값을 받는다. 또 table을 `.grid-scroll`로 감싸고 숫자 `width`를 최소 폭으로도 적용해, 화면보다 넓으면 가로 스크롤이 생긴다 |
 | `/js/common-code.js` | 공통코드로 select 옵션 채우기(그룹당 1회 캐시) |
 | `/js/tabs.js` | 홈 화면 탭 |
 | `/js/hotkeys.js` | 공통 펑션키 F3 조회 / F4 신규 / F5 삭제 / F9 저장 / F12 초기화. 버튼에 `data-hotkey="F3"`만 붙이면 되고, 버튼 글자 뒤 `[F3]` 표기도 이 파일이 자동으로 붙인다. `loading-overlay.html`이 싣는다 |

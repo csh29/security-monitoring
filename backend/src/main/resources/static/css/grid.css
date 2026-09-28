@@ -1,9 +1,9 @@
 /**
  * .grid 클래스가 붙은 모든 테이블에 공통 모양을 준다. 화면마다 <style> 태그에 반복해서 적던
  * ".grid th, .grid td{...}" 류 규칙 중, 모든 그리드 화면에서 값이 똑같은 것만 여기로 모았다.
- * td padding은 8px 10px를 기본값으로 삼고 — 화면 절반이 이 값을 쓴다 — 12px 14px
- * 한 줄짜리 패딩을 쓰는 화면(취약점 관리/조회, 사용자별 권한관리)은 그 화면 <style>에서 td만
- * 덮어쓴다. th(헤더) padding은 모든 화면 공통(좌우 10px, 상하 0)이라 화면에서 건드리지 않는다. 카드형 테두리/스크롤(취약점 관리 화면처럼 sticky 헤더를 쓰는 곳은
+ * padding은 헤더(th)·본문(td) 모두 모든 화면 공통으로 좌우 10px, 상하 0이다 — 화면 <style>에서
+ * 덮어쓰지 않는다. 입력 셀(.grid-editor-cell)만 td padding이 0이고 그 안의 input/select가 좌우
+ * 10px를 가진다(td padding + input padding이 겹치지 않게). 카드형 테두리/스크롤(취약점 관리 화면처럼 sticky 헤더를 쓰는 곳은
  * border-collapse:separate가 필요) 같은 진짜 화면별 값도 마찬가지.
  *
  * JS로 런타임에 <style>을 주입하지 않고 이렇게 정적 CSS 파일 + <link>로 두는 이유: JS 주입은
@@ -13,7 +13,7 @@
  */
 
 .grid{ width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-box); overflow:hidden; }
-.grid th, .grid td{ padding:8px 10px; font-size:12.5px; text-align:left; border-bottom:1px solid var(--line); border-right:1px solid var(--line); }
+.grid th, .grid td{ padding:0 10px; font-size:12.5px; text-align:left; border-bottom:1px solid var(--line); border-right:1px solid var(--line); }
 .grid th:last-child, .grid td:last-child{ border-right:none; }
 /* 헤더는 모든 그리드에서 높이 고정, 좌우 10px, 상하 0 — 화면별 padding 재정의는 td에만 한다.
    헤더 글자는 줄바꿈하지 않고(좁으면 그리드에 가로 스크롤이 생긴다) 항상 가운데 정렬한다 —
@@ -34,9 +34,13 @@
 .grid-scroll{ overflow-x:auto; min-width:0; }
 
 /* 입력 셀은 폭을 안 준 컬럼이라도 이 이하로는 줄지 않는다 — 그보다 좁아질 상황이면 가로 스크롤이 생긴다. */
+/* 입력 셀: td는 padding 없이 입력칸이 셀을 가득 채우고, 글자 위치(좌우 10px)는 입력칸 padding이 맡는다
+   — 일반 텍스트 셀과 글자 시작 위치가 같아진다. grid.js가 text/number/password/select 셀에 붙인다
+   (체크박스 셀은 가운데 정렬이라 일반 셀과 같은 padding을 쓴다). */
+.grid td.grid-editor-cell{ padding:0; }
 .grid td input:not([type="checkbox"]), .grid td select{ min-width:80px; }
 .grid td input, .grid td select{
     width:100%; box-sizing:border-box; border:1px solid transparent; background:transparent;
-    padding:6px 8px; border-radius:6px; font-size:12.5px; font-family:inherit; color:var(--text);
+    padding:6px 9px; /* 테두리 1px + 9px = 일반 셀의 좌우 10px와 글자 시작 위치를 맞춘다 */ border-radius:6px; font-size:12.5px; font-family:inherit; color:var(--text);
 }
 .grid td input:focus, .grid td select:focus{ outline:none; border-color:var(--accent); background:#fff; }

@@ -7,6 +7,20 @@
  *
  * 사용법:
  *   Grid.renderHeader(thead, columns, { initialMessage });
+ *   Grid.getRows(tbody)            // 모든 행 데이터(아래 "행 데이터")
+ *   Grid.getRow(tbody, rowIndex)   // rowIndex(0부터, 안내 행 제외) 번째 행 데이터. 없으면 null
+ *   Grid.removeRows(tbody, rows)   // getRows로 받은 행 데이터에 해당하는 tr을 지운다(저장 전 신규 행 삭제 등)
+ *   Grid.addRow(tbody, { focus })  // "신규" 버튼: 맨 위에 빈 행을 넣고 첫 입력칸(또는 focus로 준 col.id)에 커서를 둔다.
+ *                                  // 컬럼은 renderHeader/render에 준 것을 그대로 쓴다. 새 행의 행 데이터를 돌려준다.
+ *
+ * 행 데이터: 그 행을 그릴 때 받은 원본 row 객체에, 입력 셀(type이 있는 컬럼)의 현재 값을 col.id로
+ * 덮어쓴 새 객체. 화면이 tr._fields.xxx.value / tr.dataset.id를 직접 읽지 않고 이걸로 읽는다.
+ *   - text/number/password : 앞뒤 공백을 뺀 문자열(number도 문자열 — 숫자가 필요하면 화면이 변환)
+ *   - checkbox             : 'Y' / 'N'
+ *   - select               : 선택된 value
+ *   - _rowIndex            : getRow에 넘기는 그 행의 순번
+ *   - _isNew               : 원본 row 없이 만든 행("신규" 버튼으로 추가해 아직 저장 전)이면 true
+ *   - _selected            : row-select 체크박스로 선택된 행이면 true("삭제" 대상)
  *   Grid.render(tbody, columns, rows, options);
  *
  * columns: [{ id, label, width, align, cursor, className, headerClassName, type, render(value, row, td, tr), title(value, row) }]
@@ -56,7 +70,8 @@
  * options:
  *   - emptyMessage : rows가 없을 때 보여줄 문구.
  *   - buildRow(tr, row) : 각 tr 생성 직후(셀 채우기 전) 호출 — dataset/class 지정용.
- *   - onRowClick(tr) : 행을 클릭하면(체크박스처럼 stopPropagation을 건 셀이 아닌 한) 호출된다.
+ *   - onRowClick(tr, row) : 행을 클릭하면(체크박스처럼 stopPropagation을 건 셀이 아닌 한) 호출된다.
+ *                       row는 그 행의 행 데이터(getRow와 같은 값)다.
  *                       클릭한 행은 render()가 자동으로 'current' 클래스를 붙여 강조 표시하므로,
  *                       공통코드관리 화면처럼 "행을 클릭하면 우측에 상세를 보여준다" 같은 동작만
  *                       이 콜백에 얹으면 된다.
@@ -169,6 +184,9 @@
 
         const table = thead.closest('table');
         const tbody = table && table.tBodies[0];
+        if (tbody) {
+            tbody._gridColumns = columns; // Grid.addRow가 쓴다
+        }
         if (tbody && tbody.rows.length === 0) {
             clearAndAppendMessage(tbody, columns.length, options.initialMessage || DEFAULT_INITIAL_MESSAGE);
         }
@@ -198,8 +216,85 @@
         });
         tr.classList.add('current');
         if (typeof tbody._gridOnRowClick === 'function') {
-            tbody._gridOnRowClick(tr);
+            tbody._gridOnRowClick(tr, rowData(tr, dataRows(tbody).indexOf(tr)));
         }
+    }
+
+    /** tbody의 데이터 행(buildRow로 만든 tr)만. 안내 문구 행(td.empty)은 빠진다. */
+    function dataRows(tbody) {
+        return Array.from(tbody.rows).filter(function (tr) { return !!tr._gridColumns; });
+    }
+
+    /** 입력 셀 하나의 현재 값 — 행 데이터에 들어가는 형태로 바꾼다. */
+    function fieldValue(col, field) {
+        if (col.type === 'checkbox') {
+            return field.checked ? 'Y' : 'N';
+        }
+        if (col.type === 'select') {
+            return field.value;
+        }
+        return field.value.trim();
+    }
+
+    /** tr 하나의 행 데이터(파일 상단 "행 데이터" 설명 참고). */
+    function rowData(tr, index) {
+        const data = Object.assign({}, tr._gridRow || {});
+        tr._gridColumns.forEach(function (col) {
+            if (col.id && col.type && col.type !== 'row-select' && tr._fields && tr._fields[col.id]) {
+                data[col.id] = fieldValue(col, tr._fields[col.id]);
+            }
+        });
+        data._rowIndex = index;
+        data._isNew = !tr._gridRow;
+        data._selected = tr.classList.contains('selected');
+        return data;
+    }
+
+    /**
+     * "신규" 버튼 공통 동작 — 화면마다 반복되던 "안내 행 지우기 → 빈 행을 맨 위에 넣기 → 첫 입력칸 포커스".
+     * 포커스는 options.focus(col.id)가 있으면 그 칸, 없으면 체크박스가 아닌 첫 입력칸이다.
+     */
+    function addRow(tbody, options) {
+        options = options || {};
+        const columns = tbody._gridColumns;
+        if (!columns) {
+            throw new Error('Grid.addRow: Grid.renderHeader 또는 Grid.render를 먼저 호출해야 합니다.');
+        }
+
+        Array.from(tbody.rows).forEach(function (tr) {
+            if (!tr._gridColumns) {
+                tr.remove(); // "조회 중입니다..." / "등록된 ... 없습니다." 같은 안내 행
+            }
+        });
+
+        const tr = buildRow(columns, null, { buildRow: tbody._gridBuildRow });
+        tbody.insertBefore(tr, tbody.firstChild);
+
+        const target = options.focus
+            ? (tr._fields || {})[options.focus]
+            : (tr._orderedFields || []).find(function (field) { return field.type !== 'checkbox'; });
+        if (target) {
+            target.focus();
+        }
+        return rowData(tr, 0);
+    }
+
+    function getRows(tbody) {
+        return dataRows(tbody).map(rowData);
+    }
+
+    function getRow(tbody, rowIndex) {
+        const tr = dataRows(tbody)[rowIndex];
+        return tr ? rowData(tr, rowIndex) : null;
+    }
+
+    /** getRows/getRow로 받은 행 데이터에 해당하는 tr을 지운다. 인덱스가 밀리지 않게 먼저 다 찾은 뒤 지운다. */
+    function removeRows(tbody, rows) {
+        const trs = dataRows(tbody);
+        (rows || [])
+            .map(function (row) { return trs[row._rowIndex]; })
+            .filter(Boolean)
+            .forEach(function (tr) { tr.remove(); });
     }
 
     /** 다른 행의 입력 필드로 포커스를 옮기고, 클릭했을 때와 똑같이 그 행을 'current'로 강조한다. */
@@ -273,6 +368,9 @@
     function buildRow(columns, row, options) {
         options = options || {};
         const tr = document.createElement('tr');
+        // 행 데이터(getRows/getRow)를 만들 때 쓴다 — 원본 row와, 어떤 셀이 어떤 컬럼인지.
+        tr._gridRow = row || null;
+        tr._gridColumns = columns;
         if (options.buildRow) {
             options.buildRow(tr, row);
         }
@@ -298,6 +396,10 @@
                 }
             } else if (col.type) {
                 const field = createFieldElement(col, value, row, tr);
+                // 입력칸이 셀을 채우는 셀은 td padding을 없앤다(grid.css .grid-editor-cell) — 체크박스는 제외.
+                if (col.type !== 'checkbox' && col.type !== 'row-select') {
+                    td.classList.add('grid-editor-cell');
+                }
                 if (col.disabled) {
                     field.disabled = typeof col.disabled === 'function' ? !!col.disabled(value, row) : !!col.disabled;
                 }
@@ -363,6 +465,9 @@
     function render(tbody, columns, rows, options) {
         options = options || {};
         tbody._gridOnRowClick = options.onRowClick;
+        // Grid.addRow가 같은 컬럼·같은 buildRow 콜백으로 신규 행을 만들 수 있게 기억해 둔다.
+        tbody._gridColumns = columns;
+        tbody._gridBuildRow = options.buildRow;
         if (!tbody._gridClickBound) {
             bindRowClickHighlight(tbody);
         }
@@ -411,5 +516,14 @@
         clearAndAppendMessage(tbody, colspan, message);
     }
 
-    global.Grid = { render: render, buildRow: buildRow, renderMessage: renderMessage, renderHeader: renderHeader };
+    global.Grid = {
+        render: render,
+        buildRow: buildRow,
+        renderMessage: renderMessage,
+        renderHeader: renderHeader,
+        getRows: getRows,
+        getRow: getRow,
+        removeRows: removeRows,
+        addRow: addRow
+    };
 })(window);
