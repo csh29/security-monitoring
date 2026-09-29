@@ -18,6 +18,39 @@
         .nav a .ico{ width:16px; text-align:center; }
         .nav a.is-active{ background:var(--accent); color:#fff; font-weight:700; }
 
+        /* 관리 그룹(2뎁스). 권한으로 보이는 추가 프로그램(extraPrograms)은 전부 관리성 화면이라 한 그룹으로
+           접어 둔다 — 늘어날수록 매일 쓰는 고정 메뉴가 묻히기 때문. 접을 때 링크를 지우지 않고 숨기기만
+           한다(tabs.js가 .nav a 목록을 읽어 탭으로 연다). */
+        .nav-group-toggle{
+            display:flex; align-items:center; gap:10px; width:100%;
+            padding:11px 14px; border:none; border-radius:var(--radius-md); background:none;
+            font:inherit; font-size:12.5px; color:var(--text-sub); cursor:pointer; text-align:left;
+        }
+        .nav-group-toggle:hover{ background:#fafafd; }
+        .nav-group-toggle .ico{ width:16px; text-align:center; }
+        .nav-group-toggle .caret{ margin-left:auto; transition:transform .15s; }
+        .nav-group.is-open .nav-group-toggle .caret{ transform:rotate(90deg); }
+        /* 접혀 있어도 지금 연 화면이 이 그룹 안에 있으면 그룹 제목으로 알 수 있게 한다. */
+        .nav-group:has(a.is-active) .nav-group-toggle{ color:var(--accent); font-weight:700; }
+        /* 하위 메뉴는 아이콘이 없어서 들여쓰기를 작게 주면 대메뉴 글자(아이콘+간격 뒤)보다 오히려 왼쪽에서
+           시작해 2뎁스로 안 보였다. 대메뉴 아이콘 자리 아래에 트리 안내선(├ ─ / 마지막은 └ ─)을 그리고,
+           가로선이 프로그램명 바로 앞까지 오게 한다. 선은 항목마다 ::before(세로)·::after(가로)로 그려서
+           마지막 항목에서 세로선을 가로선 높이에서 끊을 수 있게 했다. */
+        .nav-group-items{
+            display:none; flex-direction:column; gap:2px; margin:4px 0 0 22px; padding-left:10px;
+        }
+        .nav-group-items a{ position:relative; padding:9px 14px 9px 8px; font-size:12px; }
+        .nav-group-items a::before{
+            content:''; position:absolute; left:-10px; top:-2px; bottom:0; /* top -2px: 항목 사이 gap까지 이어지게 */
+            border-left:1px solid var(--line);
+        }
+        .nav-group-items a:last-child::before{ bottom:50%; }
+        .nav-group-items a::after{
+            content:''; position:absolute; left:-10px; top:50%; width:14px; /* 글자 4px 앞까지 */
+            border-top:1px solid var(--line);
+        }
+        .nav-group.is-open .nav-group-items{ display:flex; }
+
         @media (max-width:760px){
             .nav{ flex-direction:row; flex-wrap:wrap; }
         }
@@ -37,11 +70,49 @@
     -->
     <nav class="nav">
         <a th:href="@{/}" class="home-link" th:classappend="${activeMenu == 'home'} ? 'is-active'"><span class="ico">▤</span>홈</a>
-        <a th:href="@{/program/vulnerability-management}" data-menu="vulnerability-management" data-title="취약점 관리" th:classappend="${activeMenu == 'vulnerability-management'} ? 'is-active'"><span class="ico">⚠</span>취약점 관리</a>
+        <a th:href="@{/program/vulnerability-mng}" data-menu="vulnerability-mng" data-title="취약점 관리" th:classappend="${activeMenu == 'vulnerability-mng'} ? 'is-active'"><span class="ico">⚠</span>취약점 관리</a>
         <a th:href="@{/program/vulnerability-search}" data-menu="vulnerability-search" data-title="취약점 조회" th:classappend="${activeMenu == 'vulnerability-search'} ? 'is-active'"><span class="ico">⌕</span>취약점 조회</a>
         <a th:href="@{/program/report}" data-menu="report" data-title="리포트" th:classappend="${activeMenu == 'report'} ? 'is-active'"><span class="ico">📄</span>리포트</a>
-        <a th:each="program : ${extraPrograms}" th:attr="data-menu=${program.programId},data-title=${program.programNm}" th:classappend="${activeMenu == program.programId} ? 'is-active'" th:href="@{${program.url}}">
-            <span class="ico">⚙</span><span th:text="${program.programNm}">프로그램</span>
-        </a>
+        <!-- 권한이 있는 추가 프로그램이 하나도 없으면 그룹 자체를 그리지 않는다. -->
+        <div class="nav-group" id="navGroupMng" th:if="${!#lists.isEmpty(extraPrograms)}">
+            <button type="button" class="nav-group-toggle" aria-expanded="false" aria-controls="navGroupMngItems">
+                <span class="ico">⚙</span>관리<span class="caret">›</span>
+            </button>
+            <div class="nav-group-items" id="navGroupMngItems">
+                <a th:each="program : ${extraPrograms}" th:attr="data-menu=${program.programId},data-title=${program.programNm}" th:classappend="${activeMenu == program.programId} ? 'is-active'" th:href="@{${program.url}}">
+                    <span th:text="${program.programNm}">프로그램</span>
+                </a>
+            </div>
+        </div>
     </nav>
+
+    <script>
+        (function () {
+            const group = document.getElementById('navGroupMng');
+            if (!group) {
+                return;
+            }
+            const toggle = group.querySelector('.nav-group-toggle');
+            // 접힘/펼침은 이 브라우저에만 기억하는 편의 기능이다. 저장소를 못 쓰는 환경(사생활 보호 모드 등)이면
+            // 기억만 못 할 뿐 동작은 그대로여야 하므로 읽기/쓰기를 모두 감싼다.
+            const STORAGE_KEY = 'sidebar.navGroupMng.open';
+
+            function setOpen(open, remember) {
+                group.classList.toggle('is-open', open);
+                toggle.setAttribute('aria-expanded', String(open));
+                if (remember) {
+                    try { localStorage.setItem(STORAGE_KEY, open ? 'Y' : 'N'); } catch (e) { /* 기억만 못 한다 */ }
+                }
+            }
+
+            let saved = null;
+            try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) { /* 기억만 못 한다 */ }
+            // 지금 연 화면이 그룹 안에 있으면 저장된 상태와 상관없이 펼친다.
+            setOpen(saved === 'Y' || !!group.querySelector('a.is-active'), false);
+
+            toggle.addEventListener('click', function () {
+                setOpen(!group.classList.contains('is-open'), true);
+            });
+        })();
+    </script>
 </aside>

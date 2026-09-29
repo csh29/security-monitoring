@@ -59,7 +59,7 @@ public class ScanOrchestrationService {
         // repoUrl/branch를 검증 없이 그대로 clone하면, 앱 관리에 등록되지 않은 임의 URL도 스캔
         // 대상이 될 수 있다 — GitLab PAT를 공격자 서버로 그대로 보내거나(자격증명 유출), 공격자가
         // 만든 pom.xml의 <repositories>/build extension을 Maven이 그대로 실행하거나, repoUrl에
-        // 내부망 주소·file:// 경로를 넣어 SSRF/로컬 파일 접근에 악용될 수 있다. 앱 관리("app-management"
+        // 내부망 주소·file:// 경로를 넣어 SSRF/로컬 파일 접근에 악용될 수 있다. 앱 관리("app-mng"
         // 권한이 있어야 등록 가능)에 이미 등록된 조합만 스캔을 허용해서 이 경로를 원천 차단한다.
         App app = appRepository.findByRepoUrlAndBranch(repoUrl, branch)
                 .orElseThrow(() -> new IllegalArgumentException(

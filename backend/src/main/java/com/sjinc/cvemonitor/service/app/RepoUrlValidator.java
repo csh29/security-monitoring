@@ -18,7 +18,7 @@ import java.util.Locale;
  * {@code <repositories>}·build extension을 Maven이 그대로 타고, 내부망 주소를 넣으면 SSRF가 된다.
  *
  * <p>스캔 시점에는 이미 "앱 관리에 등록된 조합만 허용"으로 한 번 걸러지므로, 막아야 할 지점은
- * 등록(저장)하는 이 자리다. 등록 권한({@code app-management})이 있는 사용자를 신뢰하더라도,
+ * 등록(저장)하는 이 자리다. 등록 권한({@code app-mng})이 있는 사용자를 신뢰하더라도,
  * 실수로 잘못된 URL을 넣는 것까지 막아주는 게 낫다.
  *
  * <p>Spring 없이 {@code new RepoUrlValidator(List.of(...))}로 만들 수 있어 단위 테스트가 된다.

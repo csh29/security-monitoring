@@ -30,7 +30,7 @@ import java.util.LinkedHashMap;
  * {@link RequiresProgramAuthorizationManager} 하나로 떨어지고, 그 매니저가 로그인 여부와
  * (컨트롤러에 붙은 {@code @RequiresProgram} 어노테이션이 있다면) 프로그램 권한까지 함께
  * 판단한다. URL 패턴을 여기 나열하지 않으므로, 새 관리 화면 API를 추가할 때 SecurityConfig를
- * 고칠 필요가 없다 — 그 컨트롤러에 {@code @RequiresProgram("app-management")}처럼 어노테이션만
+ * 고칠 필요가 없다 — 그 컨트롤러에 {@code @RequiresProgram("app-mng")}처럼 어노테이션만
  * 붙이면 된다(자세한 설명은 그 어노테이션과 매니저의 클래스 주석 참고).
  */
 @Configuration

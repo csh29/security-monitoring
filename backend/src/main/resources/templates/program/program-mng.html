@@ -76,27 +76,18 @@
         Grid.renderHeader(document.getElementById('programGridHead'), COLUMNS);
 
         // 이 화면 자신을 가리키는 프로그램은 그리드에서 수정/삭제하지 못하도록 숨긴다.
-        const SELF_PROGRAM_ID = 'program-management';
+        const SELF_PROGRAM_ID = 'program-mng';
 
         const search = SearchForm.render(document.getElementById('searchArea'), [
             { id: 'programId', label: '프로그램ID', type: 'text' },
             { id: 'programNm', label: '프로그램명', type: 'text' }
         ], { onSearch: searchPrograms });
 
-        // 조회조건은 화면에서 거른다 — 프로그램은 건수가 적고, /api/programs는 사용자별 권한관리
-        // 화면도 전체 목록으로 쓰므로 API는 그대로 둔다. 대소문자 구분 없는 부분 일치.
-        function matchesCondition(program) {
-            const cond = search.values();
-            return contains(program.programId, cond.programId) && contains(program.programNm, cond.programNm);
-        }
-
-        function contains(value, keyword) {
-            return !keyword || (value || '').toLowerCase().indexOf(keyword.toLowerCase()) >= 0;
-        }
-
+        // 조회조건은 화면에서 거른다(search.matches) — 프로그램은 건수가 적고, /api/programs는
+        // 사용자별 권한관리 화면도 전체 목록으로 쓰므로 API는 그대로 둔다.
         function renderRows(allPrograms) {
             const programs = (allPrograms || []).filter(function (program) {
-                return program.programId !== SELF_PROGRAM_ID && matchesCondition(program);
+                return program.programId !== SELF_PROGRAM_ID && search.matches(program);
             });
             Grid.render(gridBody, COLUMNS, programs, { emptyMessage: '등록된 프로그램이 없습니다.' });
         }

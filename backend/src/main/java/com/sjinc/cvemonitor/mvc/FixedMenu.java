@@ -13,8 +13,8 @@ import java.util.Optional;
  * name은 sidebar.html의 고정 메뉴 라벨과 같은 값이어야 한다(그쪽은 템플릿에 박혀 있다).
  */
 enum FixedMenu {
-    VULNERABILITY_MANAGEMENT("vulnerability-management", "취약점 관리", ProgramButton.SEARCH),
-    VULNERABILITY_SEARCH("vulnerability-search", "취약점 조회"),
+    VULNERABILITY_MNG("vulnerability-mng", "취약점 관리", ProgramButton.SEARCH, ProgramButton.SAVE),
+    VULNERABILITY_SEARCH("vulnerability-search", "취약점 조회", ProgramButton.SEARCH, ProgramButton.RESET),
     REPORT("report", "리포트");
 
     private final String view;

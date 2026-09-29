@@ -18,7 +18,7 @@ import lombok.NoArgsConstructor;
 @Builder
 public class Program {
 
-    /** 프로그램을 식별하는 자연키(예: "program-management"). code 컬럼을 대체한다. */
+    /** 프로그램을 식별하는 자연키(예: "program-mng"). code 컬럼을 대체한다. */
     @Id
     @Column(name = "program_id")
     private String programId;

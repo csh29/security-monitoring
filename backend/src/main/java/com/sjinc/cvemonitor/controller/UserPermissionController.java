@@ -15,13 +15,13 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 사용자별 권한관리 화면이 호출하는 REST API. "user-permission-management" 권한이 있어야 한다 —
+ * 사용자별 권한관리 화면이 호출하는 REST API. "user-permission-mng" 권한이 있어야 한다 —
  * 그렇지 않으면 임의 계정에 아무 프로그램 권한이나 부여/박탈할 수 있는 권한 상승 경로가 된다.
  */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/permissions")
-@RequiresProgram("user-permission-management")
+@RequiresProgram("user-permission-mng")
 public class UserPermissionController {
 
     private final UserPermissionService userPermissionService;

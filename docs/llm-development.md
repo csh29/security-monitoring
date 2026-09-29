@@ -52,13 +52,13 @@ py -m pip install -r ../ai/requirements.txt
 - 그리드 값을 읽을 때는 → `Grid.getRows(tbody)` / `Grid.getRow(tbody, rowIndex)`. `tr._fields.xxx.value`나 `tr.dataset.id`를 직접 읽지 않는다. 신규 행 여부는 `row._isNew`, 삭제 선택은 `row._selected`, 저장 전 신규 행 삭제는 `Grid.removeRows`, "신규" 버튼은 `Grid.addRow(tbody)`(안내 행 제거·맨 위 삽입·첫 입력칸 포커스까지 한다).
 - 입력 셀이 필요하면 → 컬럼의 `type`(`text`/`number`/`select`/`checkbox`/`row-select`).
   화면마다 `createInput()` 류 함수를 다시 만들지 않는다.
-- select 옵션이 필요하면 → `CommonCode.fillSelect(el, 'GROUP')`. 코드값을 HTML에 하드코딩하지 않는다.
+- select 옵션이 필요하면 → `ComCd.fillSelect(el, 'GROUP')`. 코드값을 HTML에 하드코딩하지 않는다.
 - 버튼/패널/색상이 필요하면 → `common-ui.css`의 클래스와 `:root` 변수. 화면 `<style>`에는
-  **그 화면에서만 다른 값**만 남긴다.
+  **그 화면에서만 다른 값**만 남긴다. 버튼(`.btn`) 크기·그리드 행 높이는 모든 화면 공통이라 화면에서 덮어쓰지 않는다.
 - fetch 호출에 CSRF 헤더나 스피너를 직접 붙이지 않는다 — `loading-overlay` 래퍼가 이미 한다.
 - 새 화면의 첫 줄은 `<section th:replace="~{fragments/page-toolbar :: toolbar}"></section>` 한 줄이다. 공통 버튼(조회/신규/저장/삭제/초기화/기타1~5)은 **마크업에 쓰지 않는다** — 프로그램 관리·사용자별 권한관리 설정대로 서버가 그린다. 화면 JS는 `PageButtons.bind({ btnSearch: ..., btnAdd: ..., btnEtc1: ... })`로만 핸들러를 건다(`getElementById(...).addEventListener`로 걸면 권한 없는 사용자에게서 null 오류로 스크립트가 멈춘다). 단축키(F3/F4/F5/F9/F12)와 `[F3]` 표기는 자동이다.
 - 그리드 `<tbody>`는 비워 둔다. 첫 안내 행은 `Grid.renderHeader`가 넣고, 문구가 다르면 `{ initialMessage }`로 준다.
-- 조회영역은 마크업으로 쓰지 않고 `SearchForm.render`(`/js/search-form.js`)에 필드 정의로 넘긴다 — 그리드의 `COLUMNS`와 같은 방식.
+- 조회영역은 마크업으로 쓰지 않고 `SearchForm.render`(`/js/search-form.js`)에 필드 정의로 넘긴다 — 그리드의 `COLUMNS`와 같은 방식. 조회조건을 화면에서 거를 때는 필드 id를 행 데이터 키와 맞추고 `list.filter(search.matches)`를 쓴다. `contains` 류 함수를 화면에 다시 만들지 않는다.
 - 버전 비교가 필요하면 → `NvdVersionRangeChecker` / `OsvVersionRangeChecker` / `VersionLineSelector`.
   문자열 비교를 새로 짜지 않는다(`.RELEASE`, `.Final` 같은 접미사에서 반드시 틀린다).
 
@@ -70,7 +70,7 @@ py -m pip install -r ../ai/requirements.txt
 
 - 화면 2개가 같은 동작을 하면 → 화면에 복사하지 말고 `grid.js` / `common-ui.css`로 올린다.
 - 관리 화면 API에 권한이 필요하면 → `@PreAuthorize` 문자열을 늘리지 말고 컨트롤러(클래스 또는
-  메서드)에 `@RequiresProgram("app-management")`를 붙인다. `SecurityConfig`는 고치지 않는다.
+  메서드)에 `@RequiresProgram("app-mng")`를 붙인다. `SecurityConfig`는 고치지 않는다.
 - 프롬프트 규칙이 두 프롬프트에 겹치면 → `ai/prompts/rules/*.md`로 빼고 `{{include: rules/xxx.md}}`로 부른다.
 
 반대로, **아직 한 번뿐인 것을 미리 추상화하지도 않는다.** 쓰이지 않을 확장 포인트, 구현체가
@@ -138,7 +138,7 @@ DB 스키마 변경, 대량 삭제, 외부로 나가는 호출(Git push, 외부 
 | --- | --- |
 | `anyRequest().access(requiresProgramAuthorizationManager)` 유지 | `PUBLIC_URLS` 외에는 전부 로그인을 요구하기 위함. 여기에 URL 패턴을 다시 나열하지 않는다 |
 | 관리 화면 API에는 `@RequiresProgram` 부착 | **안 붙이면 로그인한 전원에게 열린다.** 구조가 막아주지 않는 유일한 지점 |
-| `@PreAuthorize`는 `@RequiresProgram`으로 표현 불가능할 때만 | 현재 예외는 `CommonCodeController.getCodes`의 `includeInactive` 단 하나 — 요청 내용(쿼리 파라미터)에 따라 필요한 권한이 달라지는 경우 |
+| `@PreAuthorize`는 `@RequiresProgram`으로 표현 불가능할 때만 | 현재 예외는 `ComCdController.getCodes`의 `includeInactive` 단 하나 — 요청 내용(쿼리 파라미터)에 따라 필요한 권한이 달라지는 경우 |
 | `/api/**` CSRF 검증 유지 (`/api/ai/**` 제외) | 제외하면 로그인한 관리자가 악성 페이지만 열어도 `POST /api/scan` 등이 대신 날아간다 |
 | `/api/ai/**`만 CSRF에서 제외 | 세션 쿠키가 아니라 헤더 토큰으로만 인증하는 배치 전용 경로라 CSRF의 전제(브라우저가 쿠키를 자동 전송)가 성립하지 않는다. **빼지 않으면 배치의 POST가 전부 403이 되는데, GET은 통과해서 "판단은 다 하고 저장만 실패"로 조용히 깨진다** |
 | `spring.h2.console.enabled=false` 유지 | H2 콘솔은 `CREATE ALIAS`로 사실상 원격 코드 실행이 가능하다 |
@@ -160,7 +160,7 @@ DB 스키마 변경, 대량 삭제, 외부로 나가는 호출(Git push, 외부 
 
 변경을 끝내기 전에 확인한다.
 
-- [ ] 이미 있는 공통 모듈(`grid.js`, `common-ui.css`, `CommonCode`, `*RangeChecker`)을 썼는가?
+- [ ] 이미 있는 공통 모듈(`grid.js`, `common-ui.css`, `ComCd`, `*RangeChecker`)을 썼는가?
 - [ ] 같은 코드를 두 군데 이상에 복사하지 않았는가?
 - [ ] 관리 화면 API를 만들었다면 `@RequiresProgram`을 붙였는가? (빠뜨리면 그대로 열린다)
 - [ ] 판단 로직을 넣었다면 Spring 없이 테스트 가능한 순수 클래스로 분리하고 테스트를 붙였는가?

@@ -25,7 +25,7 @@ import java.util.function.Supplier;
  *
  * <p>이 방식의 핵심은 "새 관리 화면 API가 생겨도 SecurityConfig를 고칠 필요가 없다"는 것이다 —
  * URL 패턴을 여기(혹은 SecurityConfig)에 하드코딩해서 나열하는 대신, 컨트롤러 자신이
- * {@code @RequiresProgram("app-management")}처럼 자기 권한 요건을 선언하면 이 매니저가
+ * {@code @RequiresProgram("app-mng")}처럼 자기 권한 요건을 선언하면 이 매니저가
  * 리플렉션으로 읽어서 적용한다. 그래서 어노테이션을 깜빡한 새 컨트롤러는 "로그인만 하면
  * 되는 API"가 되는데, 이건 기존 코드 전체가 그랬던(그래서 이 보안 검토가 나온) 상태와 같은
  * 실패 모드이니 — 관리 화면을 새로 만들 때 이 어노테이션을 붙이는 걸 코드 리뷰 체크리스트에

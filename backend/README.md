@@ -105,7 +105,7 @@ com.sjinc.cvemonitor
 ├── dto
 │   ├── ai                  # AI 판단/fix-plan 요청·응답 DTO
 │   ├── app                 # 앱 관리 DTO
-│   ├── commoncode          # 공통코드 그룹/코드 DTO
+│   ├── comcd          # 공통코드 그룹/코드 DTO
 │   ├── nvd                 # NVD CVE API 요청/응답 DTO
 │   ├── osv                 # OSV API 요청/응답 DTO
 │   ├── permission          # 사용자별 프로그램 권한 DTO
@@ -117,7 +117,7 @@ com.sjinc.cvemonitor
 └── service
     ├── ai                  # AI 배치 기동, fix-plan 저장/조회
     ├── app                 # 앱 관리
-    ├── commoncode          # 공통코드 그룹/코드
+    ├── comcd          # 공통코드 그룹/코드
     ├── git                 # Git 저장소 clone
     ├── maven               # pom.xml 의존성 추출, Maven Central 실존 검증
     ├── nvd                 # NVD API 클라이언트, 버전 범위 판정
@@ -145,7 +145,7 @@ com.sjinc.cvemonitor
 | `/css/common-ui.css` | `:root` 변수, 레이아웃 셸, 버튼, 패널 헤더 |
 | `/css/grid.css` | `.grid` 공통 모양 |
 | `/js/grid.js` | 컬럼 정의로 헤더·행·입력 셀까지 만드는 공통 그리드 렌더러 |
-| `/js/common-code.js` | 공통코드로 select 옵션 채우기 (그룹당 1회 캐시) |
+| `/js/com-cd.js` | 공통코드로 select 옵션 채우기 (그룹당 1회 캐시) |
 | `/js/tabs.js` | 홈 화면 탭 |
 | `/js/hotkeys.js` | 공통 펑션키(F3 조회, F4 신규, F5 삭제, F9 저장, F12 초기화) — 버튼에 `data-hotkey` 속성으로 지정 |
 | `/js/search-form.js` | 조회영역 공통 렌더러 — 필드 정의로 label + 입력을 만든다 |

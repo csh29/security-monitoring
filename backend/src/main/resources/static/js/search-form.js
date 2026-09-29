@@ -14,6 +14,7 @@
  *   search.values()   // { programId: '...', severity: '...' } — text는 trim한 값
  *   search.reset()    // 모든 필드를 기본값으로 되돌린다(초기화 버튼)
  *   search.field(id)  // 그 필드의 input/select 엘리먼트
+ *   search.matches(row) // 행 하나가 조회조건에 맞는지 — 목록을 화면에서 거를 때 쓴다(아래 설명)
  *   search.ready      // select 옵션이 다 채워지면 resolve되는 Promise — 첫 조회는 이걸 기다린 뒤 한다
  *
  * fields: [{ id, label, type, width, placeholder, defaultValue, options, optionsQuery, withAll, allLabel, onChange }]
@@ -25,13 +26,17 @@
  *   - defaultValue : 처음 값이자 reset() 때 돌아갈 값. select에서 생략하면 첫 옵션.
  *   - options      : select 옵션. [{value,label}] 배열, 또는 그 배열(이나 그 배열의 Promise)을 돌려주는
  *                    함수 — 앱 목록·사용자 목록처럼 API로 받아오는 옵션은 함수로 준다.
- *   - optionsQuery : options 대신 공통코드 그룹명(예: 'SEVERITY'). CommonCode로 채우므로 이 화면은
- *                    /js/common-code.js를 같이 불러와야 한다(grid.js의 optionsQuery와 같은 규칙).
+ *   - optionsQuery : options 대신 공통코드 그룹명(예: 'SEVERITY'). ComCd로 채우므로 이 화면은
+ *                    /js/com-cd.js를 같이 불러와야 한다(grid.js의 optionsQuery와 같은 규칙).
  *   - withAll      : select 맨 앞에 값이 빈 "전체" 옵션을 넣는다. allLabel로 문구를 바꾼다.
  *   - onChange     : (value, values) — select처럼 값이 바뀌자마자 조회해야 하는 필드에 쓴다.
  *
  * options:
  *   - onSearch : text 필드에서 Enter를 누르면 호출된다(보통 조회 함수).
+ *
+ * matches(row): API가 전체 목록만 주는 화면(프로그램·사용자·공통코드 관리)이 조회조건을 화면에서 거를 때
+ *   쓴다. text 필드마다 row[field.id]가 입력값을 대소문자 구분 없이 부분 일치로 포함하는지 본다(빈 값은
+ *   통과). 그래서 필드 id를 행 데이터의 키와 같게 준다. 화면마다 복사되던 contains/matchesCondition을 대신한다.
  */
 (function (global) {
     const DEFAULT_WIDTH = 180;
@@ -68,7 +73,7 @@
     function loadOptions(select, field) {
         let source;
         if (field.optionsQuery) {
-            source = global.CommonCode.fetchCodes(field.optionsQuery).then(function (codes) {
+            source = global.ComCd.fetchCodes(field.optionsQuery).then(function (codes) {
                 return codes.map(function (code) { return { value: code.codeValue, label: code.codeName }; });
             });
         } else if (typeof field.options === 'function') {
@@ -77,6 +82,10 @@
             source = Promise.resolve(field.options || []);
         }
         return source.then(function (items) { fillOptions(select, field, items); });
+    }
+
+    function containsIgnoreCase(value, keyword) {
+        return !keyword || String(value == null ? '' : value).toLowerCase().indexOf(keyword.toLowerCase()) >= 0;
     }
 
     function render(container, fields, options) {
@@ -130,6 +139,12 @@
         return {
             values: values,
             field: function (id) { return elements[id]; },
+            matches: function (row) {
+                const cond = values();
+                return fields.every(function (field) {
+                    return field.type === 'select' || containsIgnoreCase(row[field.id], cond[field.id]);
+                });
+            },
             reset: function () {
                 fields.forEach(function (field) {
                     const el = elements[field.id];

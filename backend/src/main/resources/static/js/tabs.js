@@ -27,6 +27,13 @@
             const isHome = a.classList.contains('home-link');
             const matches = menuKey ? a.dataset.menu === menuKey : isHome;
             a.classList.toggle('is-active', matches);
+            // 사이드바의 접힌 관리 그룹(sidebar.html) 안 화면이 활성화되면 그룹을 펼쳐 보이게 한다.
+            const group = a.closest('.nav-group');
+            if (matches && group) {
+                group.classList.add('is-open');
+                const toggle = group.querySelector('.nav-group-toggle');
+                if (toggle) toggle.setAttribute('aria-expanded', 'true');
+            }
         });
     }
 

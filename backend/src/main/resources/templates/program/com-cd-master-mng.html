@@ -3,13 +3,13 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>사용자 관리 · 보안취약점 모니터링 대시보드</title>
+    <title>공통코드마스터 관리 · 보안취약점 모니터링 대시보드</title>
     <link rel="stylesheet" href="/css/common-ui.css">
     <link rel="stylesheet" href="/css/grid.css">
     <style>
         /* 화면 공통 뼈대(:root, .app-shell, .btn 등)는 common-ui.css가, .grid 공통 모양(패딩 포함)은
-           grid.css가 담당한다. 여기는 이 화면에서만 다른 값(역할 select 폭)만 남긴다. */
-        .grid td select{ width:110px; }
+           grid.css가 담당한다. 여기는 이 화면에서만 다른 값만 남긴다. */
+        .grid td input[type="number"]{ width:80px; }
     </style>
 </head>
 <body>
@@ -24,13 +24,13 @@
         <section class="search-row" id="searchArea"></section>
 
         <section class="panel-head">
-            <div class="panel-title">사용자 목록</div>
+            <div class="panel-title">그룹 목록</div>
         </section>
 
         <section>
             <table class="grid">
-                <thead id="userGridHead"></thead>
-                <tbody id="userGridBody"></tbody>
+                <thead id="groupGridHead"></thead>
+                <tbody id="groupGridBody"></tbody>
             </table>
         </section>
     </main>
@@ -38,50 +38,39 @@
 
 <script src="/js/grid.js"></script>
 <script src="/js/search-form.js"></script>
-<script src="/js/common-code.js"></script>
 <script th:inline="javascript">
     (function () {
-        const API_URL = '/api/users';
-        const gridBody = document.getElementById('userGridBody');
+        const API_URL = '/api/com-cd-groups';
+        const gridBody = document.getElementById('groupGridBody');
 
         const COLUMNS = [
             { type: 'row-select', width: 36, align: 'center' },
-            { id: 'username', label: '아이디', type: 'text' },
-            { id: 'userNm', label: '사용자명', type: 'text' },
             {
-                id: 'password', label: '비밀번호', type: 'password',
-                placeholder: function (user) { return (user && user.id) ? '변경 시에만 입력' : '필수 입력'; }
+                id: 'codeGroup', label: '그룹코드', type: 'text',
+                // 그룹코드는 자연키(디테일 코드와 다른 화면의 select가 이 값으로 그룹을 찾는다)라
+                // 생성 후에는 수정하지 않는다 — 신규 행에서만 입력한다.
+                readOnly: function (value, group) { return !!(group && group.codeGroup); }
             },
-            {
-                // 역할 select 옵션은 공통코드관리 화면(그룹 "ROLE")에서 관리한다. 화면이 직접
-                // 조회하지 않고, optionsQuery만 주면 render()가 공통코드에서 채워온다.
-                id: 'role', label: '역할', type: 'select', optionsQuery: 'ROLE', defaultValue: 'USER'
-            }
+            { id: 'groupName', label: '그룹명', type: 'text' },
+            { id: 'sortOrder', label: '정렬순서', type: 'number', width: 90 },
+            { id: 'useYn', label: '사용', type: 'checkbox', width: 70, align: 'center' },
+            { id: 'remark', label: '비고', type: 'text' }
         ];
 
-        Grid.renderHeader(document.getElementById('userGridHead'), COLUMNS);
+        Grid.renderHeader(document.getElementById('groupGridHead'), COLUMNS);
 
+        // 이 화면의 "코드"는 그룹코드, "코드명"은 그룹명이다. 필드 id를 행 데이터 키와 맞춰
+        // search.matches로 화면에서 거른다(그룹은 건수가 적고 API는 공통코드 관리 화면도 같이 쓴다).
         const search = SearchForm.render(document.getElementById('searchArea'), [
-            { id: 'username', label: '아이디', type: 'text' },
-            { id: 'userNm', label: '사용자명', type: 'text' }
-        ], { onSearch: searchUsers });
+            { id: 'codeGroup', label: '코드', type: 'text' },
+            { id: 'groupName', label: '코드명', type: 'text' }
+        ], { onSearch: searchGroups });
 
-        // 조회조건은 화면에서 거른다 — /api/users는 사용자별 권한관리 화면도 전체 목록으로 쓰므로
-        // API는 그대로 둔다(프로그램 관리 화면과 같은 방식). 대소문자 구분 없는 부분 일치.
-        function matchesCondition(user) {
-            const cond = search.values();
-            return contains(user.username, cond.username) && contains(user.userNm, cond.userNm);
+        function renderRows(groups) {
+            Grid.render(gridBody, COLUMNS, (groups || []).filter(search.matches), { emptyMessage: '등록된 그룹이 없습니다.' });
         }
 
-        function contains(value, keyword) {
-            return !keyword || (value || '').toLowerCase().indexOf(keyword.toLowerCase()) >= 0;
-        }
-
-        function renderRows(users) {
-            Grid.render(gridBody, COLUMNS, (users || []).filter(matchesCondition), { emptyMessage: '등록된 사용자가 없습니다.' });
-        }
-
-        function searchUsers() {
+        function searchGroups() {
             fetch(API_URL)
                 .then(function (res) {
                     if (!res.ok) throw new Error('조회에 실패했습니다.');
@@ -101,30 +90,23 @@
             const requests = [];
 
             for (const row of Grid.getRows(gridBody)) {
-                const username = row.username;
-                const userNm = row.userNm;
-                const password = row.password;
-                const role = row.role;
-                const isExisting = !row._isNew;
+                const codeGroup = row.codeGroup;
+                const groupName = row.groupName;
 
-                if (!username && !userNm && !password) {
+                if (!codeGroup && !groupName) {
                     continue;
                 }
-                if (!username || !userNm) {
-                    alert('아이디, 사용자명은 필수입니다.');
-                    return;
-                }
-                if (!isExisting && !password) {
-                    alert('신규 사용자는 비밀번호가 필수입니다.');
+                if (!codeGroup || !groupName) {
+                    alert('그룹코드, 그룹명은 필수입니다.');
                     return;
                 }
 
                 const payload = {
-                    id: isExisting ? row.id : null,
-                    username: username,
-                    userNm: userNm,
-                    password: password,
-                    role: role
+                    codeGroup: codeGroup,
+                    groupName: groupName,
+                    sortOrder: row.sortOrder ? Number(row.sortOrder) : null,
+                    useYn: row.useYn,
+                    remark: row.remark
                 };
 
                 requests.push(fetch(API_URL, {
@@ -143,7 +125,7 @@
                     if (results.some(function (res) { return !res.ok; })) {
                         throw new Error('저장에 실패했습니다.');
                     }
-                    searchUsers();
+                    searchGroups();
                 })
                 .catch(function (err) {
                     alert(err.message);
@@ -153,16 +135,17 @@
         function deleteSelected() {
             const rows = Grid.getRows(gridBody).filter(function (row) { return row._selected; });
             if (rows.length === 0) {
-                alert('삭제할 사용자를 목록에서 선택하세요.');
+                alert('삭제할 그룹을 목록에서 선택하세요.');
                 return;
             }
-            if (!confirm('선택한 사용자를 삭제하시겠습니까?')) {
+            // 서버가 그룹에 딸린 디테일 코드까지 함께 지운다(ComCdGroupService.deleteGroup).
+            if (!confirm('선택한 그룹을 삭제하시겠습니까? 그룹에 속한 상세 코드도 함께 삭제됩니다.')) {
                 return;
             }
 
             const requests = rows
                 .filter(function (row) { return !row._isNew; })
-                .map(function (row) { return fetch(API_URL + '/' + row.id, { method: 'DELETE' }); });
+                .map(function (row) { return fetch(API_URL + '/' + encodeURIComponent(row.codeGroup), { method: 'DELETE' }); });
 
             // 저장 전 신규 행은 서버에 없으니 화면에서만 지운다.
             Grid.removeRows(gridBody, rows.filter(function (row) { return row._isNew; }));
@@ -176,7 +159,7 @@
                     if (results.some(function (res) { return !res.ok; })) {
                         throw new Error('삭제에 실패했습니다.');
                     }
-                    searchUsers();
+                    searchGroups();
                 })
                 .catch(function (err) {
                     alert(err.message);
@@ -184,18 +167,17 @@
         }
 
         PageButtons.bind({
-            btnSearch: searchUsers,
+            btnSearch: searchGroups,
             btnAdd: addRow,
             btnSave: saveAll,
             btnDelete: deleteSelected,
             btnReset: function () {
                 search.reset();
-                searchUsers();
+                searchGroups();
             }
         });
 
-        // 역할 select 옵션(공통코드 "ROLE") 조회는 Grid.render가 알아서 하므로 바로 조회하면 된다.
-        searchUsers();
+        searchGroups();
     })();
 </script>
 </body>

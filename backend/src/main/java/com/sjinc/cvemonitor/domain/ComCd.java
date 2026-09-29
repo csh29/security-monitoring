@@ -11,14 +11,14 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
-/** 화면마다 하드코딩되던 select 옵션(역할, 심각도, 처리상태 등)을 공통코드관리 화면에서 관리하기 위한 코드 한 줄. */
+/** 화면마다 하드코딩되던 select 옵션(역할, 심각도, 처리상태 등)을 공통코드 관리 화면에서 관리하기 위한 코드 한 줄. */
 @Entity
-@Table(name = "COMMON_CODE_DTL")
+@Table(name = "COM_CD_DTL")
 @Getter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class CommonCode {
+public class ComCd {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -43,4 +43,7 @@ public class CommonCode {
     /** 사용여부. "Y" 또는 "N" — "N"인 코드는 select에서 제외된다. */
     @Column(name = "use_yn", nullable = false)
     private String useYn;
+
+    @Column(name = "remark")
+    private String remark;
 }

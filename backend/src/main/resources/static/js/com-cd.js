@@ -1,10 +1,10 @@
 /**
  * 화면마다 하드코딩되던 select 옵션(역할, 심각도, 처리상태 등)을 공통코드관리 화면에서 관리하고,
- * 각 화면은 이 모듈을 통해 /api/common-codes를 조회해서 select를 채운다.
+ * 각 화면은 이 모듈을 통해 /api/com-cds를 조회해서 select를 채운다.
  *
  * 사용법:
- *   CommonCode.fillSelect(selectEl, 'VULN_STATUS', { withAll: true, allLabel: '전체', selected: 'OPEN' });
- *   CommonCode.fetchCodes('ROLE').then(function (codes) { ... }); // select가 아니라 행마다 select를 새로
+ *   ComCd.fillSelect(selectEl, 'VULN_STATUS', { withAll: true, allLabel: '전체', selected: 'OPEN' });
+ *   ComCd.fetchCodes('ROLE').then(function (codes) { ... }); // select가 아니라 행마다 select를 새로
  *                                                                   // 만들어야 하는 그리드(사용자 관리 등)에서 사용.
  *
  * 같은 그룹은 페이지당 한 번만 조회하도록 캐시한다 — 여러 화면 요소가 같은 그룹을 쓰더라도 요청은 한 번뿐이다.
@@ -15,7 +15,7 @@
     /** group의 사용중인(useYn=Y) 코드 목록을 정렬순서대로 가져온다. 그룹당 한 번만 fetch하고 이후엔 캐시를 재사용한다. */
     function fetchCodes(group) {
         if (!cache[group]) {
-            cache[group] = fetch('/api/common-codes?group=' + encodeURIComponent(group))
+            cache[group] = fetch('/api/com-cds?group=' + encodeURIComponent(group))
                 .then(function (res) {
                     if (!res.ok) throw new Error('공통코드(' + group + ') 조회에 실패했습니다.');
                     return res.json();
@@ -63,5 +63,5 @@
         });
     }
 
-    global.CommonCode = { fetchCodes: fetchCodes, fillSelect: fillSelect };
+    global.ComCd = { fetchCodes: fetchCodes, fillSelect: fillSelect };
 })(window);

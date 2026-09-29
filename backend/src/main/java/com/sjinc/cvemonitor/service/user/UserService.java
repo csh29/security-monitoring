@@ -1,10 +1,10 @@
 package com.sjinc.cvemonitor.service.user;
 
-import com.sjinc.cvemonitor.domain.CommonCode;
+import com.sjinc.cvemonitor.domain.ComCd;
 import com.sjinc.cvemonitor.domain.User;
 import com.sjinc.cvemonitor.dto.user.UserRequest;
 import com.sjinc.cvemonitor.dto.user.UserResponse;
-import com.sjinc.cvemonitor.repository.CommonCodeRepository;
+import com.sjinc.cvemonitor.repository.ComCdRepository;
 import com.sjinc.cvemonitor.repository.UserProgramPermissionRepository;
 import com.sjinc.cvemonitor.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -19,12 +19,12 @@ import java.util.List;
 @RequiredArgsConstructor
 public class UserService {
 
-    /** 역할 값의 출처. 화면 select도 이 그룹을 CommonCode.fillSelect로 채운다. */
+    /** 역할 값의 출처. 화면 select도 이 그룹을 ComCd.fillSelect로 채운다. */
     private static final String ROLE_CODE_GROUP = "ROLE";
 
     private final UserRepository userRepository;
     private final UserProgramPermissionRepository userProgramPermissionRepository;
-    private final CommonCodeRepository commonCodeRepository;
+    private final ComCdRepository comCdRepository;
     private final PasswordEncoder passwordEncoder;
 
     @Transactional(readOnly = true)
@@ -74,9 +74,9 @@ public class UserService {
             throw new IllegalArgumentException("역할은 필수입니다.");
         }
 
-        List<String> allowedRoles = commonCodeRepository
+        List<String> allowedRoles = comCdRepository
                 .findByCodeGroupAndUseYnOrderBySortOrderAsc(ROLE_CODE_GROUP, "Y").stream()
-                .map(CommonCode::getCodeValue)
+                .map(ComCd::getCodeValue)
                 .toList();
 
         if (!allowedRoles.contains(role)) {

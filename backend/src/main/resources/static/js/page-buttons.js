@@ -7,7 +7,6 @@
  *
  * 사용법:
  *   PageButtons.bind({ btnSearch: search, btnAdd: addRow, btnSave: saveAll, btnEtc1: exportExcel });
- *   PageButtons.get('btnCodeSave')   // 있으면 엘리먼트, 없으면 null
  */
 (function (global) {
     function get(id) {
@@ -23,5 +22,5 @@
         });
     }
 
-    global.PageButtons = { bind: bind, get: get };
+    global.PageButtons = { bind: bind };
 })(window);

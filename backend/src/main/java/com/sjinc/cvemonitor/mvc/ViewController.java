@@ -19,7 +19,6 @@ import java.security.Principal;
 import java.util.List;
 import java.util.Optional;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 /** REST API(controller 패키지)와 구분되는, 화면(뷰)을 반환하는 페이지 컨트롤러. */
 @Controller
@@ -99,8 +98,6 @@ public class ViewController {
                 .map(Program::getProgramNm)
                 .orElseGet(() -> fixedMenu.map(FixedMenu::programNm).orElse("")));
         model.addAttribute("pageButtons", pageButtons);
-        // 툴바가 아닌 자리에 버튼을 따로 두는 화면(공통코드관리의 그룹/상세 영역)이 th:if로 쓴다.
-        model.addAttribute("pageButtonIds", pageButtons.stream().map(PageButtonView::id).collect(Collectors.toSet()));
 
         Resource template = resourceLoader.getResource("classpath:/templates/program/" + view + ".html");
         if (!template.exists()) {

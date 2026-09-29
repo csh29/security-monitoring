@@ -48,9 +48,9 @@
  *       - 'select'   : <select>. col.options(row) 또는 [{value,label}] 배열로 옵션을 채우고, 선택값은
  *                      row[col.id](신규 행이면 col.defaultValue). col.options 대신 col.optionsQuery에
  *                      공통코드 그룹명(예: 'ROLE')을 주면, 화면이 직접 조회하지 않아도 render()가
- *                      CommonCode.fetchCodes(optionsQuery) 결과로 옵션을 채워준다(codeValue→value,
+ *                      ComCd.fetchCodes(optionsQuery) 결과로 옵션을 채워준다(codeValue→value,
  *                      codeName→label). 그리드마다 반복되던 "그룹 조회 → 캐시 변수 → options 함수"
- *                      배선을 없애는 용도라, 이 화면은 /js/common-code.js를 같이 불러와야 한다.
+ *                      배선을 없애는 용도라, 이 화면은 /js/com-cd.js를 같이 불러와야 한다.
  *       - 'row-select': 그리드 상단 "삭제" 버튼이 쓰는 행 선택 체크박스 — 값을 저장하지 않고
  *                      change 시 tr에 'selected' 클래스만 토글한다. col.id는 필요 없다.
  *     만들어진 엘리먼트는 col.id가 있으면 tr._fields[col.id]에 저장돼, 기존처럼 저장 로직에서
@@ -152,6 +152,42 @@
         wrapper.appendChild(table);
     }
 
+    /** 세로 스크롤 영역의 최소 높이. 화면이 이보다 좁으면 그리드 대신 페이지가 스크롤된다. */
+    const MIN_SCROLL_HEIGHT = 200;
+
+    /**
+     * .grid-scroll의 세로 한도를 "그 영역의 시작 위치부터 화면(또는 탭 iframe) 아래 끝까지"로 맞춘다.
+     * 그래야 행이 많을 때 페이지가 아니라 그리드 본문만 스크롤되고 헤더(sticky)가 고정된다.
+     * 조회영역(SearchForm)처럼 그리드보다 늦게 그려지는 것이 있어 위치가 바뀌므로, 헤더/행을 그릴
+     * 때마다와 창 크기가 바뀔 때마다 다시 계산한다. 화면이 스스로 스크롤 영역을 둔 경우(.grid-wrap)는
+     * 감싸지 않으므로 대상이 아니다.
+     */
+    function fitScrollHeights() {
+        document.querySelectorAll('.grid-scroll').forEach(function (wrapper) {
+            const main = wrapper.closest('.area-main');
+            const scrollTop = main ? main.scrollTop : 0;
+            const bottomGap = main ? (parseFloat(getComputedStyle(main).paddingBottom) || 0) : 0;
+            const top = wrapper.getBoundingClientRect().top + scrollTop;
+            const available = Math.floor(window.innerHeight - top - bottomGap);
+            wrapper.style.maxHeight = Math.max(available, MIN_SCROLL_HEIGHT) + 'px';
+        });
+    }
+
+    let fitScheduled = false;
+    /** 한 번에 여러 그리드를 그려도 레이아웃이 잡힌 뒤 한 번만 계산한다. */
+    function scheduleFitScrollHeights() {
+        if (fitScheduled) {
+            return;
+        }
+        fitScheduled = true;
+        global.requestAnimationFrame(function () {
+            fitScheduled = false;
+            fitScrollHeights();
+        });
+    }
+
+    global.addEventListener('resize', scheduleFitScrollHeights);
+
     /** 첫 조회 결과가 오기 전까지 tbody에 보여줄 기본 문구. */
     const DEFAULT_INITIAL_MESSAGE = '조회 중입니다...';
 
@@ -190,6 +226,7 @@
         if (tbody && tbody.rows.length === 0) {
             clearAndAppendMessage(tbody, columns.length, options.initialMessage || DEFAULT_INITIAL_MESSAGE);
         }
+        scheduleFitScrollHeights();
     }
 
     function clearAndAppendMessage(tbody, colspan, message) {
@@ -474,6 +511,7 @@
 
         function paint() {
             tbody.innerHTML = '';
+            scheduleFitScrollHeights();
 
             if (!rows || rows.length === 0) {
                 clearAndAppendMessage(tbody, columns.length, options.emptyMessage || '조회된 데이터가 없습니다.');
@@ -502,7 +540,7 @@
         }
 
         Promise.all(pendingOptionColumns.map(function (col) {
-            return global.CommonCode.fetchCodes(col.optionsQuery).then(function (codes) {
+            return global.ComCd.fetchCodes(col.optionsQuery).then(function (codes) {
                 col.options = codes.map(function (code) {
                     return { value: code.codeValue, label: code.codeName };
                 });

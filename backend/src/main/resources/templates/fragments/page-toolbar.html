@@ -9,8 +9,6 @@
     조용히 건너뛴다. 단축키 표기([F3])와 키 처리는 hotkeys.js가 data-hotkey를 보고 한다.
 
     사용: <section th:replace="~{fragments/page-toolbar :: toolbar}"></section>
-         버튼을 툴바가 아닌 자리에 따로 두는 화면(공통코드관리)은 :: nameOnly 를 쓰고, 그 버튼들에
-         th:if="${pageButtonIds.contains('btnSave')}"처럼 같은 권한을 건다.
 -->
 <section th:fragment="toolbar" class="page-toolbar">
     <div class="page-name" th:text="${programNm}">프로그램명</div>
@@ -19,8 +17,4 @@
                 th:id="${button.id}" th:class="|btn ${button.cssClass}|"
                 th:attr="data-hotkey=${button.hotkey}" th:text="${button.label}">조회</button>
     </div>
-</section>
-
-<section th:fragment="nameOnly" class="page-toolbar">
-    <div class="page-name" th:text="${programNm}">프로그램명</div>
 </section>
