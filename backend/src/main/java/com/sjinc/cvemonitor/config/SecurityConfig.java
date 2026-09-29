@@ -1,5 +1,6 @@
 package com.sjinc.cvemonitor.config;
 
+import com.sjinc.cvemonitor.security.CsrfCookieFilter;
 import com.sjinc.cvemonitor.security.RequiresProgramAuthorizationManager;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,6 +18,7 @@ import org.springframework.security.web.authentication.DelegatingAuthenticationE
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf.CsrfFilter;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
@@ -101,6 +103,8 @@ public class SecurityConfig {
                                 : new String[]{"/api/ai/**"})
                         .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                         .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler()))
+                // 로그인 직후 첫 화면에서 XSRF-TOKEN 쿠키가 빠져 첫 POST가 403 나던 문제(CsrfCookieFilter 주석 참고)
+                .addFilterAfter(new CsrfCookieFilter(), CsrfFilter.class)
                 // H2 콘솔은 기본으로 꺼둔다(application.properties). 임의 SQL 실행 콘솔이라
                 // 인증 없이 열려 있으면 CREATE ALIAS ... AS $$ ... $$로 원격 코드 실행까지 가능하다
                 // — 로컬에서 켜더라도 PUBLIC_URLS에 넣지 않으므로 앱 로그인은 여전히 필요하다.

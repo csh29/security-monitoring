@@ -99,7 +99,7 @@ py -m pip install -r ../ai/requirements.txt
 com.sjinc.cvemonitor
 ├── config                  # Spring 설정 (Security, WebClient, 초기 데이터)
 ├── controller              # REST API 엔드포인트
-├── mvc                     # 화면(뷰) 반환 컨트롤러 + 사이드바 전역 모델
+├── mvc                     # 화면(뷰) 반환 컨트롤러 + 사이드바·상단바 전역 모델
 ├── domain                  # 도메인 모델 (JPA 엔티티, VO)
 ├── security                # 프로그램 접근 권한 판정(ProgramAccessGuard)
 ├── dto

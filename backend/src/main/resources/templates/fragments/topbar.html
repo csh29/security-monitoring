@@ -5,6 +5,28 @@
             padding:0 12px 0 0; overflow:hidden;
         }
 
+        /* 좌상단 로고 + 사이드바 접기 버튼(햄버거). 사이드바는 이 상단바 아래에 있다(common-ui.css .app-shell). */
+        .topbar-brand{
+            display:flex; align-items:center; gap:9px; flex-shrink:0;
+            padding: 0 18px 0 3px; border-right:1px solid var(--line);
+        }
+        .topbar-brand .mark{
+            width:26px; height:26px; border-radius:8px; background:var(--navy);
+            display:grid; place-items:center; color:#fff; font-size:12px;
+        }
+        .topbar-brand .name{ font-size:13px; font-weight:700; white-space:nowrap; }
+        .sidebar-toggle{
+            flex-shrink:0; display:flex; flex-direction:column; justify-content:center; gap:4px;
+            width:28px; height:28px; padding:0 6px; margin-right:4px;
+            border:none; border-radius:6px; background:none; cursor:pointer;
+        }
+        .sidebar-toggle span{ display:block; height:2px; border-radius:1px; background:var(--text-sub); }
+        .sidebar-toggle:hover{ background:#fafafd; }
+        .sidebar-toggle:hover span{ background:var(--text); }
+        @media (max-width:760px){
+            .sidebar-toggle{ display:none; } /* 좁은 화면은 사이드바가 가로 메뉴라 접을 필요가 없다 */
+        }
+
         /* 탭 목록(홈 화면의 tabs.js가 채운다). 탭이 하나도 없는 화면(단위 화면을 직접 열었을 때)에서는
            그냥 빈 채로 남아 있다. */
         .tab-nav{
@@ -17,15 +39,21 @@
             font-size:12.5px; color:var(--text-sub); cursor:pointer;
             border-right:1px solid var(--line); white-space:nowrap; flex-shrink:0;
             user-select:none;
+            /* 비활성 탭: 흰 상단바와 구분되는 옅은 바탕으로 "열려 있는 탭"임을 드러낸다
+               (예전엔 흰 바탕에 회색 글자뿐이라 탭인지 글자인지 밋밋했다). */
+            background:#f5f5fa; color:#6f6f8f; font-weight:500;
+            transition:background .15s, color .15s, box-shadow .15s;
         }
         /* 탭 폭이 고정이라 긴 프로그램명은 ...으로 자르고, 전체 이름은 마우스 오버 툴팁으로 보여준다 */
         .tab-btn .tab-label{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; }
-        .tab-btn:hover{ background:#fafafd; }
-        .tab-btn.active{ color:var(--text); font-weight:700; background:#fafafd; box-shadow:inset 0 -2px 0 var(--accent); }
+        .tab-btn:hover{ background:#fff; color:var(--text); box-shadow:inset 0 -2px 0 var(--accent-soft); }
+        .tab-btn.active{ color:var(--text); font-weight:700; background:#fff; box-shadow:inset 0 -2px 0 var(--accent); }
         .tab-btn .tab-close{
             display:grid; place-items:center; width:18px; height:18px; border-radius:50%;
             font-size:13px; color:var(--text-sub); line-height:1;
+            opacity:.5; transition:opacity .15s;
         }
+        .tab-btn:hover .tab-close, .tab-btn.active .tab-close{ opacity:1; }
         .tab-btn .tab-close:hover{ background:var(--accent-soft); color:var(--accent); }
 
         .tab-context-menu{
@@ -36,19 +64,194 @@
         .tab-context-menu-item{ padding:8px 10px; border-radius:6px; cursor:pointer; color:var(--text); }
         .tab-context-menu-item:hover{ background:var(--accent-soft); color:var(--accent); }
 
-        .logout-form{ margin:0; flex-shrink:0; display:flex; align-items:center; padding-left:12px; }
-        .logout-btn{
+        /* 우측 끝: 로그인 사용자 표시 · 비밀번호 변경 · 로그아웃 */
+        .topbar-user{ flex-shrink:0; display:flex; align-items:center; gap:8px; padding-left:12px; }
+        .login-user{ font-size:12px; font-weight:700; color:var(--text); white-space:nowrap; margin-right:4px; }
+        .logout-form{ margin:0; display:flex; align-items:center; }
+        .topbar-btn{
             background:var(--accent-soft); color:var(--accent);
             font-size:11px; font-weight:700;
             padding:6px 14px; border-radius:999px;
-            border:none; cursor:pointer;
+            border:none; cursor:pointer; white-space:nowrap;
         }
-        .logout-btn:hover{ background:var(--accent); color:#fff; }
+        .topbar-btn:hover{ background:var(--accent); color:#fff; }
+
+        /* 비밀번호 변경 모달(뼈대 .modal은 common-ui.css) */
+        .pw-modal{ max-width:360px; }
+        .pw-field{ display:flex; flex-direction:column; gap:6px; margin-top:12px; font-size:12px; color:var(--text-sub); }
+        .pw-field label{ font-weight:700; }
+        .pw-field input{
+            padding:7px 10px; border:1px solid var(--line); border-radius:3px;
+            font-size:12.5px; font-family:inherit; color:var(--text);
+        }
+        .pw-field input:focus{ outline:none; border-color:var(--accent); }
     </style>
 
+    <div class="topbar-brand">
+        <button type="button" class="sidebar-toggle" id="sidebarToggle" aria-label="메뉴 접기" aria-expanded="true">
+            <span></span><span></span><span></span>
+        </button>
+        <span class="mark">▣</span>
+        <span class="name">보안취약점 모니터링</span>
+    </div>
     <div id="tabNav" class="tab-nav"></div>
-    <form th:action="@{/logout}" method="post" class="logout-form">
-        <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
-        <button type="submit" class="logout-btn">로그아웃</button>
-    </form>
+    <div class="topbar-user">
+        <span class="login-user" th:text="${loginUserLabel}"></span>
+        <button type="button" class="topbar-btn" id="btnChangePassword">비밀번호 변경</button>
+        <form th:action="@{/logout}" method="post" class="logout-form">
+            <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
+            <button type="submit" class="topbar-btn">로그아웃</button>
+        </form>
+    </div>
+
+    <div class="modal-backdrop" id="pwModalBackdrop">
+        <form class="modal pw-modal" id="pwForm" autocomplete="off" tabindex="0">
+            <h3>비밀번호 변경</h3>
+            <div class="pw-field">
+                <label for="pwCurrent">현재 비밀번호</label>
+                <input type="password" id="pwCurrent" autocomplete="current-password">
+            </div>
+            <div class="pw-field">
+                <label for="pwNew">새 비밀번호</label>
+                <input type="password" id="pwNew" autocomplete="new-password">
+            </div>
+            <div class="pw-field">
+                <label for="pwConfirm">새 비밀번호 확인</label>
+                <input type="password" id="pwConfirm" autocomplete="new-password">
+            </div>
+            <div class="modal-actions">
+                <button type="submit" class="btn primary" id="pwSubmit">변경</button>
+                <button type="button" class="btn" id="pwCancel">취소</button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        (function () {
+            const backdrop = document.getElementById('pwModalBackdrop');
+            const form = document.getElementById('pwForm');
+            const current = document.getElementById('pwCurrent');
+            const next = document.getElementById('pwNew');
+            const confirm = document.getElementById('pwConfirm');
+
+            function open() {
+                form.reset();
+                backdrop.classList.add('open');
+                current.focus();
+            }
+
+            function close() {
+                backdrop.classList.remove('open');
+                form.reset(); // 비밀번호가 화면에 남아 있지 않게 닫을 때도 비운다
+            }
+
+            document.getElementById('btnChangePassword').addEventListener('click', open);
+            document.getElementById('pwCancel').addEventListener('click', close);
+            backdrop.addEventListener('click', function (e) {
+                if (e.target === backdrop) close();
+            });
+
+            backdrop.addEventListener('keydown', function (e) {
+                if(e.key === 'Escape') close();
+            })
+
+            form.addEventListener('keydown', function (e) {
+                if(e.key === 'Escape') close();
+            })
+
+            // 엔터는 다음 입력칸으로, 마지막 칸(확인)에서는 "변경" 버튼을 누른다. 폼 기본 동작은 어느 칸에서든
+            // 엔터가 곧 제출이라, 현재 비밀번호만 치고 엔터를 눌러도 "새 비밀번호를 입력하세요"가 떴다.
+            const inputs = [current, next, confirm];
+            inputs.forEach(function (input, i) {
+                input.addEventListener('keydown', function (e) {
+                    if (e.key !== 'Enter' || e.isComposing) return;
+                    e.preventDefault();
+                    if (i < inputs.length - 1) {
+                        inputs[i + 1].focus();
+                    } else {
+                        document.getElementById('pwSubmit').click();
+                    }
+                });
+            });
+
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+                if (!current.value || !next.value) {
+                    alert('현재 비밀번호와 새 비밀번호를 입력하세요.');
+                    return;
+                }
+                if (next.value !== confirm.value) {
+                    alert('새 비밀번호와 확인 값이 다릅니다.');
+                    confirm.focus();
+                    return;
+                }
+                fetch('/api/users/me/password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ currentPassword: current.value, newPassword: next.value })
+                })
+                    .then(function (res) {
+                        if (!res.ok) {
+                            // 400이면 서버가 사유 문구를 본문으로 준다(ApiExceptionAdvice)
+                            return res.text().then(function (msg) { throw new Error(msg || '비밀번호 변경에 실패했습니다.'); });
+                        }
+                        close();
+                        alert('비밀번호가 변경되었습니다.');
+                    })
+                    .catch(function (err) {
+                        alert(err.message);
+                    });
+            });
+        })();
+    </script>
+    <script>
+        (function () {
+            const shell = document.querySelector('.app-shell');
+            const toggle = document.getElementById('sidebarToggle');
+            const STORAGE_KEY = 'sidebar.collapsed';
+            const items = Array.from(document.querySelectorAll('.nav a, .nav-group-toggle'));
+
+            function setCollapsed(collapsed, remember) {
+                shell.classList.toggle('is-sidebar-collapsed', collapsed);
+                toggle.setAttribute('aria-expanded', String(!collapsed));
+                toggle.setAttribute('aria-label', collapsed ? '메뉴 펼치기' : '메뉴 접기');
+                // 접으면 이름이 안 보이니 툴팁으로 대신한다. 펼쳤을 땐 이름이 보이므로 툴팁을 뺀다.
+                items.forEach(function (el) {
+                    const label = el.querySelector('.nav-label');
+                    if (collapsed && label) el.title = label.textContent.trim();
+                    else el.removeAttribute('title');
+                });
+                if (remember) {
+                    try { localStorage.setItem(STORAGE_KEY, collapsed ? 'Y' : 'N'); } catch (e) { /* 기억만 못 한다 */ }
+                }
+            }
+
+            let saved = null;
+            try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) { /* 기억만 못 한다 */ }
+            setCollapsed(saved === 'Y', false);
+
+            toggle.addEventListener('click', function () {
+                shell.classList.add('sidebar-animating');
+                setCollapsed(!shell.classList.contains('is-sidebar-collapsed'), true);
+            });
+            shell.addEventListener('transitionend', function (e) {
+                if (e.target === shell) shell.classList.remove('sidebar-animating');
+            });
+
+            // 접힌 상태에서 "관리"를 누르면 하위 메뉴를 보여줄 자리가 없으니 사이드바부터 펼친다
+            // (그룹 열림 처리는 아래 그룹 스크립트가 같은 클릭에서 한다).
+            const groupToggle = document.querySelector('.nav-group-toggle');
+            if (groupToggle) {
+                groupToggle.addEventListener('click', function () {
+                    if (shell.classList.contains('is-sidebar-collapsed')) {
+                        // 그룹 스크립트는 열림을 "뒤집기"라, 접혀 있던 동안 열림 상태였으면 닫혀 버린다.
+                        // 여기서 먼저 닫아 두어 이번 클릭 결과가 항상 "펼친 사이드바 + 열린 그룹"이 되게 한다.
+                        groupToggle.closest('.nav-group').classList.remove('is-open');
+                        shell.classList.add('sidebar-animating');
+                        setCollapsed(false, true);
+                    }
+                }, true); // 캡처 단계: 이 스크립트는 사이드바의 그룹 스크립트보다 늦게 등록되지만, 그 "뒤집기"보다 먼저 돌아야 한다
+            }
+        })();
+    </script>
 </header>

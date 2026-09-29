@@ -41,7 +41,7 @@ com.sjinc.cvemonitor
 ├── domain       # JPA 엔티티
 ├── dto/{ai,app,comcd,nvd,osv,permission,program,scan,user,vulnerability}
 ├── repository   # JPA Repository
-├── security     # @RequiresProgram + 이를 읽는 AuthorizationManager, ProgramAccessGuard
+├── security     # @RequiresProgram + 이를 읽는 AuthorizationManager, ProgramAccessGuard, CsrfCookieFilter
 └── service/{ai,app,comcd,git,maven,nvd,osv,permission,program,scan,user,vulnerability}
 ```
 
@@ -129,18 +129,24 @@ OPEN만)에서도 빠진다.
   아래에 들어간다(`sidebar.html`, 하나도 없으면 그룹 자체를 안 그림). 접을 때 링크는 숨기기만 하므로
   `tabs.js`의 `.nav a` 목록은 그대로이고, 그룹 안 화면이 활성화되면 그룹이 펼쳐진다. 접힘 상태는
   localStorage에만 기억한다. 프로그램마다 다른 상위 메뉴를 두는 구조(Program에 상위 메뉴 컬럼)는 아직 없다.
+  화면 뼈대는 상단바가 전체 폭 첫 줄(좌상단 햄버거·로고·앱 이름 포함, `topbar.html`), 그 아래가 사이드바 | 본문이다.
+  사이드바는 상단바의 햄버거 버튼으로 접을 수 있다(접기 스크립트도 `topbar.html`) — `.app-shell`에 `is-sidebar-collapsed`를 붙여 `--left-w`를
+  64px로 바꾸고 메뉴 이름(`.nav-label`)을 숨긴다(이름은 `title` 툴팁). 이 상태도 localStorage(`sidebar.collapsed`)에만 기억한다.
+- 상단바(`fragments/topbar.html`) 우측은 로그인 사용자 `사용자명(아이디)` · 비밀번호 변경 · 로그아웃이다. 표시 문구는
+  `TopbarModelAdvice`가 `loginUserLabel`로 얹는다. 비밀번호 변경 모달은 topbar 조각 안에 있고 `POST /api/users/me/password`
+  (본인만 — 대상은 Principal, 현재 비밀번호 재확인, `@RequiresProgram` 없음)를 부른다. 탭(iframe) 안에서는 상단바가 숨겨진다.
 
 ### 공통 자산
 
 | 파일 | 역할 |
 | --- | --- |
-| `/css/common-ui.css` | `:root` 변수, `.app-shell`, `.btn`, `.panel-head`, `.page-toolbar` 등 페이지 뼈대. 화면 공통 버튼은 항상 우측 상단 — 제목과 한 줄이면 `.panel-head`, 조회조건 영역이 있으면 그 위에 `.page-toolbar` |
+| `/css/common-ui.css` | `:root` 변수, `.app-shell`, `.btn`, `.panel-head`, `.page-toolbar`, 모달(`.modal-backdrop`+`.open` / `.modal` / `.modal-actions`) 등 페이지 뼈대. 화면 공통 버튼은 항상 우측 상단 — 제목과 한 줄이면 `.panel-head`, 조회조건 영역이 있으면 그 위에 `.page-toolbar` |
 | `/css/grid.css` | `.grid` 공통 모양. 헤더 높이(45px)와 본문 행 높이(32px)를 모든 그리드에서 고정한다 — 화면 `<style>`에서 행 높이를 덮어쓰지 않는다. 헤더는 `position:sticky`라 세로 스크롤 때 고정된다 |
-| `/js/grid.js` | 컬럼 정의(`COLUMNS`)로 헤더·행·입력 셀까지 만드는 공통 그리드 렌더러. `renderHeader`가 tbody의 첫 안내 행("조회 중입니다...", colspan 자동)도 넣으므로 템플릿의 `<tbody>`는 비워 둔다. 행 데이터는 `getRows`/`getRow`(원본 row + 입력 셀 현재 값, `_rowIndex`/`_isNew`/`_selected`)로 읽고 `onRowClick(tr, row)`도 같은 값을 받는다. 또 table을 `.grid-scroll`로 감싸고 숫자 `width`를 최소 폭으로도 적용해, 화면보다 넓으면 가로 스크롤이 생긴다. `.grid-scroll`의 세로 한도(`max-height`)는 grid.js가 "그 영역 시작 위치부터 화면 아래 끝까지"로 계산해 넣어(헤더·행을 그릴 때, 창 크기 변경 때), 행이 많으면 페이지가 아니라 그리드 본문만 스크롤된다(최소 200px). 화면이 스크롤 영역을 직접 둔 경우(`.grid-wrap`, 취약점 관리)는 감싸지 않는다 |
+| `/js/grid.js` | 컬럼 정의(`COLUMNS`)로 헤더·행·입력 셀까지 만드는 공통 그리드 렌더러. `renderHeader`가 tbody의 첫 안내 행("조회 중입니다...", colspan 자동)도 넣으므로 템플릿의 `<tbody>`는 비워 둔다. 행 데이터는 `getRows`/`getRow`(원본 row + 입력 셀 현재 값, `_rowIndex`/`_isNew`/`_selected`)로 읽고 `onRowClick(tr, row)`도 같은 값을 받는다. select 컬럼에 `display(value, label, row)`를 주면 평소엔 그 결과(뱃지 등)를 보여주고 셀을 누를 때만 select로 바뀐다(취약점 관리 처리여부). 또 table을 `.grid-scroll`로 감싸고 숫자 `width`를 최소 폭으로도 적용해, 화면보다 넓으면 가로 스크롤이 생긴다. `.grid-scroll`의 세로 한도(`max-height`)는 grid.js가 "그 영역 시작 위치부터 화면 아래 끝까지"로 계산해 넣어(헤더·행을 그릴 때, 창 크기 변경 때), 행이 많으면 페이지가 아니라 그리드 본문만 스크롤된다(최소 200px). 화면이 스크롤 영역을 직접 둔 경우(`.grid-wrap`, 취약점 관리)는 감싸지 않는다 |
 | `/js/com-cd.js` | 공통코드로 select 옵션 채우기(그룹당 1회 캐시) |
 | `/js/tabs.js` | 홈 화면 탭 |
 | `/js/hotkeys.js` | 공통 펑션키 F3 조회 / F4 신규 / F5 삭제 / F9 저장 / F12 초기화. 버튼에 `data-hotkey="F3"`만 붙이면 되고, 버튼 글자 뒤 `[F3]` 표기도 이 파일이 자동으로 붙인다. `loading-overlay.html`이 싣는다 |
-| `/js/search-form.js` | 조회영역 공통 렌더러 `SearchForm.render(container, fields, {onSearch})` → `values()`/`reset()`/`field(id)`/`matches(row)`/`ready`. `matches(row)`는 전체 목록을 받아 조회조건을 화면에서 거르는 화면(프로그램·사용자·공통코드 관리)이 쓴다 — text 필드마다 `row[field.id]` 부분 일치(대소문자 무시). 화면은 `<section class="search-row" id="searchArea">`만 두고 label/input 마크업을 직접 쓰지 않는다 |
+| `/js/search-form.js` | 조회영역 공통 렌더러 `SearchForm.render(container, fields, {onSearch})` → `values()`/`reset()`/`field(id)`/`matches(row)`/`ready`. `matches(row)`는 전체 목록을 받아 조회조건을 화면에서 거르는 화면(프로그램·사용자·공통코드 관리, 취약점 조회)이 쓴다 — text 필드마다 `row[field.id]` 부분 일치(대소문자 무시). 화면은 `<section class="search-row" id="searchArea">`만 두고 label/input 마크업을 직접 쓰지 않는다 |
 | `fragments/page-toolbar.html` | 화면 첫 줄 — 좌상단 프로그램명 + 우측 상단 공통 버튼. 값(`programNm`, `pageButtons`)은 `ViewController`가 넣는다. 버튼은 마크업에 쓰지 않는다(아래 "화면 공통 버튼" 참고) |
 | `/js/page-buttons.js` | `PageButtons.bind({ btnSave: fn })` — 권한 때문에 안 그려진 버튼은 건너뛰고 핸들러를 건다. `loading-overlay.html`이 싣는다 |
 | `fragments/loading-overlay.html` | 전역 스피너 + **CSRF 헤더를 붙이는 공통 fetch 래퍼** + `hotkeys.js` 로드 |
@@ -160,7 +166,7 @@ OPEN만)에서도 빠진다.
 | 프로그램 권한 | `RequiresProgramAuthorizationManager`가 요청을 처리할 컨트롤러(메서드 우선, 없으면 클래스)의 `@RequiresProgram`을 리플렉션으로 읽어 판단. 값을 여러 개 주면 그중 하나만 권한이 있어도 통과한다 — 예: `ComCdGroupController`는 클래스에 `com-cd-master-mng`(그룹 등록·수정·삭제)를, 목록 조회 `getGroups`에는 두 공통코드 화면(`com-cd-master-mng`, `com-cd-mng`)을 함께 걸었다 |
 | 어노테이션이 없으면 | **로그인만 하면 통과한다**(= 권한 미요구 API로 간주) |
 | 예외 1건 | `ComCdController.getCodes`는 `@PreAuthorize` — `includeInactive`가 쿼리 파라미터라 메서드 단위 어노테이션으로 표현할 수 없기 때문 |
-| CSRF | `/api/**` 포함 전체 검증(`CookieCsrfTokenRepository`). 화면 JS는 공통 fetch 래퍼가 헤더를 붙인다. **`/api/ai/**`만 `ignoringRequestMatchers`로 제외** — 세션 쿠키가 아니라 헤더 토큰으로 인증하는 배치 전용 경로라 CSRF 전제가 성립하지 않고, 빼지 않으면 배치의 POST가 전부 403이 된다 |
+| CSRF | `/api/**` 포함 전체 검증(`CookieCsrfTokenRepository`). 화면 JS는 공통 fetch 래퍼가 헤더를 붙인다. 래퍼는 `XSRF-TOKEN` 쿠키를 읽으므로, `CsrfCookieFilter`가 요청마다 토큰을 화면 렌더링 전에 먼저 읽어 쿠키를 응답 초반에 심는다 — 없으면 로그인(토큰 폐기) 직후 첫 화면에서 쿠키가 응답 버퍼 초과로 버려져 첫 POST가 403이 났다(실제로 그랬다). **`/api/ai/**`만 `ignoringRequestMatchers`로 제외** — 세션 쿠키가 아니라 헤더 토큰으로 인증하는 배치 전용 경로라 CSRF 전제가 성립하지 않고, 빼지 않으면 배치의 POST가 전부 403이 된다 |
 | 화면 공통 버튼 | 툴바 버튼 = **프로그램이 쓰는 버튼**(`programs`의 `search_yn`~`reset_yn`, 기타는 `etc1_nm`~`etc5_nm`에 이름이 있으면) **∩ 사용자에게 허용된 버튼**(`user_program_permissions`의 `search_yn`~`etc5_yn`). `ProgramService.getPageButtons`가 `ProgramButton` 순서로 만든다. 고정 메뉴는 `mvc/FixedMenu`에 버튼이 고정돼 있다. **화면 표시만 막는다** — API는 여전히 `@RequiresProgram`(프로그램 단위)만 본다 |
 | 화면 접근 | `ViewController.programPage`가 화면 이름(`Program.programId`와 같은 값)으로 Program 등록 여부를 보고, 등록돼 있으면 `ProgramAccessGuard`로 권한을 확인한다. 등록되지 않은 화면은 고정 메뉴라 로그인만으로 열린다. 화면 이름은 `[a-z0-9-]+`만 허용(경로 조작 차단) |
 | AI 배치 경로 | `/api/ai/**`는 세션 대신 `X-Internal-Token` 헤더로 자체 인증(`MessageDigest.isEqual`로 상수 시간 비교) |
@@ -208,6 +214,7 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `VulnerabilityServiceTest` — upsert·AI 판단 반영 흐름
 - `VulnerabilityTest` — 엔티티 규칙
 - `RepoUrlValidatorTest` — 앱 등록 저장소 URL 허용/거부 판정
+- `UserServiceTest` — 본인 비밀번호 변경 검증(현재 비밀번호 확인, 빈 값·동일 값 거부)
 
 즉 **컨트롤러·보안·화면에는 자동 테스트가 없다.** 그 영역의 변경을 분석할 때 "테스트가 통과했으니
 안전하다"고 결론 내리지 않는다.

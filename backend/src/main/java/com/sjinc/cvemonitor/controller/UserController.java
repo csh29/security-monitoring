@@ -1,5 +1,6 @@
 package com.sjinc.cvemonitor.controller;
 
+import com.sjinc.cvemonitor.dto.user.PasswordChangeRequest;
 import com.sjinc.cvemonitor.dto.user.UserRequest;
 import com.sjinc.cvemonitor.dto.user.UserResponse;
 import com.sjinc.cvemonitor.security.RequiresProgram;
@@ -40,6 +41,15 @@ public class UserController {
     @RequiresProgram("user-mng")
     public UserResponse saveUser(@RequestBody UserRequest request) {
         return userService.saveUser(request);
+    }
+
+    /**
+     * 상단바 "비밀번호 변경" — 로그인한 본인 계정만 바꾼다. 대상을 Principal로 정하므로 다른 계정을 건드릴
+     * 수 없고, 모든 사용자가 써야 하는 기능이라 {@code @RequiresProgram}을 걸지 않는다(로그인만 필요).
+     */
+    @PostMapping("/me/password")
+    public void changeMyPassword(@RequestBody PasswordChangeRequest request, Principal principal) {
+        userService.changeMyPassword(principal.getName(), request);
     }
 
     @DeleteMapping("/{id}")

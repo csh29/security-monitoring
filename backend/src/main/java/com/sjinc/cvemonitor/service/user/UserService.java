@@ -2,6 +2,7 @@ package com.sjinc.cvemonitor.service.user;
 
 import com.sjinc.cvemonitor.domain.ComCd;
 import com.sjinc.cvemonitor.domain.User;
+import com.sjinc.cvemonitor.dto.user.PasswordChangeRequest;
 import com.sjinc.cvemonitor.dto.user.UserRequest;
 import com.sjinc.cvemonitor.dto.user.UserResponse;
 import com.sjinc.cvemonitor.repository.ComCdRepository;
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
 
 /** 사용자 관리 화면(조회/저장/삭제 버튼)의 처리를 담당한다. */
 @Service
@@ -59,6 +61,35 @@ public class UserService {
                 .build();
 
         return UserResponse.from(userRepository.save(user));
+    }
+
+    /** 상단바의 로그인 사용자 표시. 세션은 살아 있는데 계정이 지워진 경우(다른 관리자가 삭제)는 빈 값. */
+    @Transactional(readOnly = true)
+    public Optional<UserResponse> getUser(String username) {
+        return userRepository.findByUsername(username).map(UserResponse::from);
+    }
+
+    /**
+     * 로그인한 본인의 비밀번호 변경. 현재 비밀번호를 다시 확인한다 — 세션만 있으면 바꿀 수 있게 두면
+     * 자리를 비운 사이 열린 화면이나 탈취된 세션으로 비밀번호까지 바꿔 계정을 통째로 가져갈 수 있다.
+     */
+    @Transactional
+    public void changeMyPassword(String username, PasswordChangeRequest request) {
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다: " + username));
+
+        if (request.currentPassword() == null
+                || !passwordEncoder.matches(request.currentPassword(), user.getPassword())) {
+            throw new IllegalArgumentException("현재 비밀번호가 일치하지 않습니다.");
+        }
+        if (request.newPassword() == null || request.newPassword().isBlank()) {
+            throw new IllegalArgumentException("새 비밀번호를 입력하세요.");
+        }
+        if (passwordEncoder.matches(request.newPassword(), user.getPassword())) {
+            throw new IllegalArgumentException("새 비밀번호가 현재 비밀번호와 같습니다.");
+        }
+
+        user.changePassword(passwordEncoder.encode(request.newPassword()));
     }
 
     /**

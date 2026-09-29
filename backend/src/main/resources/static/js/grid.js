@@ -62,6 +62,9 @@
  *     동작이 걸려 있는 화면에서 체크박스 클릭과 충돌하지 않게 하기 위함).
  *   - title     : true면 텍스트 값을 그대로 title(툴팁)로 쓰고, 함수면 (value, row)의 리턴값을 쓴다.
  *   - onDblClick: (value, row)를 받는 콜백 — 더블클릭 시 실행(설명 팝업 등에 사용).
+ *   - display   : select 전용 보기 모드. (value, label, row)를 받아 노드(뱃지 등)나 문자열을 돌려주면 평소엔
+ *                 그걸 보여주고, 셀을 누를 때만 select로 바뀐다(포커스가 빠지면 새 값으로 다시 그림).
+ *                 값 읽기(getRows)는 보통 select 셀과 같다. 예: 취약점 관리의 처리여부 뱃지.
  *
  * type이 있는 셀은 전부 엔터 키로 다음 셀(우측, 마지막 셀이면 다음 행 첫 셀)로, 위/아래 방향키로
  * 윗/아랫 행의 같은 열 셀로 자동 이동한다 — 화면이 따로 처리할 필요 없이 buildRow가 붙여준다.
@@ -92,6 +95,52 @@
         if (col.align && !isHeader) {
             cell.style.textAlign = col.align;
         }
+    }
+
+    /**
+     * select 셀의 보기 모드(col.display). 평소엔 col.display(value, label, row)가 돌려준 노드(뱃지 등)를
+     * 보여주고, 셀을 누르면 select로 바뀌었다가 포커스가 빠지면 새 값으로 다시 그린다. select 엘리먼트는
+     * 숨기기만 하고 tr._fields에 그대로 두므로 getRows/getRow는 보통 select 셀과 똑같이 현재 값을 읽는다.
+     */
+    function attachDisplayMode(td, select, col, row) {
+        const view = document.createElement('span');
+        view.className = 'grid-cell-view';
+        td.insertBefore(view, select);
+
+        function showView() {
+            const option = select.options[select.selectedIndex];
+            const rendered = col.display(select.value, option ? option.textContent : '', row);
+            view.innerHTML = '';
+            if (rendered instanceof Node) {
+                view.appendChild(rendered);
+            } else if (rendered !== undefined && rendered !== null) {
+                view.textContent = rendered;
+            }
+            select.style.display = 'none';
+            view.style.display = '';
+            td.classList.remove('grid-editor-cell'); // 보기 모드는 일반 셀처럼 padding을 쓴다
+        }
+
+        function showEditor() {
+            view.style.display = 'none';
+            select.style.display = '';
+            td.classList.add('grid-editor-cell');
+            select.focus();
+            // 한 번 누르면 바로 목록이 열리게 한다(지원하지 않는 브라우저는 포커스만 된 채로 둔다).
+            if (typeof select.showPicker === 'function') {
+                try { select.showPicker(); } catch (e) { /* 사용자 동작 밖이면 거부될 수 있다 */ }
+            }
+        }
+
+        td.style.cursor = 'pointer';
+        td.addEventListener('click', function () {
+            if (select.style.display === 'none') {
+                showEditor();
+            }
+        });
+        select.addEventListener('change', showView);
+        select.addEventListener('blur', showView);
+        showView();
     }
 
     /** col.type 하나로 편집 가능한 셀의 입력 엘리먼트를 만든다 — buildRow의 render 분기 대신 쓰인다. */
@@ -454,12 +503,19 @@
                     tr._fields = tr._fields || {};
                     tr._fields[col.id] = field;
                 }
-                // type이 있는(입력 가능한) 셀은 전부 왼쪽→오른쪽 순서로 tr._orderedFields에 쌓아서
-                // 엔터 키 이동(다음 셀, 마지막 셀이면 다음 행 첫 셀)과 위/아래 방향키 이동에 쓴다.
-                tr._orderedFields = tr._orderedFields || [];
-                tr._orderedFields.push(field);
-                bindKeyNavigation(field, tr);
-                td.appendChild(field);
+                if (col.type === 'select' && typeof col.display === 'function') {
+                    // 보기 모드가 있는 select는 숨겨진 채라 포커스를 받을 수 없어 엔터/방향키 이동 순서에서 뺀다.
+                    bindKeyNavigation(field, tr);
+                    td.appendChild(field);
+                    attachDisplayMode(td, field, col, row);
+                } else {
+                    // type이 있는(입력 가능한) 셀은 전부 왼쪽→오른쪽 순서로 tr._orderedFields에 쌓아서
+                    // 엔터 키 이동(다음 셀, 마지막 셀이면 다음 행 첫 셀)과 위/아래 방향키 이동에 쓴다.
+                    tr._orderedFields = tr._orderedFields || [];
+                    tr._orderedFields.push(field);
+                    bindKeyNavigation(field, tr);
+                    td.appendChild(field);
+                }
             } else {
                 td.textContent = (value === null || value === undefined) ? '' : value;
             }

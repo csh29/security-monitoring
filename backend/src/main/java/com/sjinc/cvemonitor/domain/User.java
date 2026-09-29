@@ -38,4 +38,9 @@ public class User {
     /** "ROLE_" 접두어 없이 저장 (예: "ADMIN", "USER"). Spring Security의 roles()가 접두어를 붙여준다. */
     @Column(nullable = false)
     private String role;
+
+    /** 본인 비밀번호 변경(UserService.changeMyPassword). 인코딩된 값을 받는다. */
+    public void changePassword(String encodedPassword) {
+        this.password = encodedPassword;
+    }
 }

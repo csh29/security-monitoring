@@ -1,17 +1,24 @@
 <aside xmlns:th="http://www.thymeleaf.org" th:fragment="sidebar" class="area-left">
     <style>
-        .area-left{ padding:24px 18px; }
+        .area-left{ padding:16px 18px; }
 
-        .brand{ display:flex; align-items:center; gap:9px; margin-bottom:24px; }
-        .brand .mark{
-            width:28px; height:28px; border-radius:9px; background:var(--navy);
-            display:grid; place-items:center; color:#fff; font-size:13px;
-        }
-        .brand .name{ font-size:13px; font-weight:700; }
+        /* 사이드바 접기. 버튼(햄버거)은 상단바 로고 옆에 있고(topbar.html), 접으면 아이콘만 남는 좁은 폭
+           (--left-w-collapsed)이 되며 메뉴 이름은 마우스 오버 툴팁(title)으로 보여준다. 폭은 .app-shell의
+           grid 열(--left-w)을 바꿔서 줄인다 — 사이드바만 줄이면 main 영역이 따라 넓어지지 않는다. */
+        .app-shell{ --left-w-collapsed:64px; }
+        .app-shell.is-sidebar-collapsed{ --left-w:var(--left-w-collapsed); }
+        /* 처음 그릴 때(저장된 접힘 상태 적용)는 애니메이션 없이, 버튼을 눌렀을 때만 부드럽게 줄어든다. */
+        .app-shell.sidebar-animating{ transition:grid-template-columns .2s ease; }
+        .is-sidebar-collapsed .area-left{ padding:16px 10px; overflow-x:hidden; }
+        .is-sidebar-collapsed .nav-label,
+        .is-sidebar-collapsed .nav-group-toggle .caret,
+        .is-sidebar-collapsed .nav-group-items{ display:none; }
+        .is-sidebar-collapsed .nav a,
+        .is-sidebar-collapsed .nav-group-toggle{ justify-content:center; }
 
         .nav{ display:flex; flex-direction:column; gap:6px; }
         .nav a{
-            display:flex; align-items:center; gap:10px;
+            display:flex; align-items:center; gap:10px; white-space:nowrap;
             padding:11px 14px; border-radius:var(--radius-md);
             font-size:12.5px; color:var(--text-sub); text-decoration:none;
         }
@@ -24,7 +31,7 @@
         .nav-group-toggle{
             display:flex; align-items:center; gap:10px; width:100%;
             padding:11px 14px; border:none; border-radius:var(--radius-md); background:none;
-            font:inherit; font-size:12.5px; color:var(--text-sub); cursor:pointer; text-align:left;
+            font:inherit; font-size:12.5px; color:var(--text-sub); cursor:pointer; text-align:left; white-space:nowrap;
         }
         .nav-group-toggle:hover{ background:#fafafd; }
         .nav-group-toggle .ico{ width:16px; text-align:center; }
@@ -56,11 +63,6 @@
         }
     </style>
 
-    <div class="brand">
-        <span class="mark">▣</span>
-        <span class="name">보안취약점 모니터링</span>
-    </div>
-
     <!--
         tabs.js(홈 화면에서만 로드)가 이 목록을 읽어 "홈 제외 클릭 시 탭으로 연다"를 구현한다.
         home 링크는 class="home-link"로 구분하고, 나머지는 data-menu(activeMenu 값과 동일 —
@@ -69,18 +71,18 @@
         때)에서는 그냥 평범한 링크로 동작한다 — data-* 속성은 무시된다.
     -->
     <nav class="nav">
-        <a th:href="@{/}" class="home-link" th:classappend="${activeMenu == 'home'} ? 'is-active'"><span class="ico">▤</span>홈</a>
-        <a th:href="@{/program/vulnerability-mng}" data-menu="vulnerability-mng" data-title="취약점 관리" th:classappend="${activeMenu == 'vulnerability-mng'} ? 'is-active'"><span class="ico">⚠</span>취약점 관리</a>
-        <a th:href="@{/program/vulnerability-search}" data-menu="vulnerability-search" data-title="취약점 조회" th:classappend="${activeMenu == 'vulnerability-search'} ? 'is-active'"><span class="ico">⌕</span>취약점 조회</a>
-        <a th:href="@{/program/report}" data-menu="report" data-title="리포트" th:classappend="${activeMenu == 'report'} ? 'is-active'"><span class="ico">📄</span>리포트</a>
+        <a th:href="@{/}" class="home-link" th:classappend="${activeMenu == 'home'} ? 'is-active'"><span class="ico">▤</span><span class="nav-label">홈</span></a>
+        <a th:href="@{/program/vulnerability-mng}" data-menu="vulnerability-mng" data-title="취약점 관리" th:classappend="${activeMenu == 'vulnerability-mng'} ? 'is-active'"><span class="ico">⚠</span><span class="nav-label">취약점 관리</span></a>
+        <a th:href="@{/program/vulnerability-search}" data-menu="vulnerability-search" data-title="취약점 조회" th:classappend="${activeMenu == 'vulnerability-search'} ? 'is-active'"><span class="ico">⌕</span><span class="nav-label">취약점 조회</span></a>
+        <a th:href="@{/program/report}" data-menu="report" data-title="리포트" th:classappend="${activeMenu == 'report'} ? 'is-active'"><span class="ico">📄</span><span class="nav-label">리포트</span></a>
         <!-- 권한이 있는 추가 프로그램이 하나도 없으면 그룹 자체를 그리지 않는다. -->
         <div class="nav-group" id="navGroupMng" th:if="${!#lists.isEmpty(extraPrograms)}">
             <button type="button" class="nav-group-toggle" aria-expanded="false" aria-controls="navGroupMngItems">
-                <span class="ico">⚙</span>관리<span class="caret">›</span>
+                <span class="ico">⚙</span><span class="nav-label">관리</span><span class="caret">›</span>
             </button>
             <div class="nav-group-items" id="navGroupMngItems">
                 <a th:each="program : ${extraPrograms}" th:attr="data-menu=${program.programId},data-title=${program.programNm}" th:classappend="${activeMenu == program.programId} ? 'is-active'" th:href="@{${program.url}}">
-                    <span th:text="${program.programNm}">프로그램</span>
+                    <span class="nav-label" th:text="${program.programNm}">프로그램</span>
                 </a>
             </div>
         </div>
