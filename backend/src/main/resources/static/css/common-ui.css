@@ -111,7 +111,7 @@ body{
     font-size:12.5px; font-family:inherit; color:var(--text);
 }
 
-/* 모달(취약점 관리 AI 판단근거, 상단바 비밀번호 변경). 백드롭에 .open을 붙이면 뜬다.
+/* 모달(취약점 관리 상세보기, 상단바 비밀번호 변경). 백드롭에 .open을 붙이면 뜬다.
    화면마다 모달 뼈대를 따로 적던 것을 두 번째 모달이 생기면서 여기로 올렸다. */
 .modal-backdrop{
     display:none; position:fixed; inset:0; background:rgba(25,25,64,.45);

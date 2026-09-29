@@ -3,9 +3,12 @@ package com.sjinc.cvemonitor.controller;
 import com.sjinc.cvemonitor.dto.ai.AiAssessmentRequest;
 import com.sjinc.cvemonitor.dto.ai.AiBatchStatus;
 import com.sjinc.cvemonitor.dto.ai.AppFixPlanTarget;
+import com.sjinc.cvemonitor.dto.ai.CveSummaryRequest;
+import com.sjinc.cvemonitor.dto.ai.CveSummaryTarget;
 import com.sjinc.cvemonitor.dto.ai.FixPlanRequest;
 import com.sjinc.cvemonitor.dto.vulnerability.VulnerabilityInfo;
 import com.sjinc.cvemonitor.service.ai.AiAssessmentTriggerService;
+import com.sjinc.cvemonitor.service.ai.CveSummaryService;
 import com.sjinc.cvemonitor.service.ai.FixPlanService;
 import com.sjinc.cvemonitor.service.vulnerability.VulnerabilityService;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +40,7 @@ public class AiAssessmentController {
 
     private final VulnerabilityService vulnerabilityService;
     private final FixPlanService fixPlanService;
+    private final CveSummaryService cveSummaryService;
     private final AiAssessmentTriggerService aiAssessmentTriggerService;
 
     @Value("${ai.internal.token}")
@@ -68,6 +72,19 @@ public class AiAssessmentController {
                                @RequestBody FixPlanRequest request) {
         verifyToken(token);
         fixPlanService.saveFixPlan(appId, request);
+    }
+
+    @GetMapping("/summaries/pending")
+    public List<CveSummaryTarget> getPendingSummaries(@RequestHeader("X-Internal-Token") String token) {
+        verifyToken(token);
+        return cveSummaryService.getPendingSummaryTargets();
+    }
+
+    @PostMapping("/summaries")
+    public void submitSummary(@RequestHeader("X-Internal-Token") String token,
+                              @RequestBody CveSummaryRequest request) {
+        verifyToken(token);
+        cveSummaryService.saveSummary(request);
     }
 
     @GetMapping("/status")

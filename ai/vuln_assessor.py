@@ -1,11 +1,13 @@
 """CVE 취약점 판단 AI 어시스턴트.
 
-두 단계로 동작한다.
+세 단계로 동작한다.
   stage 1) 자바 백엔드(/api/ai/**)에서 아직 AI 판단이 없는 취약점을 읽어와서, 이 의존성 버전이
            실제로 해당 CVE에 취약한지 / 어떤 버전으로 올려야 하는지 판단하고 저장한다. 첫 건은
            혼자 먼저 보내 프롬프트 캐시를 예열한 뒤, 나머지는 ASSESS_MAX_WORKERS개씩 병렬로 처리한다.
   stage 2) stage 1에서 "취약함"으로 확정된 CVE들을, 앱(pom.xml) 단위로 모아서
            한 번에 취합 판단시켜 pom.xml 수정안(diff가 작은 전략 선택 포함)을 만들고 저장한다.
+  stage 3) 등급·판정과 무관하게, 아직 요약이 없거나 NVD가 설명을 바꾼 CVE의 영어 설명을 한국어 2~3문장으로
+           요약해서 저장한다(CVE ID당 한 번). 판단이 아니라 화면에서 읽기 위한 것이라 싼 모델(SUMMARY_MODEL)을 쓴다.
 """
 
 from __future__ import annotations
@@ -21,9 +23,16 @@ from typing import Optional
 import anthropic
 import requests
 
-from prompt_rules import ASSESS_SYSTEM, FIX_PLAN_SYSTEM, load_prompt
+from prompt_rules import ASSESS_SYSTEM, FIX_PLAN_SYSTEM, SUMMARIZE_SYSTEM, load_prompt
 
 MODEL = "claude-sonnet-5"
+
+# stage 3(설명 요약)은 버전 범위를 추론하는 게 아니라 영어 문장 몇 줄을 한국어로 줄이는 일이라 Haiku로 충분하다.
+# 판단용 MODEL과 같이 쓰면 등급 제한 없이 모든 CVE에 도는 단계라 비용이 그만큼 커진다.
+SUMMARY_MODEL = "claude-haiku-4-5"
+# 2~3문장 요약이라 실제 출력은 수백 토큰이다. 잘리면(_reject_if_truncated) 저장하지 않는다.
+SUMMARY_MAX_TOKENS = 1024
+SUMMARY_MAX_WORKERS = 5
 
 # stage 1(CVE 판단)을 병렬로 돌릴 워커 수. 너무 높으면 두 가지 문제가 생긴다:
 #   1) 프롬프트 캐시가 아직 안 만들어진 상태에서 여러 요청이 동시에 도착하면 각자 따로
@@ -262,6 +271,23 @@ class TokenUsageTracker:
                 f"cache_read={self.cache_read_tokens} cache_creation={self.cache_creation_tokens}")
 
 
+@dataclass
+class CveSummaryTarget:
+    """요약할 CVE 하나. description_hash는 자바가 준 값을 그대로 되돌려준다(어느 설명을 요약했는지의 기준)."""
+
+    cve_id: str
+    description: str
+    description_hash: str
+
+    @staticmethod
+    def from_json(data: dict) -> "CveSummaryTarget":
+        return CveSummaryTarget(
+            cve_id=data["cveId"],
+            description=data["description"],
+            description_hash=data["descriptionHash"],
+        )
+
+
 class CveMonitorClient:
     """자바 백엔드의 /api/ai/** 와 통신하는 클라이언트."""
 
@@ -314,6 +340,29 @@ class CveMonitorClient:
                 "reasoning": plan.reasoning,
             },
             timeout=60,
+        )
+        response.raise_for_status()
+
+
+    def fetch_pending_summaries(self) -> list[CveSummaryTarget]:
+        response = requests.get(
+            f"{self._base_url}/api/ai/summaries/pending",
+            headers=self._headers,
+            timeout=30,
+        )
+        response.raise_for_status()
+        return [CveSummaryTarget.from_json(item) for item in response.json()]
+
+    def submit_summary(self, target: CveSummaryTarget, summary: str) -> None:
+        response = requests.post(
+            f"{self._base_url}/api/ai/summaries",
+            headers=self._headers,
+            json={
+                "cveId": target.cve_id,
+                "summary": summary,
+                "descriptionHash": target.description_hash,
+            },
+            timeout=30,
         )
         response.raise_for_status()
 
@@ -465,6 +514,44 @@ dependency:tree 텍스트를 다시 눈으로 훑어서 경로를 재구성하�
         )
 
 
+class DescriptionSummarizerClient:
+    """stage 3: NVD 영어 설명을 한국어 2~3문장으로 요약한다.
+
+    Haiku 4.5에는 effort(output_config.effort)를 넘기면 오류가 나고, thinking은 안 넘기면 꺼진 채로 돈다 —
+    요약에는 둘 다 필요 없어서 아무것도 넘기지 않는다. 출력이 JSON이 아니라 요약 문장 하나라
+    Structured Outputs도 쓰지 않는다. 시스템 프롬프트가 짧아 캐시 최소 길이에 못 미치므로 캐시도 붙이지 않는다.
+    """
+
+    def __init__(self, api_key: Optional[str] = None, model: str = SUMMARY_MODEL):
+        self._client = anthropic.Anthropic(api_key=api_key or os.environ["ANTHROPIC_API_KEY"])
+        self._model = model
+        self.usage = TokenUsageTracker()
+
+    def summarize(self, target: CveSummaryTarget) -> str:
+        response = self._client.messages.create(
+            model=self._model,
+            max_tokens=SUMMARY_MAX_TOKENS,
+            system=load_prompt(SUMMARIZE_SYSTEM),
+            messages=[{"role": "user", "content": f"- CVE ID: {target.cve_id}\n- 설명: {target.description}"}],
+        )
+        self.usage.record(target.cve_id, response.usage)
+        _reject_if_truncated(response, SUMMARY_MAX_TOKENS)
+        summary = _extract_text(response).strip()
+        if not summary:
+            raise ValueError("요약 응답이 비어 있습니다.")
+        return summary
+
+
+def _summarize_one(summarizer: "DescriptionSummarizerClient", backend: "CveMonitorClient",
+                   target: CveSummaryTarget) -> tuple[CveSummaryTarget, Optional[Exception]]:
+    """_assess_one과 같은 이유로 예외를 잡아서 돌려준다 — 한 건 실패가 나머지 요약을 막지 않도록."""
+    try:
+        backend.submit_summary(target, summarizer.summarize(target))
+        return target, None
+    except Exception as e:
+        return target, e
+
+
 def _assess_one(ai_client: "VulnAssessorClient", backend: "CveMonitorClient",
                  ctx: DependencyContext) -> tuple[DependencyContext, Optional[VulnAssessment], Optional[Exception]]:
     """CVE 하나를 판단하고 저장한다. 병렬 실행 시 스레드에서 그대로 호출되므로
@@ -525,6 +612,21 @@ def main() -> None:
             skipped_apps.append((target.system_name, str(e)))
             print(f"[{target.system_name}] fix-plan 생성 실패, 건너뜀: {e}")
 
+    # stage 3: 설명 요약. 앞 단계와 무관한 작업이라 앞 단계가 일부 실패했어도 그대로 진행한다.
+    summary_targets = backend.fetch_pending_summaries()
+    summarizer = DescriptionSummarizerClient()
+    print(f"설명 요약할 CVE {len(summary_targets)}건")
+
+    skipped_summaries: list[tuple[str, str]] = []
+    if summary_targets:
+        with ThreadPoolExecutor(max_workers=SUMMARY_MAX_WORKERS) as executor:
+            futures = [executor.submit(_summarize_one, summarizer, backend, t) for t in summary_targets]
+            for future in as_completed(futures):
+                target, err = future.result()
+                if err is not None:
+                    skipped_summaries.append((target.cve_id, str(err)))
+                    print(f"[{target.cve_id}] 요약 실패, 건너뜀: {err}")
+
     # 한 화면 가득 스크롤한 로그 사이에서 실패 건만 놓치지 않도록 끝에 다시 요약해서 보여준다.
     print()
     print("=== 요약 ===")
@@ -534,16 +636,21 @@ def main() -> None:
     print(f"fix-plan 생성: 성공 {len(fix_plan_targets) - len(skipped_apps)}건 / 건너뜀 {len(skipped_apps)}건")
     for system_name, reason in skipped_apps:
         print(f"  - {system_name}: {reason}")
+    print(f"설명 요약: 성공 {len(summary_targets) - len(skipped_summaries)}건 / 건너뜀 {len(skipped_summaries)}건")
+    for cve_id, reason in skipped_summaries:
+        print(f"  - {cve_id}: {reason}")
 
     print()
     print("=== 토큰 사용량 ===")
     print(f"CVE 판단: {ai_client.usage.summary()}")
     print(f"fix-plan: {fix_plan_client.usage.summary()}")
+    # 설명 요약은 모델(Haiku)이 달라 단가가 다르므로 합계에 섞지 않고 따로 본다.
+    print(f"설명 요약({SUMMARY_MODEL}): {summarizer.usage.summary()}")
     total_input = ai_client.usage.input_tokens + fix_plan_client.usage.input_tokens
     total_output = ai_client.usage.output_tokens + fix_plan_client.usage.output_tokens
     total_cache_read = ai_client.usage.cache_read_tokens + fix_plan_client.usage.cache_read_tokens
     total_cache_creation = ai_client.usage.cache_creation_tokens + fix_plan_client.usage.cache_creation_tokens
-    print(f"합계: input={total_input} output={total_output} "
+    print(f"합계({MODEL}): input={total_input} output={total_output} "
           f"cache_read={total_cache_read} cache_creation={total_cache_creation}")
 
 

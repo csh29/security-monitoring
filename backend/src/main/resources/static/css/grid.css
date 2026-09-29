@@ -61,3 +61,7 @@
    고정하고 상하 padding은 뺀다(글자는 select가 세로 가운데 정렬한다). */
 .grid td select{ height:31px; padding-top:0; padding-bottom:0; }
 .grid td input:focus, .grid td select:focus{ outline:none; border-color:var(--accent); background:#fff; }
+
+/* 행 안의 버튼(취약점 조회 "스캔", 취약점 관리 "상세보기"). 행 높이(32px)를 넘지 않게 셀 높이에 맞추고
+   폭을 고정한다 — 화면마다 따로 적던 것을 두 번째 화면이 생기면서 여기로 올렸다. */
+.grid .grid-btn{ padding:0; height:100%; width:60px; }

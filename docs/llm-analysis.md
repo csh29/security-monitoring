@@ -21,10 +21,11 @@ Git 저장소(Maven 프로젝트)를 clone → 의존성 추출 → 취약점 DB
 | 모듈 | 역할 |
 | --- | --- |
 | `backend/` | Spring Boot 3.3.4 / Java 17 / Maven. 서버 + 화면(Thymeleaf) 전부 |
-| `ai/` | 파이썬 배치(`vuln_assessor.py`). 스캔이 끝나면 할 일이 있을 때 서버가 띄우고(`AiAssessmentTriggerService`, 아래 4장), 사람이 직접 실행해도 된다. 어느 쪽이든 **배치가 드라이버다** — 배치가 `/api/ai/**`를 호출해 대기 중인 취약점·fix-plan을 스스로 가져가고 결과를 되돌려준다. 자바는 띄우기만 하고 결과를 기다리지 않는다 |
+| `ai/` | 파이썬 배치(`vuln_assessor.py`). 스캔이 끝나면 할 일이 있을 때 서버가 띄우고(`AiAssessmentTriggerService`, 아래 4장), 사람이 직접 실행해도 된다. 어느 쪽이든 **배치가 드라이버다** — 배치가 `/api/ai/**`를 호출해 대기 중인 취약점·fix-plan·설명 요약을 스스로 가져가고 결과를 되돌려준다. 자바는 띄우기만 하고 결과를 기다리지 않는다 |
 
 DB는 H2 in-memory(`ddl-auto=update`)다. **재기동하면 데이터가 사라지고** `DataInitializer`가
 초기 데이터를 다시 심는다 — "DB에 있던 값이 없어졌다"는 현상을 버그로 오해하지 않는다.
+초기 데이터에는 CRM_BACK 앱의 샘플 취약점 2건(설명이 `[샘플]`로 시작)이 있고, AI 배치가 잡지 않도록 판단 결과와 설명 요약(`CveSummary`)이 미리 채워져 있다.
 
 ---
 
@@ -59,8 +60,8 @@ com.sjinc.cvemonitor
 5. `VulnerabilityService.upsertEntity` → NVD 보강 + 결정론 판정 + 저장
 6. `resolveMissingVulnerabilities` → 이번 스캔에 안 걸린 기존 OPEN 건을 RESOLVED로 표시
 7. `ScanSnapshot` 저장 (fix-plan이 나중에 참고할 pom.xml + tree 원문)
-8. `triggerAiAssessmentIfNeeded` → AI 판단 대기(`getUnassessedVulnerabilities`)나 fix-plan 대기
-   (`getPendingFixPlanTargets`)가 하나라도 있으면 `AiAssessmentTriggerService.triggerAsync()`로 파이썬
+8. `triggerAiAssessmentIfNeeded` → AI 판단 대기(`getUnassessedVulnerabilities`), fix-plan 대기
+   (`getPendingFixPlanTargets`), 설명 요약 대기(`CveSummaryService.getPendingSummaryTargets`)가 하나라도 있으면 `AiAssessmentTriggerService.triggerAsync()`로 파이썬
    배치를 백그라운드로 띄운다(fire-and-forget, 이미 떠 있으면 건너뜀). "새 CVE가 저장됐는가"가 아니라
    배치가 가져갈 대기열로 판단한다 — 새 CVE가 결정론 자동판정으로 끝나면 AI가 볼 게 없고, 새 CVE가
    없어도 스냅샷이 갱신되면 fix-plan은 다시 대기가 된다. 배치는 Claude API를 호출하므로(과금) 스캔마다
@@ -95,6 +96,20 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
 
 AI에게 넘기는 근거도 마찬가지다. OSV에서 뽑은 `knownFixedVersions`가 있으면 AI가 설명 프로즈를
 다시 해석해 유추하지 않도록 그 값을 최우선으로 쓰게 한다.
+
+### 설명 요약 — 판정과 별개인 3단계
+
+배치의 마지막 단계(stage 3)가 NVD 영어 설명을 한국어 2~3문장으로 요약해 `CveSummary`에 저장한다(`prompts/summarize.system.md`).
+판정이 아니라 화면(취약점 관리 상세보기)에서 읽기 위한 것이라 판정과 조건이 전부 다르다.
+
+- **모델:** `SUMMARY_MODEL = claude-haiku-4-5` (판정·fix-plan은 `MODEL`). effort·thinking·structured output 없이 문장만 받는다.
+- **대상:** 등급·판정·상태와 무관하게 설명이 있는 모든 CVE. **단위는 CVE ID** — `Vulnerability` 행이 아니다(같은 CVE가 여러 행이라
+  행마다 두면 같은 문장을 여러 번 요약해 과금된다).
+- **재요약 기준:** 요약한 설명의 SHA-256(`descriptionHash`)과 현재 설명의 해시가 다를 때만. `nvdLastModified`는 설명과 무관한
+  NVD 수정에도 바뀌어서 쓰지 않는다. 같은 CVE의 행마다 설명이 다르면 `nvdLastModified`가 가장 최근인 행의 설명을 쓴다.
+- **API:** `GET /api/ai/summaries/pending`, `POST /api/ai/summaries`(해시는 pending에서 받은 값을 그대로 되돌려준다).
+  빈 요약·1000자 초과·미등록 CVE는 400으로 거절한다.
+- 화면 조회(`VulnerabilityService.getVulnerabilities`)가 CVE ID로 요약을 붙여 `VulnerabilityInfo.descriptionSummary`로 내려준다.
 
 ### 판정 결과가 이상할 때 보는 필드
 
@@ -141,7 +156,7 @@ OPEN만)에서도 빠진다.
 | 파일 | 역할 |
 | --- | --- |
 | `/css/common-ui.css` | `:root` 변수, `.app-shell`, `.btn`, `.panel-head`, `.page-toolbar`, 모달(`.modal-backdrop`+`.open` / `.modal` / `.modal-actions`) 등 페이지 뼈대. 화면 공통 버튼은 항상 우측 상단 — 제목과 한 줄이면 `.panel-head`, 조회조건 영역이 있으면 그 위에 `.page-toolbar` |
-| `/css/grid.css` | `.grid` 공통 모양. 헤더 높이(45px)와 본문 행 높이(32px)를 모든 그리드에서 고정한다 — 화면 `<style>`에서 행 높이를 덮어쓰지 않는다. 헤더는 `position:sticky`라 세로 스크롤 때 고정된다 |
+| `/css/grid.css` | `.grid` 공통 모양. 헤더 높이(45px)와 본문 행 높이(32px)를 모든 그리드에서 고정한다 — 화면 `<style>`에서 행 높이를 덮어쓰지 않는다. 헤더는 `position:sticky`라 세로 스크롤 때 고정된다. 행 안의 버튼(취약점 조회 스캔, 취약점 관리 상세보기)은 `.btn.grid-btn` |
 | `/js/grid.js` | 컬럼 정의(`COLUMNS`)로 헤더·행·입력 셀까지 만드는 공통 그리드 렌더러. `renderHeader`가 tbody의 첫 안내 행("조회 중입니다...", colspan 자동)도 넣으므로 템플릿의 `<tbody>`는 비워 둔다. 행 데이터는 `getRows`/`getRow`(원본 row + 입력 셀 현재 값, `_rowIndex`/`_isNew`/`_selected`)로 읽고 `onRowClick(tr, row)`도 같은 값을 받는다. select 컬럼에 `display(value, label, row)`를 주면 평소엔 그 결과(뱃지 등)를 보여주고 셀을 누를 때만 select로 바뀐다(취약점 관리 처리여부). 또 table을 `.grid-scroll`로 감싸고 숫자 `width`를 최소 폭으로도 적용해, 화면보다 넓으면 가로 스크롤이 생긴다. `.grid-scroll`의 세로 한도(`max-height`)는 grid.js가 "그 영역 시작 위치부터 화면 아래 끝까지"로 계산해 넣어(헤더·행을 그릴 때, 창 크기 변경 때), 행이 많으면 페이지가 아니라 그리드 본문만 스크롤된다(최소 200px). 화면이 스크롤 영역을 직접 둔 경우(`.grid-wrap`, 취약점 관리)는 감싸지 않는다 |
 | `/js/com-cd.js` | 공통코드로 select 옵션 채우기(그룹당 1회 캐시) |
 | `/js/tabs.js` | 홈 화면 탭 |
@@ -193,7 +208,7 @@ OPEN만)에서도 빠진다.
 | `nvd.api.timeout-seconds` | NVD 호출 1회 타임아웃(기본 20) |
 | `git.access.token` / `git.user.name` | 스캔 대상 저장소 clone |
 | `maven.home` | `dependency:tree` 실행용 Maven 홈 |
-| `claude.api.key` | AI 판단 / fix-plan |
+| `claude.api.key` | AI 판단 / fix-plan / 설명 요약 |
 | `ai.internal.token` | 자바 ↔ 파이썬 배치 인증 (`CVE_MONITOR_AI_TOKEN`과 같은 값) |
 | `ai.python.command` | 파이썬 실행 명령 (이 PC는 `py`) |
 | `ai.assessor.script` | 배치 스크립트 경로 (`../ai/vuln_assessor.py`) |
@@ -215,6 +230,7 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `VulnerabilityTest` — 엔티티 규칙
 - `RepoUrlValidatorTest` — 앱 등록 저장소 URL 허용/거부 판정
 - `UserServiceTest` — 본인 비밀번호 변경 검증(현재 비밀번호 확인, 빈 값·동일 값 거부)
+- `CveSummaryServiceTest` — 설명 요약 대기 판단(CVE ID 단위, 해시 비교, 최신 설명 선택)과 저장 검증
 
 즉 **컨트롤러·보안·화면에는 자동 테스트가 없다.** 그 영역의 변경을 분석할 때 "테스트가 통과했으니
 안전하다"고 결론 내리지 않는다.
@@ -228,4 +244,5 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 
 - `assess.system.md` — CVE 개별 판단
 - `fix_plan.system.md` — pom.xml 수정안
+- `summarize.system.md` — NVD 설명 한국어 요약(stage 3, Haiku). 규칙이 다른 프롬프트와 겹치지 않아 `rules/`를 include하지 않는다
 - `rules/` — `false_positives.md`, `maven_strategy.md`, `version_matching.md`
