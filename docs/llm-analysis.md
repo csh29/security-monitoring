@@ -217,7 +217,7 @@ OPEN만)에서도 빠진다.
 | `ai.assessment.severities` | AI 판단 대상 등급 (기본 `HIGH,CRITICAL`) |
 | `scan.allowed-repo-hosts` | 앱 등록을 허용할 저장소 호스트 목록(쉼표 구분, 기본 `git.sejung.co.kr`). 다른 호스트를 쓰게 되면 여기서 늘린다 |
 
-AI 배치 실행 로그는 `backend/ai-assessor.log`에 쌓인다(gitignore 대상).
+AI 배치 실행 로그는 `backend/ai-assessor.log`에 이어 쌓인다(gitignore 대상). 줄마다 `[YYYY-MM-DD HH:MM:SS][traceId]`가 붙는다(`_TimestampedStream`, traceback 포함). traceId는 실행마다 하나 — 서버가 띄우면 `AiAssessmentTriggerService`가 만들어 `CVE_MONITOR_TRACE_ID`로 넘기고 서버 로그의 "배치 실행 시작/종료" 줄에도 찍는다(사람이 직접 돌리면 파이썬이 만든다). 실행마다 `===== AI 배치 시작 =====` / `===== AI 배치 종료(exit=N) =====` 줄과 끝의 빈 줄이 남는다. 서버가 `PYTHONIOENCODING=utf-8`로 띄워 로그는 UTF-8이다(예전엔 윈도우 기본 cp949라 IDE에서 한글이 깨졌다).
 
 ---
 

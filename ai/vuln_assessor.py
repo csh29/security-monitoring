@@ -16,9 +16,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import threading
+import traceback
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Optional
 
 import anthropic
@@ -706,5 +710,60 @@ def main() -> None:
           f"cache_read={total_cache_read} cache_creation={total_cache_creation}")
 
 
+_LOG_LOCK = threading.Lock()
+
+
+class _TimestampedStream:
+    """줄마다 앞에 "[YYYY-MM-DD HH:MM:SS][traceId] "를 붙여 쓰는 stdout/stderr 대체.
+
+    서버가 이 배치의 표준출력·표준에러를 ai-assessor.log 하나에 이어 붙이는데(AiAssessmentTriggerService),
+    시각이 없으면 어느 호출이 오래 걸렸는지 볼 수 없고, 실행 구분이 빈 줄뿐이면 로그 중간의 줄이 어느 실행
+    것인지 알 수 없었다. traceId는 실행마다 하나라 grep으로 한 실행만 골라낼 수 있다. print를 전부 바꾸지 않고
+    스트림에서 붙이므로 예외 traceback 줄에도 같이 붙는다. 빈 줄은 구분용이라 아무것도 붙이지 않는다.
+
+    print는 본문과 줄바꿈을 따로 write하므로, 병렬로 도는 스레드끼리 한 줄이 섞이지 않게 스레드별로 한 줄을
+    다 모은 뒤 락을 잡고 한 번에 쓴다.
+    """
+
+    def __init__(self, stream, trace_id: str):
+        self._stream = stream
+        self._trace_id = trace_id
+        self._local = threading.local()
+
+    def write(self, text: str) -> int:
+        *lines, rest = (getattr(self._local, "pending", "") + text).split("\n")
+        self._local.pending = rest
+        if lines:
+            prefix = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][{self._trace_id}] "
+            out = "".join(f"{prefix}{line}\n" if line.strip() else "\n" for line in lines)
+            with _LOG_LOCK:
+                self._stream.write(out)
+                self._stream.flush()
+        return len(text)
+
+    def flush(self) -> None:
+        self._stream.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
 if __name__ == "__main__":
-    main()
+    # 서버가 띄우면 CVE_MONITOR_TRACE_ID를 넘기고 서버 로그의 "배치 실행 시작" 줄에도 같은 값을 찍는다 — 두 로그를
+    # 이 값으로 서로 찾아간다. 사람이 직접 돌리면 없으므로 여기서 만든다.
+    trace_id = os.environ.get("CVE_MONITOR_TRACE_ID") or uuid.uuid4().hex[:8]
+    sys.stdout = _TimestampedStream(sys.stdout, trace_id)
+    sys.stderr = _TimestampedStream(sys.stderr, trace_id)
+    print("===== AI 배치 시작 =====")
+    exit_code = 0
+    try:
+        main()
+    except Exception:
+        # 인터프리터가 종료하면서 찍게 두면 아래 구분용 빈 줄보다 traceback이 뒤에 붙는다 — 직접 찍고 종료 코드를 지킨다
+        # (서버가 종료 코드로 성공/실패를 기록한다: AiAssessmentTriggerService.lastExitCode).
+        traceback.print_exc()
+        exit_code = 1
+    print(f"===== AI 배치 종료(exit={exit_code}) =====")
+    # 같은 로그 파일에 실행이 계속 이어 붙으므로, 실행 끝마다 빈 줄을 하나 더 넣어 다음 실행과 구분한다.
+    print()
+    sys.exit(exit_code)

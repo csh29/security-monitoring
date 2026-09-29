@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import java.io.File;
 import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 /**
  * 스캔이 새 CVE를 DB에 저장한 직후, 파이썬 AI 판단 배치(ai/vuln_assessor.py)를 백그라운드로 띄운다.
@@ -59,9 +60,15 @@ public class AiAssessmentTriggerService {
             // 블록 버퍼링을 해서, 프로세스가 끝나거나 버퍼가 다 찰 때까지 ai-assessor.log에 아무것도
             // 안 쌓인 것처럼 보인다. 실시간으로 로그를 확인할 수 있도록 무버퍼 모드로 띄운다.
             ProcessBuilder processBuilder = new ProcessBuilder(pythonCommand, "-u", assessorScriptPath);
+            // 배치 로그 줄마다 붙는 실행 ID. 아래 "배치 실행 시작" 서버 로그에도 같은 값을 찍어 두 로그를 서로 찾아가게 한다.
+            String traceId = UUID.randomUUID().toString().substring(0, 8);
             processBuilder.environment().put("ANTHROPIC_API_KEY", claudeApiKey);
             processBuilder.environment().put("CVE_MONITOR_AI_TOKEN", internalToken);
             processBuilder.environment().put("CVE_MONITOR_BASE_URL", "http://localhost:" + serverPort);
+            processBuilder.environment().put("CVE_MONITOR_TRACE_ID", traceId);
+            // 출력이 파일로 리다이렉트되면 파이썬은 윈도우 기본 인코딩(cp949)으로 쓴다. IDE는 ai-assessor.log를 UTF-8로
+            // 열어서(.idea/encodings.xml) 한글이 전부 깨져 보였다 — UTF-8로 쓰게 맞춘다.
+            processBuilder.environment().put("PYTHONIOENCODING", "utf-8");
             processBuilder.redirectErrorStream(true);
             processBuilder.redirectOutput(ProcessBuilder.Redirect.appendTo(new File("ai-assessor.log")));
 
@@ -73,10 +80,10 @@ public class AiAssessmentTriggerService {
             process.onExit().thenAccept(finished -> {
                 lastExitCode = finished.exitValue();
                 lastFinishedAt = LocalDateTime.now();
-                log.info("AI 판단 배치 종료: exitCode={}", lastExitCode);
+                log.info("AI 판단 배치 종료(traceId={}): exitCode={}", traceId, lastExitCode);
             });
 
-            log.info("AI 판단 배치 실행 시작: {} {}", pythonCommand, assessorScriptPath);
+            log.info("AI 판단 배치 실행 시작(traceId={}): {} {}", traceId, pythonCommand, assessorScriptPath);
         } catch (IOException e) {
             // 파이썬/스크립트를 못 띄워도 스캔 결과 저장 자체는 이미 끝났으므로 스캔을 실패시키지 않는다.
             log.warn("AI 판단 배치 실행 실패 (스캔 결과 저장에는 영향 없음): {}", e.getMessage());
