@@ -78,6 +78,15 @@
  *                       클릭한 행은 render()가 자동으로 'current' 클래스를 붙여 강조 표시하므로,
  *                       공통코드관리 화면처럼 "행을 클릭하면 우측에 상세를 보여준다" 같은 동작만
  *                       이 콜백에 얹으면 된다.
+ *
+ * 모든 그리드 공통(화면이 따로 할 일 없음):
+ *   - 셀을 클릭하면(엔터·방향키로 옮겨 가도) 그 셀에 'cell-current' 테두리가 표시된다.
+ *   - 데이터 셀 우클릭 메뉴: 셀 복사 / 행 복사(탭 구분 — 엑셀에 붙여넣으면 칸별로 나뉜다) / 엑셀 다운로드
+ *     (지금 그려진 행 전체를 .xlsx로, /js/xlsx-writer.js). 값은 화면에 보이는 값이다 — 입력 셀은 현재 입력값,
+ *     select는 옵션 이름. id가 없는 컬럼(행 선택 체크박스, 버튼 열)은 행 복사·엑셀에서 빠진다.
+ *     입력 셀(에디터) 위에서도 같은 메뉴가 뜨고, 우클릭으로는 입력칸에 커서가 들어가지 않는다.
+ *   - 헤더(th)를 끌어다 놓으면 컬럼 순서가 바뀐다. 화면이 넘긴 컬럼 배열 자체를 제자리에서 바꾸므로 다시 조회해도
+ *     유지되고(새로고침하면 원래 순서), 그려진 행은 다시 그리지 않고 셀만 옮긴다. 엔터·방향키 이동 순서도 따라간다.
  */
 (function (global) {
     /**
@@ -262,10 +271,15 @@
             }
             applyColumnStyle(th, col, true);
             th.textContent = col.label || '';
+            th.draggable = true;
             tr.appendChild(th);
         });
 
         thead.appendChild(tr);
+        thead._gridColumns = columns; // 헤더 드래그로 컬럼 순서를 바꿀 때 쓴다(moveColumn)
+        if (!thead._gridDragBound) {
+            bindColumnDrag(thead);
+        }
 
         const table = thead.closest('table');
         const tbody = table && table.tBodies[0];
@@ -276,6 +290,112 @@
             clearAndAppendMessage(tbody, columns.length, options.initialMessage || DEFAULT_INITIAL_MESSAGE);
         }
         scheduleFitScrollHeights();
+    }
+
+    // ── 헤더 드래그로 컬럼 순서 바꾸기 ─────────────────────────────────────
+
+    /** tr 안에서 from번째 셀을 to번째 자리로 옮긴다(to는 from을 뺀 뒤 기준 위치). */
+    function moveCell(tr, from, to) {
+        const cell = tr.cells[from];
+        if (!cell) {
+            return;
+        }
+        cell.remove();
+        tr.insertBefore(cell, tr.cells[to] || null);
+    }
+
+    /**
+     * 컬럼 하나를 from → to로 옮긴다. 화면이 넘긴 컬럼 정의 배열 자체를 제자리에서 바꾸는 게 핵심이다 — 화면은 같은
+     * COLUMNS를 다시 조회(render)·신규(addRow)에도 그대로 넘기므로, 한 번 옮긴 순서가 그 화면을 떠날 때까지 유지된다.
+     * 이미 그려진 행은 다시 그리지 않고 셀만 옮긴다(입력 중인 값이 날아가지 않게). 새로고침하면 원래 순서로 돌아간다.
+     */
+    function moveColumn(thead, from, to) {
+        if (from === to) {
+            return;
+        }
+        const table = thead.closest('table');
+        const tbody = table && table.tBodies[0];
+        // 헤더와 행이 같은 배열을 쓰는 게 보통이지만, 다른 배열이면 둘 다 같은 순서로 맞춘다.
+        [thead._gridColumns, tbody && tbody._gridColumns]
+            .filter(function (columns, i, all) { return columns && all.indexOf(columns) === i; })
+            .forEach(function (columns) {
+                columns.splice(to, 0, columns.splice(from, 1)[0]);
+            });
+
+        moveCell(thead.rows[0], from, to);
+        if (tbody) {
+            dataRows(tbody).forEach(function (tr) {
+                moveCell(tr, from, to);
+                // 엔터·방향키 이동 순서(왼쪽→오른쪽)도 새 화면 순서를 따르게 다시 정렬한다.
+                if (tr._orderedFields) {
+                    tr._orderedFields.sort(function (a, b) {
+                        return a.closest('td').cellIndex - b.closest('td').cellIndex;
+                    });
+                }
+            });
+        }
+    }
+
+    /** 헤더(th) 드래그앤드롭. 놓을 자리는 마우스가 대상 th의 왼쪽/오른쪽 절반 중 어디에 있는지로 정하고 선으로 보여준다. */
+    function bindColumnDrag(thead) {
+        let from = -1;
+
+        function clearMarks() {
+            Array.from(thead.querySelectorAll('th')).forEach(function (th) {
+                th.classList.remove('drag-before', 'drag-after', 'dragging');
+            });
+        }
+
+        /** 드롭하면 들어갈 위치(옮기기 전 기준 0..n). 대상 th가 아니면 -1. */
+        function dropPosition(e) {
+            const th = e.target.closest('th');
+            if (!th || th.parentElement.parentElement !== thead) {
+                return { th: null, pos: -1 };
+            }
+            const rect = th.getBoundingClientRect();
+            const before = e.clientX < rect.left + rect.width / 2;
+            return { th: th, before: before, pos: th.cellIndex + (before ? 0 : 1) };
+        }
+
+        thead.addEventListener('dragstart', function (e) {
+            const th = e.target.closest('th');
+            if (!th) {
+                return;
+            }
+            from = th.cellIndex;
+            th.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', ''); // Firefox는 데이터를 넣어야 드래그가 시작된다
+        });
+        thead.addEventListener('dragover', function (e) {
+            if (from < 0) {
+                return; // 다른 그리드나 바깥에서 끌어온 것은 받지 않는다
+            }
+            const target = dropPosition(e);
+            if (!target.th) {
+                return;
+            }
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            Array.from(thead.querySelectorAll('th')).forEach(function (th) {
+                th.classList.toggle('drag-before', th === target.th && target.before);
+                th.classList.toggle('drag-after', th === target.th && !target.before);
+            });
+        });
+        thead.addEventListener('drop', function (e) {
+            const target = dropPosition(e);
+            if (from >= 0 && target.pos >= 0) {
+                e.preventDefault();
+                moveColumn(thead, from, target.pos > from ? target.pos - 1 : target.pos);
+            }
+            clearMarks();
+            from = -1;
+        });
+        thead.addEventListener('dragend', function () {
+            clearMarks();
+            from = -1;
+        });
+        thead._gridDragBound = true;
     }
 
     function clearAndAppendMessage(tbody, colspan, message) {
@@ -538,9 +658,179 @@
         return tr;
     }
 
+    // ── 셀 선택 · 우클릭 메뉴(셀 복사 / 행 복사 / 엑셀 다운로드) ─────────────────────
+
+    /** 클릭(또는 엔터·방향키로 포커스가 옮겨 간) 셀을 그 tbody 안에서 유일한 'cell-current'로 만든다(테두리 표시). */
+    function markCellCurrent(tbody, td) {
+        const previous = tbody.querySelector('td.cell-current');
+        if (previous && previous !== td) {
+            previous.classList.remove('cell-current');
+        }
+        td.classList.add('cell-current');
+    }
+
+    /** 복사·엑셀에 넣는 컬럼 — 값이 있는(col.id) 컬럼만. 행 선택 체크박스와 버튼 열(상세보기·스캔)은 뺀다. */
+    function isExportColumn(col) {
+        return !!col.id && col.type !== 'row-select';
+    }
+
     /**
-     * tbody 하나에 한 번만 붙는 클릭 위임 — 실제 데이터 행(빈 메시지 행 제외)을 클릭하면 다른
-     * 행의 'current'는 지우고 클릭한 행에만 붙인 뒤 options.onRowClick(tr)을 호출한다.
+     * 셀 하나의 "화면에 보이는 값". 입력 셀은 원본이 아니라 지금 입력된 값이고, select는 코드값 대신
+     * 옵션 이름(예: OPEN이 아니라 미해결)이다 — 복사해서 붙여넣거나 엑셀로 받는 사람이 읽을 값이기 때문이다.
+     */
+    function cellText(tr, colIndex) {
+        const col = tr._gridColumns[colIndex];
+        const field = col.id && tr._fields ? tr._fields[col.id] : null;
+        if (field) {
+            if (col.type === 'checkbox') {
+                return field.checked ? 'Y' : 'N';
+            }
+            if (col.type === 'select') {
+                const option = field.options[field.selectedIndex];
+                return option ? option.textContent : field.value;
+            }
+            return field.value.trim();
+        }
+        const td = tr.cells[colIndex];
+        return td ? td.textContent.trim() : '';
+    }
+
+    /** 행 하나를 탭으로 구분한 한 줄로 — 엑셀에 붙여넣으면 칸별로 나뉜다. 값 안의 탭·줄바꿈은 칸이 밀리지 않게 공백으로. */
+    function rowTsv(tr) {
+        return tr._gridColumns
+            .map(function (col, i) { return isExportColumn(col) ? cellText(tr, i).replace(/[\t\r\n]+/g, ' ') : null; })
+            .filter(function (v) { return v !== null; })
+            .join('\t');
+    }
+
+    /**
+     * 클립보드에 쓴다. navigator.clipboard는 https나 localhost에서만 열려서, 사내 IP(http)로 접속하면 없다 —
+     * 그때는 숨긴 textarea를 선택해 execCommand('copy')로 복사한다.
+     */
+    function copyText(text) {
+        if (global.navigator.clipboard && global.isSecureContext) {
+            return global.navigator.clipboard.writeText(text);
+        }
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const ok = document.execCommand('copy');
+        textarea.remove();
+        return ok ? Promise.resolve() : Promise.reject(new Error('복사에 실패했습니다.'));
+    }
+
+    /** 파일명: 화면 제목(<title>의 " · " 앞부분) + 오늘 날짜. 예: 취약점 관리_20260929.xlsx */
+    function exportFileName() {
+        const title = (document.title.split(' · ')[0] || 'grid').trim();
+        const d = new Date();
+        const ymd = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+        return title + '_' + ymd + '.xlsx';
+    }
+
+    /** 그리드에 지금 그려진 행 전체(조회조건으로 걸러진 결과 그대로, 입력 중인 값 포함)를 엑셀로 내려받는다. */
+    function downloadExcel(tbody) {
+        const columns = tbody._gridColumns || [];
+        const indexes = [];
+        columns.forEach(function (col, i) { if (isExportColumn(col)) indexes.push(i); });
+        global.XlsxWriter.download(exportFileName(), {
+            sheetName: document.title.split(' · ')[0],
+            headers: indexes.map(function (i) { return columns[i].label || columns[i].id; }),
+            widths: indexes.map(function (i) { return columns[i].width; }),
+            rows: dataRows(tbody).map(function (tr) {
+                return indexes.map(function (i) { return cellText(tr, i); });
+            })
+        });
+    }
+
+    let contextMenu = null;
+
+    function hideContextMenu() {
+        if (contextMenu) {
+            contextMenu.style.display = 'none';
+        }
+    }
+
+    /** 페이지에 하나만 두고 그리드마다 같이 쓴다. 항목 동작은 열 때마다 그 셀·행 기준으로 다시 건다. */
+    function ensureContextMenu() {
+        if (contextMenu) {
+            return contextMenu;
+        }
+        contextMenu = document.createElement('ul');
+        contextMenu.className = 'grid-context-menu';
+        contextMenu.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+        document.body.appendChild(contextMenu);
+
+        // 메뉴 밖을 누르거나, Esc·스크롤·창 크기 변경이 있으면 닫는다(스크롤하면 메뉴만 엉뚱한 자리에 남는다).
+        document.addEventListener('mousedown', function (e) {
+            if (!contextMenu.contains(e.target)) hideContextMenu();
+        });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') hideContextMenu();
+        });
+        document.addEventListener('scroll', hideContextMenu, true);
+        global.addEventListener('resize', hideContextMenu);
+        global.addEventListener('blur', hideContextMenu);
+        return contextMenu;
+    }
+
+    function showContextMenu(x, y, items) {
+        const menu = ensureContextMenu();
+        menu.innerHTML = '';
+        items.forEach(function (item) {
+            const li = document.createElement('li');
+            li.textContent = item.label;
+            li.addEventListener('click', function () {
+                hideContextMenu();
+                Promise.resolve()
+                    .then(item.action)
+                    .catch(function (err) { alert(err.message || '실행에 실패했습니다.'); });
+            });
+            menu.appendChild(li);
+        });
+        menu.style.display = 'block';
+        // 화면 오른쪽·아래 끝에서 열면 메뉴가 잘리므로 안쪽으로 밀어 넣는다.
+        const rect = menu.getBoundingClientRect();
+        menu.style.left = Math.max(0, Math.min(x, global.innerWidth - rect.width - 4)) + 'px';
+        menu.style.top = Math.max(0, Math.min(y, global.innerHeight - rect.height - 4)) + 'px';
+    }
+
+    /** 이벤트가 난 데이터 셀(td). 안내 문구 행이나 다른 tbody면 null. */
+    function dataCell(tbody, target) {
+        const td = target.closest('td');
+        const tr = td && td.parentElement;
+        return (tr && tr.parentElement === tbody && tr._gridColumns) ? td : null;
+    }
+
+    /**
+     * 데이터 셀 우클릭: 그 셀·행을 선택 표시하고 공통 메뉴를 띄운다. 입력 셀(에디터) 위에서도 똑같이 공통 메뉴다 —
+     * 예전엔 수정 가능한 입력칸에서 브라우저 기본 메뉴를 남겨 뒀는데, 그리드 안에서 셀마다 메뉴가 달라져 헷갈렸다.
+     */
+    function onContextMenu(tbody, e) {
+        const td = dataCell(tbody, e.target);
+        if (!td) {
+            return;
+        }
+        const tr = td.parentElement;
+        e.preventDefault();
+        markCellCurrent(tbody, td);
+        markRowCurrent(tbody, tr);
+
+        const colIndex = Array.prototype.indexOf.call(tr.cells, td);
+        showContextMenu(e.clientX, e.clientY, [
+            { label: '셀 복사', action: function () { return copyText(cellText(tr, colIndex)); } },
+            { label: '행 복사', action: function () { return copyText(rowTsv(tr)); } },
+            { label: '엑셀 다운로드', action: function () { downloadExcel(tbody); } }
+        ]);
+    }
+
+    /**
+     * tbody 하나에 한 번만 붙는 이벤트 위임 — 실제 데이터 행(빈 메시지 행 제외)을 클릭하면 다른
+     * 행의 'current'는 지우고 클릭한 행에만 붙인 뒤 options.onRowClick(tr)을 호출하고, 클릭한 셀에는
+     * 'cell-current' 테두리를 표시한다. 우클릭은 공통 메뉴(onContextMenu)를 띄운다.
      * render()가 매번 tbody.innerHTML을 비우고 다시 그려도, 리스너는 tbody 자체에 달려 있어
      * 다시 붙일 필요가 없다 — 최신 onRowClick 콜백만 tbody에 갱신해둔다.
      */
@@ -550,8 +840,27 @@
             if (!tr || tr.parentElement !== tbody || tr.querySelector(':scope > td.empty')) {
                 return;
             }
+            const td = e.target.closest('td');
+            if (td) {
+                markCellCurrent(tbody, td);
+            }
             markRowCurrent(tbody, tr);
         });
+        // 엔터·방향키로 입력칸 포커스가 다른 셀로 옮겨 가도 테두리가 따라가게 한다.
+        tbody.addEventListener('focusin', function (e) {
+            const td = e.target.closest('td');
+            if (td && td.parentElement && td.parentElement._gridColumns) {
+                markCellCurrent(tbody, td);
+            }
+        });
+        // 우클릭은 브라우저가 mousedown에서 입력칸에 포커스(커서)를 먼저 넣어 편집 상태로 바꿔 버린다.
+        // 메뉴만 띄우려는 동작이라 입력 셀에서는 그 기본 동작을 막는다(값·포커스는 그대로 둔다).
+        tbody.addEventListener('mousedown', function (e) {
+            if (e.button === 2 && e.target.matches('input, select, textarea') && dataCell(tbody, e.target)) {
+                e.preventDefault();
+            }
+        });
+        tbody.addEventListener('contextmenu', function (e) { onContextMenu(tbody, e); });
         tbody._gridClickBound = true;
     }
 

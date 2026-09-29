@@ -57,6 +57,7 @@ py -m pip install -r ../ai/requirements.txt
   **그 화면에서만 다른 값**만 남긴다. 버튼(`.btn`) 크기·그리드 행 높이는 모든 화면 공통이라 화면에서 덮어쓰지 않는다.
 - fetch 호출에 CSRF 헤더나 스피너를 직접 붙이지 않는다 — `loading-overlay` 래퍼가 이미 한다.
 - 새 화면의 첫 줄은 `<section th:replace="~{fragments/page-toolbar :: toolbar}"></section>` 한 줄이다. 공통 버튼(조회/신규/저장/삭제/초기화/기타1~5)은 **마크업에 쓰지 않는다** — 프로그램 관리·사용자별 권한관리 설정대로 서버가 그린다. 화면 JS는 `PageButtons.bind({ btnSearch: ..., btnAdd: ..., btnEtc1: ... })`로만 핸들러를 건다(`getElementById(...).addEventListener`로 걸면 권한 없는 사용자에게서 null 오류로 스크립트가 멈춘다). 단축키(F3/F4/F5/F9/F12)와 `[F3]` 표기는 자동이다.
+- 그리드 복사·엑셀 다운로드는 화면에 만들지 않는다 — `grid.js` 우클릭 메뉴가 모든 그리드에 이미 붙어 있다. 엑셀 파일이 따로 필요하면 `XlsxWriter.download`를 쓰고 CSV를 새로 만들지 않는다.
 - 그리드 `<tbody>`는 비워 둔다. 첫 안내 행은 `Grid.renderHeader`가 넣고, 문구가 다르면 `{ initialMessage }`로 준다.
 - 조회영역은 마크업으로 쓰지 않고 `SearchForm.render`(`/js/search-form.js`)에 필드 정의로 넘긴다 — 그리드의 `COLUMNS`와 같은 방식. 조회조건을 화면에서 거를 때는 필드 id를 행 데이터 키와 맞추고 `list.filter(search.matches)`를 쓴다. `contains` 류 함수를 화면에 다시 만들지 않는다.
 - 버전 비교가 필요하면 → `NvdVersionRangeChecker` / `OsvVersionRangeChecker` / `VersionLineSelector`.

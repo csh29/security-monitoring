@@ -17,15 +17,31 @@
 .grid th:last-child, .grid td:last-child{ border-right:none; }
 /* 헤더는 모든 그리드에서 높이 고정, 좌우 10px, 상하 0 — 화면별 padding 재정의는 td에만 한다.
    헤더 글자는 줄바꿈하지 않고(좁으면 그리드에 가로 스크롤이 생긴다) 항상 가운데 정렬한다 —
-   컬럼 정의의 align은 본문(td)에만 적용된다. */
-.grid th{ height:45px; box-sizing:border-box; padding:0 10px; white-space:nowrap; text-align:center; background:#fafafd; color:var(--text-sub); font-weight:700;
+   컬럼 정의의 align은 본문(td)에만 적용된다. 배경·글자는 본문과 확실히 구분되게 진하게 둔다(예전 #fafafd는
+   흰 본문·행 hover 색과 거의 같아 헤더 경계가 안 보였다). */
+.grid th{ height:45px; box-sizing:border-box; padding:0 10px; white-space:nowrap; text-align:center; background:#e6e6f0; color:var(--text); font-weight:700;
           position:sticky; top:0; z-index:1; /* 세로 스크롤 시 헤더 고정(아래 .grid-scroll 참고) */ }
+/* 헤더 배경(#e6e6f0)이 공통 선 색(--line #e8e8f2)과 거의 같아 헤더 칸 사이 선이 안 보였다 — 헤더만 선을 더 진하게 둔다.
+   아래쪽 선은 헤더와 본문 경계라 한 단계 더 진하게. */
+/* 그리드 바깥 테두리 색 — 헤더 칸 사이 선과 헤더·본문의 바깥쪽 끝에 쓴다(본문 안쪽 선은 연한 --line 그대로). */
+.grid{ --grid-edge:#c9c9db; }
+.grid th{ border-right-color:var(--grid-edge); border-bottom-color:#b4b4c8; }
+/* 헤더 바깥쪽(위, 첫 컬럼 왼쪽, 마지막 컬럼 오른쪽)도 같은 색으로 둘러 헤더가 한 덩어리로 보이게 한다. 그리드 바깥
+   테두리(.grid / .grid-scroll / .grid-wrap의 --line)는 페이지 배경과 거의 같은 색이라 겹쳐도 두 줄로 보이지 않는다.
+   마지막 컬럼은 공통 규칙(.grid th:last-child{border-right:none})보다 우선하도록 thead를 붙여 특이도를 높인다. */
+.grid thead th{ border-top:1px solid var(--grid-edge); }
+.grid thead th:first-child{ border-left:1px solid var(--grid-edge); }
+.grid thead th:last-child{ border-right:1px solid var(--grid-edge); }
 /* 본문 행 높이도 모든 그리드에서 고정한다. 예전엔 행 높이가 내용에 따라 달라져서, 입력칸이 있는
    그리드(프로그램 관리 등, 입력칸 높이 약 30px)와 글자만 있는 그리드(공통코드 관리 좌측 그룹 목록,
    취약점 관리 등)의 행 높이가 화면마다 제각각이었다. 입력칸·버튼이 들어가는 높이로 모두 맞춘다
    (td의 height는 최소 높이라, 입력칸이 여기 안에 들어가야 모든 화면이 정확히 같아진다). */
 .grid tbody td{ height:32px; box-sizing:border-box; }
-.grid tbody tr:last-child td{ border-bottom:none; }
+/* 본문은 바깥쪽 끝(첫 컬럼 왼쪽, 마지막 컬럼 오른쪽, 마지막 행 아래)만 헤더와 같은 진한 선으로 둘러 표 전체가 한 상자로
+   보이게 한다. 안쪽 칸 사이 선은 연한 --line 그대로 둔다. 안내 문구 행(td.empty, colspan)은 첫·마지막 칸이 같아 양쪽이 다 붙는다. */
+.grid tbody td:first-child{ border-left:1px solid var(--grid-edge); }
+.grid tbody td:last-child{ border-right:1px solid var(--grid-edge); }
+.grid tbody tr:last-child td{ border-bottom:1px solid var(--grid-edge); }
 .grid tbody tr:hover:not(.selected){ background:#fafafd; }
 .grid tbody tr.selected{ background:var(--accent-soft); }
 
@@ -65,3 +81,21 @@
 /* 행 안의 버튼(취약점 조회 "스캔", 취약점 관리 "상세보기"). 행 높이(32px)를 넘지 않게 셀 높이에 맞추고
    폭을 고정한다 — 화면마다 따로 적던 것을 두 번째 화면이 생기면서 여기로 올렸다. */
 .grid .grid-btn{ padding:0; height:100%; width:60px; }
+
+/* 클릭한 셀 테두리(grid.js markCellCurrent). border는 칸 크기를 바꿔 행이 흔들리므로 안쪽 outline으로 그린다. */
+.grid tbody td.cell-current{ outline:2px solid var(--accent); outline-offset:-2px; }
+
+/* 그리드 우클릭 메뉴(grid.js). 모달(z-index 1000) 위에서도 보이게 그보다 위에 둔다. */
+.grid-context-menu{
+    display:none; position:fixed; z-index:1100; min-width:140px; padding:4px 0; list-style:none;
+    background:var(--card); border:1px solid var(--line); border-radius:var(--radius-box);
+    box-shadow:0 6px 18px rgba(25,25,64,.18); font-size:12.5px; color:var(--text);
+}
+.grid-context-menu li{ padding:7px 14px; cursor:pointer; white-space:nowrap; }
+.grid-context-menu li:hover{ background:var(--accent-soft); }
+
+/* 헤더 드래그로 컬럼 순서 바꾸기(grid.js bindColumnDrag). 놓을 자리는 대상 th 왼쪽/오른쪽 안쪽 선으로 보여준다. */
+.grid thead th{ cursor:grab; }
+.grid thead th.dragging{ opacity:.5; }
+.grid thead th.drag-before{ box-shadow:inset 3px 0 0 var(--accent); }
+.grid thead th.drag-after{ box-shadow:inset -3px 0 0 var(--accent); }

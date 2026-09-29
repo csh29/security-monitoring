@@ -7,7 +7,8 @@
   stage 2) stage 1에서 "취약함"으로 확정된 CVE들을, 앱(pom.xml) 단위로 모아서
            한 번에 취합 판단시켜 pom.xml 수정안(diff가 작은 전략 선택 포함)을 만들고 저장한다.
   stage 3) 등급·판정과 무관하게, 아직 요약이 없거나 NVD가 설명을 바꾼 CVE의 영어 설명을 한국어 2~3문장으로
-           요약해서 저장한다(CVE ID당 한 번). 판단이 아니라 화면에서 읽기 위한 것이라 싼 모델(SUMMARY_MODEL)을 쓴다.
+           요약해서 저장한다(CVE ID당 한 번, SUMMARY_BATCH_SIZE건씩 묶어 한 요청으로). 판단이 아니라 화면에서
+           읽기 위한 것이라 싼 모델(SUMMARY_MODEL)을 쓴다.
 """
 
 from __future__ import annotations
@@ -30,8 +31,13 @@ MODEL = "claude-sonnet-5"
 # stage 3(설명 요약)은 버전 범위를 추론하는 게 아니라 영어 문장 몇 줄을 한국어로 줄이는 일이라 Haiku로 충분하다.
 # 판단용 MODEL과 같이 쓰면 등급 제한 없이 모든 CVE에 도는 단계라 비용이 그만큼 커진다.
 SUMMARY_MODEL = "claude-haiku-4-5"
-# 2~3문장 요약이라 실제 출력은 수백 토큰이다. 잘리면(_reject_if_truncated) 저장하지 않는다.
-SUMMARY_MAX_TOKENS = 1024
+# 한 요청에 묶는 CVE 수. 건마다 따로 보내면 요약 규칙(시스템 프롬프트, 약 500토큰)이 건수만큼 반복돼
+# 입력의 60% 이상을 차지했다(104건에 입력 8만 토큰). 캐시 최소 길이보다 짧아 캐시로도 못 줄인다.
+# 너무 크게 묶으면 한 요청 실패에 그만큼 같이 실패하고(다음 배치에서 다시 대기가 되긴 한다) 출력이 길어진다.
+SUMMARY_BATCH_SIZE = 10
+# 건당 요약 출력이 100~220토큰(실측)이라 10건 + JSON 껍데기로 넉넉히 잡는다. 잘리면(_reject_if_truncated)
+# 그 묶음은 저장하지 않는다 — JSON이 중간에 끊겨 일부만 파싱되는 상황을 만들지 않기 위해서다.
+SUMMARY_MAX_TOKENS = 8192
 SUMMARY_MAX_WORKERS = 5
 
 # stage 1(CVE 판단)을 병렬로 돌릴 워커 수. 너무 높으면 두 가지 문제가 생긴다:
@@ -59,6 +65,26 @@ ASSESSMENT_SCHEMA = {
         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
     },
     "required": ["is_vulnerable", "fixed_version", "reasoning", "confidence"],
+    "additionalProperties": False,
+}
+
+SUMMARY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summaries": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "cve_id": {"type": "string"},
+                    "summary": {"type": "string"},
+                },
+                "required": ["cve_id", "summary"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["summaries"],
     "additionalProperties": False,
 }
 
@@ -518,8 +544,8 @@ class DescriptionSummarizerClient:
     """stage 3: NVD 영어 설명을 한국어 2~3문장으로 요약한다.
 
     Haiku 4.5에는 effort(output_config.effort)를 넘기면 오류가 나고, thinking은 안 넘기면 꺼진 채로 돈다 —
-    요약에는 둘 다 필요 없어서 아무것도 넘기지 않는다. 출력이 JSON이 아니라 요약 문장 하나라
-    Structured Outputs도 쓰지 않는다. 시스템 프롬프트가 짧아 캐시 최소 길이에 못 미치므로 캐시도 붙이지 않는다.
+    요약에는 둘 다 필요 없어서 넘기지 않는다. 여러 건을 묶어 보내므로 결과를 CVE별로 되돌려 나눌 수 있게
+    Structured Outputs(SUMMARY_SCHEMA)로 받는다. 시스템 프롬프트가 짧아 캐시 최소 길이에 못 미치므로 캐시는 붙이지 않는다.
     """
 
     def __init__(self, api_key: Optional[str] = None, model: str = SUMMARY_MODEL):
@@ -527,29 +553,53 @@ class DescriptionSummarizerClient:
         self._model = model
         self.usage = TokenUsageTracker()
 
-    def summarize(self, target: CveSummaryTarget) -> str:
+    def summarize_batch(self, targets: list[CveSummaryTarget]) -> dict[str, str]:
+        """여러 CVE를 한 요청으로 요약해 {cve_id: 요약}을 돌려준다. 응답에서 빠진 CVE는 결과에 없다(호출부가 실패로 센다)."""
         response = self._client.messages.create(
             model=self._model,
             max_tokens=SUMMARY_MAX_TOKENS,
             system=load_prompt(SUMMARIZE_SYSTEM),
-            messages=[{"role": "user", "content": f"- CVE ID: {target.cve_id}\n- 설명: {target.description}"}],
+            output_config={"format": {"type": "json_schema", "schema": SUMMARY_SCHEMA}},
+            messages=[{"role": "user", "content": self._build_prompt(targets)}],
         )
-        self.usage.record(target.cve_id, response.usage)
+        self.usage.record(f"{targets[0].cve_id} 외 {len(targets) - 1}건", response.usage)
         _reject_if_truncated(response, SUMMARY_MAX_TOKENS)
-        summary = _extract_text(response).strip()
-        if not summary:
-            raise ValueError("요약 응답이 비어 있습니다.")
-        return summary
+
+        requested = {t.cve_id for t in targets}
+        summaries: dict[str, str] = {}
+        for item in json.loads(_strip_code_fence(_extract_text(response)))["summaries"]:
+            cve_id, summary = item["cve_id"].strip(), item["summary"].strip()
+            # 요청하지 않은 ID(모델이 번호를 잘못 옮긴 경우)는 버린다 — 엉뚱한 CVE에 요약이 붙으면 안 된다.
+            if cve_id in requested and summary:
+                summaries[cve_id] = summary
+        return summaries
+
+    @staticmethod
+    def _build_prompt(targets: list[CveSummaryTarget]) -> str:
+        # 설명 사이 경계가 흐려지면 요약이 옆 CVE와 섞이므로 CVE마다 제목 줄로 구분한다.
+        return "\n\n".join(f"### {t.cve_id}\n{t.description}" for t in targets)
 
 
-def _summarize_one(summarizer: "DescriptionSummarizerClient", backend: "CveMonitorClient",
-                   target: CveSummaryTarget) -> tuple[CveSummaryTarget, Optional[Exception]]:
-    """_assess_one과 같은 이유로 예외를 잡아서 돌려준다 — 한 건 실패가 나머지 요약을 막지 않도록."""
+def _summarize_group(summarizer: "DescriptionSummarizerClient", backend: "CveMonitorClient",
+                     group: list[CveSummaryTarget]) -> list[tuple[CveSummaryTarget, Optional[Exception]]]:
+    """묶음 하나를 요약하고 CVE별로 저장한다. _assess_one과 같은 이유로 예외를 잡아서 돌려준다.
+    요청 자체가 실패하면 묶음 전체가, 응답에서 빠졌거나 저장이 실패한 CVE는 그 건만 실패로 남는다 —
+    실패한 건은 요약이 없으니 다음 배치에서 다시 대기로 잡힌다."""
     try:
-        backend.submit_summary(target, summarizer.summarize(target))
-        return target, None
+        summaries = summarizer.summarize_batch(group)
     except Exception as e:
-        return target, e
+        return [(t, e) for t in group]
+
+    results: list[tuple[CveSummaryTarget, Optional[Exception]]] = []
+    for target in group:
+        try:
+            if target.cve_id not in summaries:
+                raise ValueError("응답에 이 CVE의 요약이 없습니다.")
+            backend.submit_summary(target, summaries[target.cve_id])
+            results.append((target, None))
+        except Exception as e:
+            results.append((target, e))
+    return results
 
 
 def _assess_one(ai_client: "VulnAssessorClient", backend: "CveMonitorClient",
@@ -619,13 +669,15 @@ def main() -> None:
 
     skipped_summaries: list[tuple[str, str]] = []
     if summary_targets:
+        groups = [summary_targets[i:i + SUMMARY_BATCH_SIZE]
+                  for i in range(0, len(summary_targets), SUMMARY_BATCH_SIZE)]
         with ThreadPoolExecutor(max_workers=SUMMARY_MAX_WORKERS) as executor:
-            futures = [executor.submit(_summarize_one, summarizer, backend, t) for t in summary_targets]
+            futures = [executor.submit(_summarize_group, summarizer, backend, g) for g in groups]
             for future in as_completed(futures):
-                target, err = future.result()
-                if err is not None:
-                    skipped_summaries.append((target.cve_id, str(err)))
-                    print(f"[{target.cve_id}] 요약 실패, 건너뜀: {err}")
+                for target, err in future.result():
+                    if err is not None:
+                        skipped_summaries.append((target.cve_id, str(err)))
+                        print(f"[{target.cve_id}] 요약 실패, 건너뜀: {err}")
 
     # 한 화면 가득 스크롤한 로그 사이에서 실패 건만 놓치지 않도록 끝에 다시 요약해서 보여준다.
     print()
