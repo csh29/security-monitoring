@@ -112,6 +112,14 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
    모든 CVE에 돌아 LOW/MEDIUM에도 `aiVulnerable`을 매기므로, 등급 조건이 없으면 LOW/MEDIUM이 fix-plan에 대량으로
    섞인다(실제로 그랬다 — 출력 잘림·CVE 누락의 원인). 등급 밖 CVE는 fix-plan의 "제외됨" 메모로만 남는다.
 
+fix-plan 응답에는 수정된 pom.xml과 함께 **바꾼 버전 값 목록**(`changes`: 좌표·프로퍼티명·from·to·via
+`PARENT/BOM/PROPERTY/DIRECT`)이 온다. 자바가 `FixPlanChange`(`fix_plan_changes`)로 저장하면서 점프 폭
+(`VersionJump`: PATCH/MINOR/MAJOR/UNKNOWN)을 `VersionJumpClassifier`로 붙인다 — 순서는 `ComparableVersion`, 어느 자리가
+바뀌었는지는 숫자 조각으로 본다. 낮추거나 그대로 둔 변경·해석 불가 버전은 UNKNOWN이다. 형식이 틀린 항목(좌표가
+`g:a`가 아님, 버전 누락, 정해지지 않은 via)은 **그 항목만 버리고** 수정안은 저장한다(`FixPlanService.validChanges`, 버린 건수는 로그).
+`changes` 필드가 생기기 전 배치가 보낸 요청(필드 없음)도 빈 목록으로 받는다. `GET /api/fix-plans/{appId}` 응답에 `changes`가 실린다.
+이 목록은 업그레이드 영향 분석(예정)의 입력이다 — 패치 점프는 AI 없이 끝내고 마이너·메이저만 분석한다.
+
 AI에게 넘기는 근거도 마찬가지다. OSV에서 뽑은 `knownFixedVersions`가 있으면 AI가 설명 프로즈를
 다시 해석해 유추하지 않도록 그 값을 최우선으로 쓰게 한다.
 
@@ -256,6 +264,8 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `RepoUrlValidatorTest` — 앱 등록 저장소 URL 허용/거부 판정
 - `UserServiceTest` — 본인 비밀번호 변경 검증(현재 비밀번호 확인, 빈 값·동일 값 거부)
 - `ComCdServiceTest` — 설정 스위치 공통코드의 켜짐 판단(사용여부 Y/N, 코드 없으면 기본값)
+- `VersionJumpClassifierTest` — fix-plan 버전 변경의 점프 폭(접미사·캘린더 버전·자리 부족·다운그레이드·해석 불가)
+- `FixPlanServiceTest` — fix-plan 변경 목록 중 형식이 틀린 항목만 버리기
 - `ScanHistoryServiceTest` — 스캔 이력의 신규 건수 계산(전후 OPEN 키 비교), 시작·성공·실패 기록, 오류 문구에 내부 메시지 미노출, 이력 저장 실패가 스캔을 막지 않음
 - `CveSummaryServiceTest` — 설명 요약 대기 판단(CVE ID 단위, 해시 비교, 최신 설명 선택)과 저장 검증
 

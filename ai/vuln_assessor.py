@@ -102,8 +102,26 @@ FIX_PLAN_SCHEMA = {
         "pom_xml": {"type": "string"},
         "unresolved_cves": {"type": "string"},
         "reasoning": {"type": "string"},
+        # pom.xml에서 바꾼 버전 값 목록. 업그레이드 영향 분석이 reasoning 문장을 다시 해석하지 않고 이걸 입력으로
+        # 쓴다. 점프 폭(패치/마이너/메이저)은 자바가 계산하므로 여기서 받지 않는다. via 값은 자바
+        # FixPlanService.CHANGE_VIA와 같아야 한다.
+        "changes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "coordinate": {"type": "string"},
+                    "property_name": {"type": "string"},
+                    "from_version": {"type": "string"},
+                    "to_version": {"type": "string"},
+                    "via": {"type": "string", "enum": ["PARENT", "BOM", "PROPERTY", "DIRECT"]},
+                },
+                "required": ["coordinate", "property_name", "from_version", "to_version", "via"],
+                "additionalProperties": False,
+            },
+        },
     },
-    "required": ["strategy", "pom_xml", "unresolved_cves", "reasoning"],
+    "required": ["strategy", "pom_xml", "unresolved_cves", "reasoning", "changes"],
     "additionalProperties": False,
 }
 
@@ -242,6 +260,8 @@ class FixPlan:
     pom_xml: str
     unresolved_cves: str
     reasoning: str
+    # [{coordinate, property_name, from_version, to_version, via}] — FIX_PLAN_SCHEMA의 changes 그대로
+    changes: list[dict]
 
 
 def _reject_if_truncated(response, max_tokens: int) -> None:
@@ -368,6 +388,16 @@ class CveMonitorClient:
                 "pomXml": plan.pom_xml,
                 "unresolvedCves": plan.unresolved_cves,
                 "reasoning": plan.reasoning,
+                "changes": [
+                    {
+                        "coordinate": c["coordinate"],
+                        "propertyName": c.get("property_name") or None,
+                        "fromVersion": c["from_version"],
+                        "toVersion": c["to_version"],
+                        "via": c["via"],
+                    }
+                    for c in plan.changes
+                ],
             },
             timeout=60,
         )
@@ -541,6 +571,7 @@ dependency:tree 텍스트를 다시 눈으로 훑어서 경로를 재구성하�
             pom_xml=data.get("pom_xml", ""),
             unresolved_cves=data.get("unresolved_cves", ""),
             reasoning=data.get("reasoning", ""),
+            changes=data.get("changes", []),
         )
 
 

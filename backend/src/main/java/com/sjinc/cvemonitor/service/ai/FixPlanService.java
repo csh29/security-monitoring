@@ -1,6 +1,7 @@
 package com.sjinc.cvemonitor.service.ai;
 
 import com.sjinc.cvemonitor.domain.FixPlan;
+import com.sjinc.cvemonitor.domain.FixPlanChange;
 import com.sjinc.cvemonitor.domain.ScanSnapshot;
 import com.sjinc.cvemonitor.domain.Vulnerability;
 import com.sjinc.cvemonitor.dto.ai.AppFixPlanTarget;
@@ -12,19 +13,25 @@ import com.sjinc.cvemonitor.repository.FixPlanRepository;
 import com.sjinc.cvemonitor.repository.ScanSnapshotRepository;
 import com.sjinc.cvemonitor.repository.VulnerabilityRepository;
 import com.sjinc.cvemonitor.service.maven.MavenDependencyExtractor;
+import com.sjinc.cvemonitor.service.maven.VersionJumpClassifier;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class FixPlanService {
@@ -34,6 +41,10 @@ public class FixPlanService {
     private final FixPlanRepository fixPlanRepository;
     private final AppRepository appRepository;
     private final MavenDependencyExtractor mavenDependencyExtractor;
+
+    /** fix-plan 변경 항목의 via 허용값. 파이썬 FIX_PLAN_SCHEMA의 enum과 같아야 한다. */
+    private static final Set<String> CHANGE_VIA = Set.of("PARENT", "BOM", "PROPERTY", "DIRECT");
+    private static final Pattern COORDINATE = Pattern.compile("[^:\\s]+:[^:\\s]+");
 
     /**
      * VulnerabilityService와 같은 기준. fix-plan은 이 등급의 취약 확정 CVE만 다루고, 이 등급 밖의 CVE들은
@@ -105,6 +116,7 @@ public class FixPlanService {
                 .orElseGet(() -> FixPlan.builder().app(appRepository.getReferenceById(appId)).build());
 
         plan.applyPlan(request.strategy(), request.pomXml(), request.unresolvedCves(), request.reasoning());
+        plan.replaceChanges(toChanges(plan, request.changes()));
         plan.attachLowSeverityNote(buildLowSeverityNote(appId));
         fixPlanRepository.save(plan);
 
@@ -112,6 +124,51 @@ public class FixPlanService {
             snapshot.markFixPlanGenerated();
             scanSnapshotRepository.save(snapshot);
         });
+    }
+
+    /**
+     * AI가 낸 변경 목록을 저장할 엔티티로 바꾸고 점프 폭을 붙인다. 형식이 틀린 항목은 그 항목만 버린다 — 수정안
+     * 전체(pom.xml)는 멀쩡한데 변경 목록 한 줄 때문에 저장을 거절하면, 비싼 fix-plan 생성을 통째로 다시 돌려야 한다.
+     * 버린 건수는 로그로 남긴다.
+     */
+    private List<FixPlanChange> toChanges(FixPlan plan, List<FixPlanRequest.Change> requested) {
+        List<FixPlanRequest.Change> valid = validChanges(requested);
+        int dropped = (requested == null ? 0 : requested.size()) - valid.size();
+        if (dropped > 0) {
+            log.warn("appId={} fix-plan 변경 목록 중 형식이 틀린 {}건을 버렸습니다.", plan.getApp().getId(), dropped);
+        }
+        List<FixPlanChange> changes = new ArrayList<>();
+        for (int i = 0; i < valid.size(); i++) {
+            FixPlanRequest.Change change = valid.get(i);
+            changes.add(FixPlanChange.builder()
+                    .fixPlan(plan)
+                    .sortOrder(i)
+                    .coordinate(change.coordinate().trim())
+                    .propertyName(isBlank(change.propertyName()) ? null : change.propertyName().trim())
+                    .fromVersion(change.fromVersion().trim())
+                    .toVersion(change.toVersion().trim())
+                    .via(change.via())
+                    .jump(VersionJumpClassifier.classify(change.fromVersion().trim(), change.toVersion().trim()))
+                    .build());
+        }
+        return changes;
+    }
+
+    /** 좌표가 groupId:artifactId 모양이고, 버전 두 개가 있고, via가 정해진 값인 항목만 남긴다. */
+    static List<FixPlanRequest.Change> validChanges(List<FixPlanRequest.Change> requested) {
+        if (requested == null) {
+            return List.of();
+        }
+        return requested.stream()
+                .filter(Objects::nonNull)
+                .filter(c -> c.coordinate() != null && COORDINATE.matcher(c.coordinate().trim()).matches())
+                .filter(c -> !isBlank(c.fromVersion()) && !isBlank(c.toVersion()))
+                .filter(c -> CHANGE_VIA.contains(c.via()))
+                .toList();
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     /**
@@ -140,13 +197,18 @@ public class FixPlanService {
     }
 
     /** 사람이 화면/API로 완성된 fix-plan(수정된 pom.xml 등)을 조회할 때 사용. */
+    @Transactional(readOnly = true) // changes는 지연 로딩이라 트랜잭션 안에서 읽어야 한다
     public FixPlanResponse getFixPlan(Long appId) {
         FixPlan plan = fixPlanRepository.findByAppId(appId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "아직 fix-plan이 생성되지 않았습니다: appId=" + appId));
 
+        List<FixPlanResponse.Change> changes = plan.getChanges().stream()
+                .map(c -> new FixPlanResponse.Change(c.getCoordinate(), c.getPropertyName(), c.getFromVersion(),
+                        c.getToVersion(), c.getVia(), c.getJump()))
+                .toList();
         return new FixPlanResponse(
                 appId, plan.getStrategy(), plan.getStatus(), plan.getPomXml(),
-                plan.getUnresolvedCves(), plan.getReasoning(), plan.getLowSeverityNote(), plan.getCreatedAt());
+                plan.getUnresolvedCves(), plan.getReasoning(), plan.getLowSeverityNote(), plan.getCreatedAt(), changes);
     }
 }

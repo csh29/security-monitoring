@@ -71,8 +71,30 @@
   "strategy": "PARENT_UPGRADE|PROPERTY_OVERRIDE|MIXED",
   "pom_xml": "수정이 반영된 pom.xml 전체 내용",
   "unresolved_cves": "버전 업그레이드만으로 해결 안 되는 CVE와 이유. 없으면 빈 문자열",
-  "reasoning": "한국어 판단 근거"
+  "reasoning": "한국어 판단 근거",
+  "changes": [
+    {
+      "coordinate": "groupId:artifactId",
+      "property_name": "프로퍼티로 바꿨을 때만 그 이름(예: netty.version), 아니면 빈 문자열",
+      "from_version": "바꾸기 전 버전",
+      "to_version": "바꾼 뒤 버전",
+      "via": "PARENT|BOM|PROPERTY|DIRECT"
+    }
+  ]
 }
 ```
+
+## changes 작성 규칙
+
+`pom_xml` 에서 **네가 실제로 바꾼 버전 값 하나당 한 항목**을 낸다. 사람이 아니라 다음 단계(업그레이드 영향 분석)가 읽는 목록이라, reasoning 과 달리 해석이 필요 없는 사실만 적는다.
+
+- `via` 는 pom.xml 의 어느 자리를 고쳤는지다.
+  - `PARENT`: `<parent>` 의 버전. `coordinate` 는 parent 의 groupId:artifactId.
+  - `BOM`: `<dependencyManagement>` 의 `<scope>import</scope>` BOM 버전. `coordinate` 는 그 BOM.
+  - `PROPERTY`: `<properties>` 의 버전 프로퍼티(부모 BOM 이 관리하는 버전 override 포함). `property_name` 에 프로퍼티 이름을, `coordinate` 에는 이 프로퍼티로 해소하려는 취약 아티팩트 중 하나를 적는다.
+  - `DIRECT`: `<dependency>` 에 직접 적힌 `<version>`(새로 추가한 `<dependencyManagement>` 항목 포함). `coordinate` 는 그 의존성.
+- `from_version` 은 원래 pom.xml(또는 프로퍼티를 새로 추가했으면 dependency:tree 의 현재 해석 버전)에 있던 값, `to_version` 은 네가 바꾼 값이다. `${...}` 같은 표현식이 아니라 **실제 버전 문자열**을 적는다.
+- 버전을 바꾸지 않은 항목(주석 추가, exclusion 추가 등)은 넣지 않는다. 바꾼 게 없으면 빈 배열이다.
+- parent 하나를 올려서 여러 관리 버전이 같이 올라가도 항목은 parent 하나다 — 딸려 올라가는 버전을 추측해서 나열하지 마라.
 
 `pom_xml` 은 **파일 전체**여야 한다. 생략(`...`, `<!-- 이하 동일 -->`)은 절대 금지 — 그대로 파일에 쓰이므로 생략하면 pom이 깨진다. 출력이 길어져도 전체를 낸다.
