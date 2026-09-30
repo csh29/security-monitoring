@@ -15,6 +15,7 @@ import java.util.Optional;
 enum FixedMenu {
     VULNERABILITY_MNG("vulnerability-mng", "취약점 관리", ProgramButton.SEARCH, ProgramButton.SAVE),
     VULNERABILITY_SEARCH("vulnerability-search", "취약점 조회", ProgramButton.SEARCH, ProgramButton.RESET),
+    SCAN_HISTORY("scan-history", "스캔 이력", ProgramButton.SEARCH, ProgramButton.RESET),
     REPORT("report", "리포트");
 
     private final String view;

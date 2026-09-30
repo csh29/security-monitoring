@@ -36,4 +36,15 @@ public class App {
 
     @Column
     private String description;
+
+    /**
+     * 앱 담당자. 로그인 계정(User)에는 이메일이 없고, 담당자가 이 시스템 계정이 없는 개발자일 수도 있어서
+     * User를 참조하지 않고 이름·이메일을 그대로 적는다. 이메일은 신규 취약점 알림 메일의 수신처로 쓸 값이다.
+     * 기존 행이 있는 DB에 ddl-auto=update로 컬럼이 추가되므로 null을 허용한다.
+     */
+    @Column(name = "manager_name")
+    private String managerName;
+
+    @Column(name = "manager_email")
+    private String managerEmail;
 }

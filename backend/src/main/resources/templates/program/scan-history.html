@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>스캔 이력 · 보안취약점 모니터링 대시보드</title>
+    <link rel="stylesheet" href="/css/common-ui.css">
+    <link rel="stylesheet" href="/css/grid.css">
+    <style>
+        /* 화면 공통 뼈대·뱃지(.badge)는 common-ui.css가, .grid 공통 모양은 grid.css가 담당한다.
+           이 화면은 기본값을 그대로 쓰므로 덮어쓸 규칙이 없다. */
+    </style>
+</head>
+<body>
+<div class="app-shell" th:classappend="${param.embed} ? 'app-shell--embedded'">
+    <div th:replace="~{fragments/sidebar :: sidebar}"></div>
+    <div th:replace="~{fragments/topbar :: topbar}"></div>
+    <div th:replace="~{fragments/loading-overlay :: overlay}"></div>
+
+    <main class="area-main">
+        <section th:replace="~{fragments/page-toolbar :: toolbar}"></section>
+
+        <section class="search-row" id="searchArea"></section>
+
+        <section class="panel-head">
+            <div class="panel-title">스캔 이력 (최근 500건)</div>
+        </section>
+
+        <section>
+            <table class="grid">
+                <thead id="historyGridHead"></thead>
+                <tbody id="historyGridBody"></tbody>
+            </table>
+        </section>
+    </main>
+</div>
+
+<script src="/js/grid.js"></script>
+<script src="/js/search-form.js"></script>
+<script th:inline="javascript">
+    (function () {
+        const API_URL = '/api/scan-histories';
+        const APPS_URL = '/api/apps';
+        const gridBody = document.getElementById('historyGridBody');
+
+        const STATUS_LABELS = { RUNNING: '진행 중', SUCCESS: '성공', FAILED: '실패' };
+
+        function badge(text, cssClass) {
+            const span = document.createElement('span');
+            span.className = 'badge ' + cssClass;
+            span.textContent = text;
+            return span;
+        }
+
+        /** 서버의 LocalDateTime(ISO, "2026-09-30T09:52:51.123")을 "2026-09-30 09:52:51"로. */
+        function formatDateTime(value) {
+            return value ? String(value).replace('T', ' ').substring(0, 19) : '';
+        }
+
+        function formatDuration(startedAt, finishedAt) {
+            if (!startedAt || !finishedAt) return '';
+            const seconds = Math.round((new Date(finishedAt) - new Date(startedAt)) / 1000);
+            if (isNaN(seconds) || seconds < 0) return '';
+            return seconds >= 60 ? Math.floor(seconds / 60) + '분 ' + (seconds % 60) + '초' : seconds + '초';
+        }
+
+        const COLUMNS = [
+            { id: 'startedAt', label: '시작 일시', width: 150, align: 'center', render: formatDateTime },
+            { id: 'systemName', label: '시스템명', width: 120 },
+            { id: 'branch', label: 'Branch', width: 90 },
+            {
+                id: 'status', label: '결과', width: 80, align: 'center',
+                render: function (value) { return badge(STATUS_LABELS[value] || value || '', (value || '').toLowerCase()); }
+            },
+            {
+                id: 'duration', label: '소요', width: 80, align: 'right',
+                render: function (value, row) { return formatDuration(row.startedAt, row.finishedAt); }
+            },
+            { id: 'dependencyCount', label: '의존성', width: 70, align: 'right' },
+            { id: 'vulnerabilityCount', label: '발견', width: 60, align: 'right' },
+            { id: 'newCount', label: '신규', width: 60, align: 'right' },
+            { id: 'resolvedCount', label: '해결', width: 60, align: 'right' },
+            // 0이 아니면 이 회차의 발견·신규·해결 건수가 불완전하다는 뜻이라 따로 보인다.
+            { id: 'failedCveCount', label: '조회실패', width: 70, align: 'right' },
+            { id: 'requestedBy', label: '실행자', width: 90 },
+            { id: 'errorMessage', label: '오류', title: function (value) { return value || ''; } }
+        ];
+
+        Grid.renderHeader(document.getElementById('historyGridHead'), COLUMNS);
+
+        const search = SearchForm.render(document.getElementById('searchArea'), [
+            {
+                id: 'appId', label: '시스템명', type: 'select', withAll: true,
+                options: function () {
+                    return fetch(APPS_URL)
+                        .then(function (res) { return res.ok ? res.json() : []; })
+                        .then(function (apps) {
+                            return apps.map(function (app) { return { value: app.id, label: app.systemName }; });
+                        });
+                },
+                onChange: searchHistories
+            }
+        ], { onSearch: searchHistories });
+
+        function searchHistories() {
+            const appId = search.values().appId;
+            fetch(API_URL + (appId ? '?appId=' + encodeURIComponent(appId) : ''))
+                .then(function (res) {
+                    if (!res.ok) throw new Error('조회에 실패했습니다.');
+                    return res.json();
+                })
+                .then(function (histories) {
+                    Grid.render(gridBody, COLUMNS, histories, { emptyMessage: '스캔 이력이 없습니다.' });
+                })
+                .catch(function (err) {
+                    Grid.renderMessage(gridBody, COLUMNS.length, err.message);
+                });
+        }
+
+        PageButtons.bind({
+            btnSearch: searchHistories,
+            btnReset: function () {
+                search.reset();
+                searchHistories();
+            }
+        });
+
+        search.ready.then(searchHistories);
+    })();
+</script>
+</body>
+</html>

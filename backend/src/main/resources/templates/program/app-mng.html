@@ -44,7 +44,9 @@
             { id: 'repoUrl', label: 'Repository URL', type: 'text' },
             { id: 'branch', label: 'Branch', type: 'text' },
             { id: 'systemName', label: '시스템명', type: 'text' },
-            { id: 'description', label: '설명', type: 'text' }
+            { id: 'description', label: '설명', type: 'text' },
+            { id: 'managerName', label: '담당자', type: 'text', width: 120 },
+            { id: 'managerEmail', label: '담당자 이메일', type: 'text', width: 200 }
         ];
 
         Grid.renderHeader(document.getElementById('appGridHead'), COLUMNS);
@@ -77,8 +79,10 @@
                 const branch = row.branch;
                 const systemName = row.systemName;
                 const description = row.description;
+                const managerName = row.managerName;
+                const managerEmail = row.managerEmail;
 
-                if (!repoUrl && !branch && !systemName && !description) {
+                if (!repoUrl && !branch && !systemName && !description && !managerName && !managerEmail) {
                     continue;
                 }
                 if (!repoUrl || !branch || !systemName) {
@@ -91,7 +95,9 @@
                     repoUrl: repoUrl,
                     branch: branch,
                     systemName: systemName,
-                    description: description
+                    description: description,
+                    managerName: managerName,
+                    managerEmail: managerEmail
                 };
 
                 requests.push(fetch(API_URL, {
@@ -107,8 +113,12 @@
 
             Promise.all(requests)
                 .then(function (results) {
-                    if (results.some(function (res) { return !res.ok; })) {
-                        throw new Error('저장에 실패했습니다.');
+                    const failed = results.find(function (res) { return !res.ok; });
+                    if (failed) {
+                        // 저장소 URL·담당자 이메일 형식 오류는 서버가 400과 사유 문구로 돌려준다.
+                        return failed.text().then(function (text) {
+                            throw new Error(failed.status === 400 && text ? text : '저장에 실패했습니다.');
+                        });
                     }
                     searchApps();
                 })

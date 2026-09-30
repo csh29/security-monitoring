@@ -2,6 +2,7 @@ package com.sjinc.cvemonitor.service.scan;
 
 import com.sjinc.cvemonitor.domain.App;
 import com.sjinc.cvemonitor.domain.MavenDependency;
+import com.sjinc.cvemonitor.domain.ScanHistory;
 import com.sjinc.cvemonitor.domain.ScanSnapshot;
 import com.sjinc.cvemonitor.dto.osv.OsvBatchResultItem;
 import com.sjinc.cvemonitor.dto.osv.OsvVulnRef;
@@ -47,6 +48,7 @@ public class ScanOrchestrationService {
     private final AiAssessmentTriggerService aiAssessmentTriggerService;
     private final FixPlanService fixPlanService;
     private final CveSummaryService cveSummaryService;
+    private final ScanHistoryService scanHistoryService;
 
     @Value("${git.access.token}")
     private String gitAccessToken;
@@ -57,7 +59,8 @@ public class ScanOrchestrationService {
     @Value("${maven.home}")
     private String mavenHome;
 
-    public ScanResult scanRepository(String repoUrl, String branch) throws Exception {
+    /** @param requestedBy 스캔을 실행한 로그인 아이디(스캔 이력에 남긴다) */
+    public ScanResult scanRepository(String repoUrl, String branch, String requestedBy) throws Exception {
         // repoUrl/branch를 검증 없이 그대로 clone하면, 앱 관리에 등록되지 않은 임의 URL도 스캔
         // 대상이 될 수 있다 — GitLab PAT를 공격자 서버로 그대로 보내거나(자격증명 유출), 공격자가
         // 만든 pom.xml의 <repositories>/build extension을 Maven이 그대로 실행하거나, repoUrl에
@@ -66,8 +69,25 @@ public class ScanOrchestrationService {
         App app = appRepository.findByRepoUrlAndBranch(repoUrl, branch)
                 .orElseThrow(() -> new IllegalArgumentException(
                         "앱 관리에 등록되지 않은 저장소/브랜치입니다: " + repoUrl + " (" + branch + ")"));
+
+        // 등록 검증을 통과한 스캔만 이력에 남긴다 — 미등록 저장소 요청은 앱이 없어 이력의 주인이 없다.
+        ScanHistory history = scanHistoryService.start(app, requestedBy);
+        try {
+            return scan(app, history);
+        } catch (Exception e) {
+            scanHistoryService.fail(history, e);
+            throw e;
+        }
+    }
+
+    private ScanResult scan(App app, ScanHistory history) throws Exception {
+        String repoUrl = app.getRepoUrl();
+        String branch = app.getBranch();
         String systemName = app.getSystemName();
         Long appId = app.getId();
+        // 신규 건수는 "스캔 전엔 OPEN이 아니었는데 스캔 후 OPEN"으로 센다. 저장(syncCveById)이 upsert라
+        // 저장 결과만 봐서는 새 행인지 기존 행 갱신인지 알 수 없어서, 전후 OPEN 키 집합을 비교한다.
+        Set<String> openKeysBefore = vulnerabilityService.getOpenKeys(appId);
 
         File projectDir = gitCloneService.cloneRepository(repoUrl, branch, gitUserName, gitAccessToken);
         try {
@@ -157,7 +177,7 @@ public class ScanOrchestrationService {
             Set<String> currentKeys = cveFindings.stream()
                     .map(f -> f.identifier() + "|" + f.groupId() + ":" + f.artifactId())
                     .collect(Collectors.toSet());
-            vulnerabilityService.resolveMissingVulnerabilities(appId, currentKeys);
+            int resolvedCount = vulnerabilityService.resolveMissingVulnerabilities(appId, currentKeys);
 
             if (!cveFindings.isEmpty()) {
                 // fix-plan 배치가 나중에 pom.xml/tree를 참고할 수 있도록, clone 디렉터리를 지우기 전에 스냅샷으로 남겨둔다.
@@ -168,11 +188,15 @@ public class ScanOrchestrationService {
                 scanSnapshotRepository.save(snapshot);
             }
 
+            ScanResult result = new ScanResult(repoUrl, branch, systemName, dependencies.size(), cveFindings.size(),
+                    failedCveIds.size(), findings);
+            int newCount = ScanHistoryService.countNewlyOpened(openKeysBefore, vulnerabilityService.getOpenKeys(appId));
+            scanHistoryService.succeed(history, result, newCount, resolvedCount);
+
             // 스캔 결과를 다 저장한 뒤(스냅샷 포함 — fix-plan 대상 판단에 필요) AI 판단 배치를 깨운다.
             triggerAiAssessmentIfNeeded();
 
-            return new ScanResult(repoUrl, branch, systemName, dependencies.size(), cveFindings.size(),
-                    failedCveIds.size(), findings);
+            return result;
         } finally {
             gitCloneService.cleanup(projectDir);
         }

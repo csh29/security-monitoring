@@ -28,7 +28,7 @@ DB는 H2 **파일 DB**(`jdbc:h2:file:./data/cvemonitor` → 서버를 띄운 `ba
 **거기에 심을 데이터를 새로 추가해도 이미 만들어진 DB에는 들어가지 않는다** — 새로 시작하려면 서버를 끄고 `data` 폴더를 지운다.
 초기 관리자 비밀번호도 DB를 처음 만들 때 한 번만 로그에 찍힌다. 같은 DB 파일은 한 프로세스만 열 수 있어서 서버를 두 개 띄우거나
 서버가 켜진 채 다른 도구로 열면 잠금 오류가 난다. 예전엔 메모리 DB라 재기동마다 사람이 남긴 처리여부·비고·요약이 사라지고 요약이 다시 과금됐다.
-초기 데이터에는 CRM_BACK 앱의 샘플 취약점 2건(설명이 `[샘플]`로 시작)이 있고, AI 배치가 잡지 않도록 판단 결과와 설명 요약(`CveSummary`)이 미리 채워져 있다.
+초기 데이터에 샘플 앱(CRM_BACK, CRM_BATCH)은 있지만 취약점은 없다 — 취약점 화면은 스캔을 한 번 돌려야 채워진다. 이미 만들어진 DB에 예전에 심은 샘플 취약점(설명이 `[샘플]`로 시작)이 남아 있을 수 있다.
 
 ---
 
@@ -63,12 +63,27 @@ com.sjinc.cvemonitor
 5. `VulnerabilityService.upsertEntity` → NVD 보강 + 결정론 판정 + 저장
 6. `resolveMissingVulnerabilities` → 이번 스캔에 안 걸린 기존 OPEN 건을 RESOLVED로 표시
 7. `ScanSnapshot` 저장 (fix-plan이 나중에 참고할 pom.xml + tree 원문)
+   — 이어서 `ScanHistoryService.succeed`로 이번 회차의 스캔 이력을 완료 처리한다(아래 "스캔 이력")
 8. `triggerAiAssessmentIfNeeded` → 먼저 자동 실행 스위치(공통코드 `AI_CONFIG`/`AUTO_TRIGGER`의 사용여부)를 보고 꺼져 있으면 바로 끝낸다. 켜져 있으면 AI 판단 대기(`getUnassessedVulnerabilities`), fix-plan 대기
    (`getPendingFixPlanTargets`), 설명 요약 대기(`CveSummaryService.getPendingSummaryTargets`)가 하나라도 있으면 `AiAssessmentTriggerService.triggerAsync()`로 파이썬
    배치를 백그라운드로 띄운다(fire-and-forget, 이미 떠 있으면 건너뜀). "새 CVE가 저장됐는가"가 아니라
    배치가 가져갈 대기열로 판단한다 — 새 CVE가 결정론 자동판정으로 끝나면 AI가 볼 게 없고, 새 CVE가
    없어도 스냅샷이 갱신되면 fix-plan은 다시 대기가 된다. 배치는 Claude API를 호출하므로(과금) 스캔마다
    비용이 생길 수 있다. 실행 상태는 `/api/ai/status`(`getStatus()`)로 본다.
+
+### 스캔 이력 (`ScanHistory`, `ScanHistoryService`)
+
+`ScanSnapshot`은 앱당 최신 하나를 덮어쓰므로 "언제 돌았고 무엇이 바뀌었나"는 `scan_histories`에 따로 쌓는다.
+
+- 1단계 등록 검증을 **통과한 스캔만** 기록한다(미등록 저장소 요청은 이력이 없다). clone 전에 `RUNNING`으로 먼저 저장하고,
+  끝나면 `SUCCESS`(의존성 수·발견·신규·해결·조회실패 건수) 또는 `FAILED`(오류 문구)로 바꾼다. 서버가 도중에 죽으면 `RUNNING`으로 남는다.
+- **신규 건수** = 스캔 전 OPEN 키 집합에 없고 스캔 후 OPEN 키 집합에 있는 것(`countNewlyOpened`, 키는 `cveId|groupId:artifactId`).
+  처음 발견된 건과 해결됐다가 다시 걸린 건이 모두 들어간다. 수동 RESOLVED 건은 재발견돼도 OPEN이 안 되므로 안 들어간다.
+  **해결 건수** = `resolveMissingVulnerabilities`의 반환값(RESOLVED로 바꾼 건수).
+- 오류 문구는 `IllegalArgumentException`만 메시지를 그대로 쓰고, 나머지는 예외 종류만 남긴다(`ScanController.handleScanError`와 같은 이유 — 내부 경로 노출).
+- 앱을 FK로 참조하지 않고 appId·시스템명·저장소·브랜치를 값으로 복사한다 — FK면 이력이 생긴 앱을 앱 관리에서 못 지운다.
+- 이력 기록이 실패해도 스캔은 실패시키지 않는다(로그만). 스캔 실행자는 `ScanController`가 Principal에서 넘긴다.
+- 조회: `GET /api/scan-histories?appId=`(생략 시 전체, 최신순 최대 500건). 화면은 고정 메뉴 `scan-history`라 둘 다 로그인만 필요하다.
 
 ### 5단계의 실패 처리
 
@@ -155,11 +170,14 @@ OPEN만)에서도 빠진다.
   `TopbarModelAdvice`가 `loginUserLabel`로 얹는다. 비밀번호 변경 모달은 topbar 조각 안에 있고 `POST /api/users/me/password`
   (본인만 — 대상은 Principal, 현재 비밀번호 재확인, `@RequiresProgram` 없음)를 부른다. 탭(iframe) 안에서는 상단바가 숨겨진다.
 
+앱(`App`)에는 담당자 이름·이메일(`managerName`, `managerEmail`)이 있다. 로그인 계정(`User`)에는 이메일이 없고 담당자가
+계정 없는 개발자일 수 있어 User를 참조하지 않는다. 이메일은 저장할 때 `AppService`가 느슨한 형식 검사만 한다(틀리면 400).
+
 ### 공통 자산
 
 | 파일 | 역할 |
 | --- | --- |
-| `/css/common-ui.css` | `:root` 변수, `.app-shell`, `.btn`, `.panel-head`, `.page-toolbar`, 모달(`.modal-backdrop`+`.open` / `.modal` / `.modal-actions`) 등 페이지 뼈대. 화면 공통 버튼은 항상 우측 상단 — 제목과 한 줄이면 `.panel-head`, 조회조건 영역이 있으면 그 위에 `.page-toolbar` |
+| `/css/common-ui.css` | `:root` 변수, `.app-shell`, `.btn`, `.panel-head`, `.page-toolbar`, 모달(`.modal-backdrop`+`.open` / `.modal` / `.modal-actions`), 상태 뱃지(`.badge.<코드값 소문자>` — 처리여부·심각도·스캔 결과) 등 페이지 뼈대. 화면 공통 버튼은 항상 우측 상단 — 제목과 한 줄이면 `.panel-head`, 조회조건 영역이 있으면 그 위에 `.page-toolbar` |
 | `/css/grid.css` | `.grid` 공통 모양. 헤더 높이(45px)와 본문 행 높이(32px)를 모든 그리드에서 고정한다 — 화면 `<style>`에서 행 높이를 덮어쓰지 않는다. 헤더는 `position:sticky`라 세로 스크롤 때 고정된다. 행 안의 버튼(취약점 조회 스캔, 취약점 관리 상세보기)은 `.btn.grid-btn` |
 | `/js/grid.js` | 컬럼 정의(`COLUMNS`)로 헤더·행·입력 셀까지 만드는 공통 그리드 렌더러. `renderHeader`가 tbody의 첫 안내 행("조회 중입니다...", colspan 자동)도 넣으므로 템플릿의 `<tbody>`는 비워 둔다. 행 데이터는 `getRows`/`getRow`(원본 row + 입력 셀 현재 값, `_rowIndex`/`_isNew`/`_selected`)로 읽고 `onRowClick(tr, row)`도 같은 값을 받는다. select 컬럼에 `display(value, label, row)`를 주면 평소엔 그 결과(뱃지 등)를 보여주고 셀을 누를 때만 select로 바뀐다(취약점 관리 처리여부). 또 table을 `.grid-scroll`로 감싸고 숫자 `width`를 최소 폭으로도 적용해, 화면보다 넓으면 가로 스크롤이 생긴다. `.grid-scroll`의 세로 한도(`max-height`)는 grid.js가 "그 영역 시작 위치부터 화면 아래 끝까지"로 계산해 넣어(헤더·행을 그릴 때, 창 크기 변경 때), 행이 많으면 페이지가 아니라 그리드 본문만 스크롤된다(최소 200px). 화면이 스크롤 영역을 직접 둔 경우(`.grid-wrap`, 취약점 관리)는 감싸지 않는다. **모든 그리드 공통으로** 클릭한 셀에 테두리(`td.cell-current`)를 그리고, 데이터 셀 우클릭 시 공통 메뉴(셀 복사 / 행 복사(탭 구분) / 엑셀 다운로드)를 띄운다 — 값은 화면에 보이는 값(입력 셀은 현재 입력값, select는 옵션 이름)이고 id 없는 컬럼(행 선택·버튼 열)은 행 복사·엑셀에서 빠진다. 입력 셀(에디터) 위에서도 같은 메뉴가 뜨고, 우클릭으로는 입력칸에 커서가 들어가지 않는다(mousedown 기본 동작 차단). 클립보드는 http(비보안 컨텍스트)면 `execCommand` 폴백. 헤더(th)를 드래그앤드롭하면 컬럼 순서가 바뀐다 — 화면이 넘긴 컬럼 배열을 제자리에서 바꾸므로(`moveColumn`) 재조회해도 유지되고 새로고침하면 원래 순서다. **그래서 화면 코드가 컬럼을 순번(`cells[i]`, `COLUMNS[i]`)으로 가정하면 안 된다** — 행 데이터는 항상 `col.id`로 읽는다 |
 | `/js/xlsx-writer.js` | 외부 라이브러리 없는 최소 .xlsx 작성기(무압축 zip + 시트 XML). `XlsxWriter.download(파일명, {sheetName, headers, widths, rows})`. 모든 셀을 문자열로 넣는다 — CSV면 엑셀이 버전 `1.10`을 숫자 1.1로 바꾼다. 헤더는 화면 그리드처럼 항상 가운데 정렬 + 배경 RGB(31,56,100)·흰 굵은 글꼴(`HEADER_FILL`). `loading-overlay.html`이 싣는다 |
@@ -238,6 +256,7 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `RepoUrlValidatorTest` — 앱 등록 저장소 URL 허용/거부 판정
 - `UserServiceTest` — 본인 비밀번호 변경 검증(현재 비밀번호 확인, 빈 값·동일 값 거부)
 - `ComCdServiceTest` — 설정 스위치 공통코드의 켜짐 판단(사용여부 Y/N, 코드 없으면 기본값)
+- `ScanHistoryServiceTest` — 스캔 이력의 신규 건수 계산(전후 OPEN 키 비교), 시작·성공·실패 기록, 오류 문구에 내부 메시지 미노출, 이력 저장 실패가 스캔을 막지 않음
 - `CveSummaryServiceTest` — 설명 요약 대기 판단(CVE ID 단위, 해시 비교, 최신 설명 선택)과 저장 검증
 
 즉 **컨트롤러·보안·화면에는 자동 테스트가 없다.** 그 영역의 변경을 분석할 때 "테스트가 통과했으니

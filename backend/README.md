@@ -126,7 +126,7 @@ com.sjinc.cvemonitor
     ├── osv                 # OSV API 클라이언트, 수정 버전 해석
     ├── permission          # 사용자별 프로그램 권한
     ├── program             # 프로그램(화면) 관리
-    ├── scan                # 스캔 오케스트레이션
+    ├── scan                # 스캔 오케스트레이션, 스캔 이력
     ├── user                # 사용자 관리, 인증
     └── vulnerability       # 취약점 조회/동기화/판정
 ```
@@ -139,12 +139,13 @@ com.sjinc.cvemonitor
 화면은 `templates/program/<이름>.html` 하나만 추가하면 된다 — `ViewController`가 `/program/{*path}`
 경로를 그대로 템플릿 이름으로 쓰므로 화면이 늘어도 컨트롤러를 고치지 않는다.
 사이드바 메뉴는 고정 메뉴 + 로그인 사용자가 권한을 가진 프로그램이 자동으로 표시된다.
+고정 메뉴는 취약점 관리·취약점 조회·스캔 이력·리포트다(`mvc/FixedMenu`, `fragments/sidebar.html`).
 
 공통 자산은 화면마다 다시 만들지 않고 아래를 쓴다.
 
 | 파일 | 역할 |
 | --- | --- |
-| `/css/common-ui.css` | `:root` 변수, 레이아웃 셸, 버튼, 패널 헤더 |
+| `/css/common-ui.css` | `:root` 변수, 레이아웃 셸, 버튼, 패널 헤더, 상태 뱃지(`.badge`) |
 | `/css/grid.css` | `.grid` 공통 모양 |
 | `/js/grid.js` | 컬럼 정의로 헤더·행·입력 셀까지 만드는 공통 그리드 렌더러 |
 | `/js/com-cd.js` | 공통코드로 select 옵션 채우기 (그룹당 1회 캐시) |

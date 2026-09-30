@@ -128,3 +128,16 @@ body{
 .modal h3:first-of-type{ cursor:move; user-select:none; }
 .modal.is-dragging{ user-select:none; }
 .modal-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
+
+/* 그리드 셀 안의 상태 뱃지. 클래스는 코드값을 소문자로 쓴다 — 처리여부(OPEN/RESOLVED)·심각도는 취약점 관리,
+   스캔 결과(RUNNING/SUCCESS/FAILED)는 스캔 이력 화면. */
+.badge{ display:inline-block; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:700; }
+.badge.open{ background:#fff3d6; color:#b8860b; }
+.badge.resolved{ background:#e6f4ea; color:#2e7d32; }
+.badge.critical{ background:var(--accent-soft); color:var(--accent); }
+.badge.high{ background:#ffe4ec; color:#d6285a; }
+.badge.medium{ background:#fff3d6; color:#b8860b; }
+.badge.low{ background:#e6f4ea; color:#2e7d32; }
+.badge.running{ background:#e3ecff; color:#2f5bd3; }
+.badge.success{ background:#e6f4ea; color:#2e7d32; }
+.badge.failed{ background:var(--accent-soft); color:var(--accent); }

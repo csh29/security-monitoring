@@ -8,6 +8,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
+import java.security.Principal;
+
 @RestController
 @RequestMapping("/api/scan")
 @RequiredArgsConstructor
@@ -18,8 +20,9 @@ public class ScanController {
 
     /** 화면의 "검증" 버튼 클릭 시 호출되는 엔드포인트. */
     @PostMapping
-    public ScanResult scan(@RequestBody ScanRequest request) throws Exception {
-        return scanOrchestrationService.scanRepository(request.repoUrl(), request.branch());
+    public ScanResult scan(@RequestBody ScanRequest request, Principal principal) throws Exception {
+        return scanOrchestrationService.scanRepository(request.repoUrl(), request.branch(),
+                principal != null ? principal.getName() : null);
     }
 
     /** 앱 관리에 등록되지 않은 repoUrl/branch 등, 요청 자체가 잘못된 경우(400)와 스캔 도중 실패(500)를 구분한다. */
