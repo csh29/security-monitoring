@@ -124,10 +124,12 @@
         // ── 우측: 코드(디테일) — 툴바 버튼은 전부 이 그리드에 연동된다. ──
         const CODE_COLUMNS = [
             { type: 'row-select', width: 36, align: 'center' },
-            { id: 'codeValue', label: '코드값', type: 'text' },
-            { id: 'codeName', label: '코드명', type: 'text' },
-            { id: 'sortOrder', label: '정렬순서', type: 'number', width: 90 },
+            { id: 'codeValue', label: '코드값', type: 'text', width: 130 },
+            { id: 'codeName', label: '코드명', type: 'text', width: 200 },
+            // 입력칸 최소 폭(grid.css, 80px)보다 좁게는 줄지 않는다.
+            { id: 'sortOrder', label: '정렬순서', type: 'number', width: 80 },
             { id: 'useYn', label: '사용', type: 'checkbox', width: 70, align: 'center' },
+            // 폭을 주지 않아 나머지 공간을 전부 쓴다 — 설정 스위치 코드(AI_CONFIG 등)는 비고에 설명이 길게 들어간다.
             { id: 'remark', label: '비고', type: 'text' }
         ];
 

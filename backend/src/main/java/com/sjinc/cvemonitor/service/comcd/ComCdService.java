@@ -28,6 +28,17 @@ public class ComCdService {
         return comCdRepository.findByCodeGroupOrderBySortOrderAsc(codeGroup);
     }
 
+    /**
+     * 설정 스위치로 쓰는 공통코드의 켜짐 여부 — 사용여부가 Y면 켜짐. 공통코드 관리 화면에서 체크 하나로 바꾸고,
+     * 호출할 때마다 DB를 읽으므로 재기동 없이 바로 반영된다. 코드가 지워져 없으면 defaultValue.
+     */
+    @Transactional(readOnly = true)
+    public boolean isEnabled(String codeGroup, String codeValue, boolean defaultValue) {
+        return comCdRepository.findFirstByCodeGroupAndCodeValueOrderByIdAsc(codeGroup, codeValue)
+                .map(code -> "Y".equals(code.getUseYn()))
+                .orElse(defaultValue);
+    }
+
     /** request.id()가 있으면 수정, 없으면 신규 등록. */
     @Transactional
     public ComCd saveCode(ComCdRequest request) {

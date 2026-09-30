@@ -21,7 +21,7 @@ Git 저장소(Maven 프로젝트)를 clone 해서 의존성을 뽑고, OSV/NVD�
 | Group / Artifact | `org.example` / `cve-monitoring` |
 | 기본 패키지 | `com.sjinc.cvemonitor` |
 | View | Thymeleaf (서버 렌더링) |
-| DB | H2 (in-memory, `ddl-auto=update`) |
+| DB | H2 파일 DB (`backend/data/cvemonitor.mv.db`, `ddl-auto=update`) |
 | 인증 | Spring Security 폼 로그인 + 프로그램별 권한 |
 | AI 배치 | Python (`py` 런처) + `anthropic`, `requests` |
 
@@ -34,7 +34,7 @@ Git 저장소(Maven 프로젝트)를 clone 해서 의존성을 뽑고, OSV/NVD�
 | `spring-boot-starter-data-jpa` | 엔티티 / Repository |
 | `spring-boot-starter-security` | 로그인 및 접근 제어 |
 | `spring-boot-starter-thymeleaf` | 화면 템플릿 |
-| `h2` *(runtime)* | in-memory DB |
+| `h2` *(runtime)* | 파일 DB |
 | `spring-boot-devtools` *(runtime, optional)* | 로컬 자동 재시작 |
 | `spring-boot-starter-tomcat` *(provided)* | 내장 서버 (외부 WAS 배포 시 제외) |
 | `maven-invoker` | 스캔 대상 프로젝트에서 `dependency:tree` 실행 |
@@ -74,9 +74,11 @@ Windows에서는 `mvnw.cmd`를 쓴다.
 | `ai.python.command` | 파이썬 실행 명령 (이 PC는 `py`) |
 | `ai.assessor.script` | 배치 스크립트 경로 (`../ai/vuln_assessor.py`) |
 | `ai.assessment.severities` | AI 판단 대상 등급 (기본 `HIGH,CRITICAL`) |
+| `ai.auto-trigger.enabled` | 스캔 후 AI 배치 자동 실행의 초기값 — DB를 처음 만들 때만 쓰인다 (기본 `true`). 실행 중에는 공통코드 관리 화면 `AI_CONFIG`/`AUTO_TRIGGER` 사용여부로 재기동 없이 켜고 끈다 |
 
-초기 관리자 계정은 기동할 때마다 무작위 비밀번호로 생성되며 **서버 로그에 한 번만 출력된다.**
-(H2가 in-memory라 재기동 시 초기화된다.)
+초기 관리자 계정은 DB를 처음 만들 때 무작위 비밀번호로 생성되며 **서버 로그에 한 번만 출력된다.**
+DB는 `backend/data/`에 파일로 남아 재기동해도 유지된다. 처음부터 다시 시작하려면 서버를 끄고 `data` 폴더를 지운다
+(초기 데이터와 관리자 비밀번호가 새로 만들어진다).
 
 ### AI 배치
 

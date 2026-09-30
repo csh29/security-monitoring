@@ -16,8 +16,10 @@ import com.sjinc.cvemonitor.repository.ProgramRepository;
 import com.sjinc.cvemonitor.repository.UserProgramPermissionRepository;
 import com.sjinc.cvemonitor.repository.UserRepository;
 import com.sjinc.cvemonitor.repository.VulnerabilityRepository;
+import com.sjinc.cvemonitor.service.ai.AiAssessmentTriggerService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
@@ -27,11 +29,15 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * H2가 in-memory라 재기동 시마다 초기화되므로, 로그인용 초기 관리자 계정을 매번 심어둔다.
+ * DB가 비어 있을 때(사용자가 한 명도 없을 때) 한 번만 초기 데이터를 심는다 — 관리자 계정, 프로그램·권한, 공통코드,
+ * 샘플 앱·취약점. H2 파일 DB라 재기동해도 데이터가 남으므로 두 번째 기동부터는 아무것도 하지 않는다.
+ *
+ * <p>그래서 <b>여기에 심을 데이터를 새로 추가해도 이미 만들어진 DB에는 들어가지 않는다.</b> 기존 DB에도 넣어야 하면
+ * data 폴더를 지워 새로 시작하거나, 해당 데이터만 "없으면 넣기"로 따로 심는다.
  *
  * <p>비밀번호는 소스에 평문으로 박아두지 않는다 — 그 상태로 배포되면 계정이 공개된 것과 같다.
- * 대신 기동할 때마다 무작위로 생성해서 로그 한 줄로만 알려준다(운영자는 서버 로그에서 최초 1회
- * 확인하고, 첫 로그인 후 반드시 비밀번호를 바꿔야 한다).
+ * 대신 DB를 처음 만들 때 무작위로 생성해서 로그 한 줄로만 알려준다(운영자는 서버 로그에서 최초 1회
+ * 확인하고, 첫 로그인 후 반드시 비밀번호를 바꿔야 한다). 잃어버리면 data 폴더를 지우고 새로 시작하는 수밖에 없다.
  */
 @Component
 @RequiredArgsConstructor
@@ -50,6 +56,10 @@ public class DataInitializer implements CommandLineRunner {
     private final VulnerabilityRepository vulnerabilityRepository;
     private final CveSummaryRepository cveSummaryRepository;
     private final PasswordEncoder passwordEncoder;
+
+    /** AI 배치 자동 실행 스위치(공통코드 AI_CONFIG/AUTO_TRIGGER)의 초기값. 실행 중 켜고 끄기는 공통코드 관리 화면에서 한다. */
+    @Value("${ai.auto-trigger.enabled:true}")
+    private boolean aiAutoTriggerDefault;
 
     @Override
     public void run(String... args) {
@@ -163,6 +173,10 @@ public class DataInitializer implements CommandLineRunner {
                 .codeGroup("SEVERITY").groupName("심각도").sortOrder(2).useYn("Y").build());
         comCdGroupRepository.save(ComCdGroup.builder()
                 .codeGroup("VULN_STATUS").groupName("처리여부").sortOrder(3).useYn("Y").build());
+        // select 옵션이 아니라 실행 중에 바꾸는 설정 스위치. 사용여부(Y/N)가 곧 켜짐/꺼짐이다(ComCdService.isEnabled).
+        comCdGroupRepository.save(ComCdGroup.builder()
+                .codeGroup(AiAssessmentTriggerService.CONFIG_GROUP).groupName("AI 배치 설정").sortOrder(4).useYn("Y")
+                .remark("사용여부 = 켜짐/꺼짐. 바꾸면 재기동 없이 다음 스캔부터 적용").build());
 
         int sort = 1;
         comCdRepository.save(ComCd.builder()
@@ -185,6 +199,11 @@ public class DataInitializer implements CommandLineRunner {
                 .codeGroup("VULN_STATUS").codeValue("OPEN").codeName("미해결").sortOrder(sort++).useYn("Y").build());
         comCdRepository.save(ComCd.builder()
                 .codeGroup("VULN_STATUS").codeValue("RESOLVED").codeName("처리완료").sortOrder(sort).useYn("Y").build());
+
+        comCdRepository.save(ComCd.builder()
+                .codeGroup(AiAssessmentTriggerService.CONFIG_GROUP).codeValue(AiAssessmentTriggerService.AUTO_TRIGGER_CODE)
+                .codeName("스캔 후 AI 배치 자동 실행").sortOrder(1).useYn(aiAutoTriggerDefault ? "Y" : "N")
+                .remark("사용 체크 = 켜짐. 켜 두면 스캔 뒤 Claude API를 호출한다(과금)").build());
 
         App crmBack = appRepository.save(App.builder()
                 .repoUrl("https://git.sejung.co.kr/crm/back.git")

@@ -120,7 +120,7 @@ public class UserService {
      * 사용자 삭제 시, 해당 사용자에게 부여된 프로그램 권한도 함께 정리한다.
      *
      * <p>자기 자신은 지우지 못하게 막는다 — 사용자 관리 권한을 가진 마지막 사람이 자기 계정을
-     * 지우면 아무도 사용자/권한을 손댈 수 없는 상태가 되고, 인메모리 H2라 복구 수단도 재기동밖에 없다.
+     * 지우면 아무도 사용자/권한을 손댈 수 없는 상태가 되고, 화면으로는 되돌릴 방법이 없다(DB를 직접 고치거나 data 폴더를 지우고 새로 시작해야 한다).
      */
     @Transactional
     public void deleteUser(Long id, String currentUsername) {

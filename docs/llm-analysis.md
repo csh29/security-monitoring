@@ -23,8 +23,11 @@ Git 저장소(Maven 프로젝트)를 clone → 의존성 추출 → 취약점 DB
 | `backend/` | Spring Boot 3.3.4 / Java 17 / Maven. 서버 + 화면(Thymeleaf) 전부 |
 | `ai/` | 파이썬 배치(`vuln_assessor.py`). 스캔이 끝나면 할 일이 있을 때 서버가 띄우고(`AiAssessmentTriggerService`, 아래 4장), 사람이 직접 실행해도 된다. 어느 쪽이든 **배치가 드라이버다** — 배치가 `/api/ai/**`를 호출해 대기 중인 취약점·fix-plan·설명 요약을 스스로 가져가고 결과를 되돌려준다. 자바는 띄우기만 하고 결과를 기다리지 않는다 |
 
-DB는 H2 in-memory(`ddl-auto=update`)다. **재기동하면 데이터가 사라지고** `DataInitializer`가
-초기 데이터를 다시 심는다 — "DB에 있던 값이 없어졌다"는 현상을 버그로 오해하지 않는다.
+DB는 H2 **파일 DB**(`jdbc:h2:file:./data/cvemonitor` → 서버를 띄운 `backend/data/cvemonitor.mv.db`, `ddl-auto=update`)다.
+재기동해도 데이터가 남는다. `DataInitializer`는 **DB가 비어 있을 때(사용자 0명) 한 번만** 초기 데이터를 심으므로,
+**거기에 심을 데이터를 새로 추가해도 이미 만들어진 DB에는 들어가지 않는다** — 새로 시작하려면 서버를 끄고 `data` 폴더를 지운다.
+초기 관리자 비밀번호도 DB를 처음 만들 때 한 번만 로그에 찍힌다. 같은 DB 파일은 한 프로세스만 열 수 있어서 서버를 두 개 띄우거나
+서버가 켜진 채 다른 도구로 열면 잠금 오류가 난다. 예전엔 메모리 DB라 재기동마다 사람이 남긴 처리여부·비고·요약이 사라지고 요약이 다시 과금됐다.
 초기 데이터에는 CRM_BACK 앱의 샘플 취약점 2건(설명이 `[샘플]`로 시작)이 있고, AI 배치가 잡지 않도록 판단 결과와 설명 요약(`CveSummary`)이 미리 채워져 있다.
 
 ---
@@ -60,7 +63,7 @@ com.sjinc.cvemonitor
 5. `VulnerabilityService.upsertEntity` → NVD 보강 + 결정론 판정 + 저장
 6. `resolveMissingVulnerabilities` → 이번 스캔에 안 걸린 기존 OPEN 건을 RESOLVED로 표시
 7. `ScanSnapshot` 저장 (fix-plan이 나중에 참고할 pom.xml + tree 원문)
-8. `triggerAiAssessmentIfNeeded` → AI 판단 대기(`getUnassessedVulnerabilities`), fix-plan 대기
+8. `triggerAiAssessmentIfNeeded` → 먼저 자동 실행 스위치(공통코드 `AI_CONFIG`/`AUTO_TRIGGER`의 사용여부)를 보고 꺼져 있으면 바로 끝낸다. 켜져 있으면 AI 판단 대기(`getUnassessedVulnerabilities`), fix-plan 대기
    (`getPendingFixPlanTargets`), 설명 요약 대기(`CveSummaryService.getPendingSummaryTargets`)가 하나라도 있으면 `AiAssessmentTriggerService.triggerAsync()`로 파이썬
    배치를 백그라운드로 띄운다(fire-and-forget, 이미 떠 있으면 건너뜀). "새 CVE가 저장됐는가"가 아니라
    배치가 가져갈 대기열로 판단한다 — 새 CVE가 결정론 자동판정으로 끝나면 AI가 볼 게 없고, 새 CVE가
@@ -160,13 +163,14 @@ OPEN만)에서도 빠진다.
 | `/css/grid.css` | `.grid` 공통 모양. 헤더 높이(45px)와 본문 행 높이(32px)를 모든 그리드에서 고정한다 — 화면 `<style>`에서 행 높이를 덮어쓰지 않는다. 헤더는 `position:sticky`라 세로 스크롤 때 고정된다. 행 안의 버튼(취약점 조회 스캔, 취약점 관리 상세보기)은 `.btn.grid-btn` |
 | `/js/grid.js` | 컬럼 정의(`COLUMNS`)로 헤더·행·입력 셀까지 만드는 공통 그리드 렌더러. `renderHeader`가 tbody의 첫 안내 행("조회 중입니다...", colspan 자동)도 넣으므로 템플릿의 `<tbody>`는 비워 둔다. 행 데이터는 `getRows`/`getRow`(원본 row + 입력 셀 현재 값, `_rowIndex`/`_isNew`/`_selected`)로 읽고 `onRowClick(tr, row)`도 같은 값을 받는다. select 컬럼에 `display(value, label, row)`를 주면 평소엔 그 결과(뱃지 등)를 보여주고 셀을 누를 때만 select로 바뀐다(취약점 관리 처리여부). 또 table을 `.grid-scroll`로 감싸고 숫자 `width`를 최소 폭으로도 적용해, 화면보다 넓으면 가로 스크롤이 생긴다. `.grid-scroll`의 세로 한도(`max-height`)는 grid.js가 "그 영역 시작 위치부터 화면 아래 끝까지"로 계산해 넣어(헤더·행을 그릴 때, 창 크기 변경 때), 행이 많으면 페이지가 아니라 그리드 본문만 스크롤된다(최소 200px). 화면이 스크롤 영역을 직접 둔 경우(`.grid-wrap`, 취약점 관리)는 감싸지 않는다. **모든 그리드 공통으로** 클릭한 셀에 테두리(`td.cell-current`)를 그리고, 데이터 셀 우클릭 시 공통 메뉴(셀 복사 / 행 복사(탭 구분) / 엑셀 다운로드)를 띄운다 — 값은 화면에 보이는 값(입력 셀은 현재 입력값, select는 옵션 이름)이고 id 없는 컬럼(행 선택·버튼 열)은 행 복사·엑셀에서 빠진다. 입력 셀(에디터) 위에서도 같은 메뉴가 뜨고, 우클릭으로는 입력칸에 커서가 들어가지 않는다(mousedown 기본 동작 차단). 클립보드는 http(비보안 컨텍스트)면 `execCommand` 폴백. 헤더(th)를 드래그앤드롭하면 컬럼 순서가 바뀐다 — 화면이 넘긴 컬럼 배열을 제자리에서 바꾸므로(`moveColumn`) 재조회해도 유지되고 새로고침하면 원래 순서다. **그래서 화면 코드가 컬럼을 순번(`cells[i]`, `COLUMNS[i]`)으로 가정하면 안 된다** — 행 데이터는 항상 `col.id`로 읽는다 |
 | `/js/xlsx-writer.js` | 외부 라이브러리 없는 최소 .xlsx 작성기(무압축 zip + 시트 XML). `XlsxWriter.download(파일명, {sheetName, headers, widths, rows})`. 모든 셀을 문자열로 넣는다 — CSV면 엑셀이 버전 `1.10`을 숫자 1.1로 바꾼다. 헤더는 화면 그리드처럼 항상 가운데 정렬 + 배경 RGB(31,56,100)·흰 굵은 글꼴(`HEADER_FILL`). `loading-overlay.html`이 싣는다 |
+| `/js/modal-drag.js` | 공통 모달(`.modal-backdrop` > `.modal`)을 첫 `h3`(제목줄)로 끌어 옮긴다. `transform`으로만 움직여 닫히면(`.open` 제거) 위치가 초기화되고, 제목줄이 화면 밖으로 못 나가게 막는다. 끌다가 백드롭 위에서 놓으면 생기는 click을 삼켜 "백드롭 클릭 = 닫기"가 오작동하지 않게 한다. `loading-overlay.html`이 싣는다 — **새 모달은 제목을 `h3`로 두기만 하면 된다** |
 | `/js/com-cd.js` | 공통코드로 select 옵션 채우기(그룹당 1회 캐시) |
 | `/js/tabs.js` | 홈 화면 탭 |
 | `/js/hotkeys.js` | 공통 펑션키 F3 조회 / F4 신규 / F5 삭제 / F9 저장 / F12 초기화. 버튼에 `data-hotkey="F3"`만 붙이면 되고, 버튼 글자 뒤 `[F3]` 표기도 이 파일이 자동으로 붙인다. `loading-overlay.html`이 싣는다 |
 | `/js/search-form.js` | 조회영역 공통 렌더러 `SearchForm.render(container, fields, {onSearch})` → `values()`/`reset()`/`field(id)`/`matches(row)`/`ready`. `matches(row)`는 전체 목록을 받아 조회조건을 화면에서 거르는 화면(프로그램·사용자·공통코드 관리, 취약점 조회)이 쓴다 — text 필드마다 `row[field.id]` 부분 일치(대소문자 무시). 화면은 `<section class="search-row" id="searchArea">`만 두고 label/input 마크업을 직접 쓰지 않는다 |
 | `fragments/page-toolbar.html` | 화면 첫 줄 — 좌상단 프로그램명 + 우측 상단 공통 버튼. 값(`programNm`, `pageButtons`)은 `ViewController`가 넣는다. 버튼은 마크업에 쓰지 않는다(아래 "화면 공통 버튼" 참고) |
 | `/js/page-buttons.js` | `PageButtons.bind({ btnSave: fn })` — 권한 때문에 안 그려진 버튼은 건너뛰고 핸들러를 건다. `loading-overlay.html`이 싣는다 |
-| `fragments/loading-overlay.html` | 전역 스피너 + **CSRF 헤더를 붙이는 공통 fetch 래퍼** + `hotkeys.js`·`page-buttons.js`·`xlsx-writer.js` 로드 |
+| `fragments/loading-overlay.html` | 전역 스피너 + **CSRF 헤더를 붙이는 공통 fetch 래퍼** + `hotkeys.js`·`page-buttons.js`·`xlsx-writer.js`·`modal-drag.js` 로드 |
 
 화면 코드에서 `fetch(...)`에 CSRF 헤더를 붙이는 부분을 찾아도 없다 — `loading-overlay.html`이
 `window.fetch` 자체를 감싸서 전역으로 처리한다.
@@ -215,6 +219,7 @@ OPEN만)에서도 빠진다.
 | `ai.python.command` | 파이썬 실행 명령 (이 PC는 `py`) |
 | `ai.assessor.script` | 배치 스크립트 경로 (`../ai/vuln_assessor.py`) |
 | `ai.assessment.severities` | AI 판단 대상 등급 (기본 `HIGH,CRITICAL`) |
+| `ai.auto-trigger.enabled` | 스캔 후 AI 배치 자동 실행 스위치의 **초기값**(기본 `true`, DB를 처음 만들 때만 쓰인다). 실제 스위치는 공통코드 `AI_CONFIG`/`AUTO_TRIGGER`의 사용여부로, 공통코드 관리 화면에서 바꾸면 재기동 없이 다음 스캔부터 적용된다(`ComCdService.isEnabled`). DB를 처음 만들 때만 이 값으로 심는다(파일 DB라 재기동해도 공통코드 값이 유지된다). 로컬은 `false`로 두면 과금 없이 스캔할 수 있다 |
 | `scan.allowed-repo-hosts` | 앱 등록을 허용할 저장소 호스트 목록(쉼표 구분, 기본 `git.sejung.co.kr`). 다른 호스트를 쓰게 되면 여기서 늘린다 |
 
 AI 배치 실행 로그는 `backend/ai-assessor.log`에 이어 쌓인다(gitignore 대상). 줄마다 `[YYYY-MM-DD HH:MM:SS][traceId]`가 붙는다(`_TimestampedStream`, traceback 포함). traceId는 실행마다 하나 — 서버가 띄우면 `AiAssessmentTriggerService`가 만들어 `CVE_MONITOR_TRACE_ID`로 넘기고 서버 로그의 "배치 실행 시작/종료" 줄에도 찍는다(사람이 직접 돌리면 파이썬이 만든다). 실행마다 `===== AI 배치 시작 =====` / `===== AI 배치 종료(exit=N) =====` 줄과 끝의 빈 줄이 남는다. 서버가 `PYTHONIOENCODING=utf-8`로 띄워 로그는 UTF-8이다(예전엔 윈도우 기본 cp949라 IDE에서 한글이 깨졌다).
@@ -232,6 +237,7 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `VulnerabilityTest` — 엔티티 규칙
 - `RepoUrlValidatorTest` — 앱 등록 저장소 URL 허용/거부 판정
 - `UserServiceTest` — 본인 비밀번호 변경 검증(현재 비밀번호 확인, 빈 값·동일 값 거부)
+- `ComCdServiceTest` — 설정 스위치 공통코드의 켜짐 판단(사용여부 Y/N, 코드 없으면 기본값)
 - `CveSummaryServiceTest` — 설명 요약 대기 판단(CVE ID 단위, 해시 비교, 최신 설명 선택)과 저장 검증
 
 즉 **컨트롤러·보안·화면에는 자동 테스트가 없다.** 그 영역의 변경을 분석할 때 "테스트가 통과했으니

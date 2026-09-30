@@ -1,6 +1,8 @@
 package com.sjinc.cvemonitor.service.ai;
 
 import com.sjinc.cvemonitor.dto.ai.AiBatchStatus;
+import com.sjinc.cvemonitor.service.comcd.ComCdService;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -22,7 +24,24 @@ import java.util.UUID;
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class AiAssessmentTriggerService {
+
+    /**
+     * 스캔 후 자동 실행 스위치 — 공통코드 AI_CONFIG / AUTO_TRIGGER의 사용여부(Y=켜짐). 배치는 Claude API를 호출해
+     * 과금되므로 스캔을 반복하는 개발·테스트 때 끌 수 있게 둔다. 공통코드 관리 화면에서 바꾸면 다음 스캔부터 바로 적용된다.
+     */
+    public static final String CONFIG_GROUP = "AI_CONFIG";
+    public static final String AUTO_TRIGGER_CODE = "AUTO_TRIGGER";
+
+    private final ComCdService comCdService;
+
+    /**
+     * 자동 실행 스위치의 초기값. DB를 처음 만들 때 공통코드를 이 값으로 심는다(DataInitializer) — 그 뒤로는 공통코드 값이 기준이다.
+     * 공통코드가 지워져 없을 때도 이 값을 쓴다. 실행 중 켜고 끄기는 공통코드로 한다.
+     */
+    @Value("${ai.auto-trigger.enabled:true}")
+    private boolean autoTriggerDefault;
 
     @Value("${ai.assessor.script}")
     private String assessorScriptPath;
@@ -88,6 +107,11 @@ public class AiAssessmentTriggerService {
             // 파이썬/스크립트를 못 띄워도 스캔 결과 저장 자체는 이미 끝났으므로 스캔을 실패시키지 않는다.
             log.warn("AI 판단 배치 실행 실패 (스캔 결과 저장에는 영향 없음): {}", e.getMessage());
         }
+    }
+
+    /** 스캔 후 자동 실행이 켜져 있는가(ScanOrchestrationService가 스캔마다 확인). */
+    public boolean isAutoTriggerEnabled() {
+        return comCdService.isEnabled(CONFIG_GROUP, AUTO_TRIGGER_CODE, autoTriggerDefault);
     }
 
     public AiBatchStatus getStatus() {

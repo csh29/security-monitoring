@@ -124,4 +124,7 @@ body{
     box-shadow:0 12px 32px rgba(25,25,64,.25);
 }
 .modal h3{ font-size:13px; font-weight:700; color:var(--text-sub); margin-bottom:10px; }
+/* 제목줄을 잡고 끌면 모달이 움직인다(/js/modal-drag.js). */
+.modal h3:first-of-type{ cursor:move; user-select:none; }
+.modal.is-dragging{ user-select:none; }
 .modal-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }

@@ -193,6 +193,12 @@ public class ScanOrchestrationService {
      * 성공으로 끝내고 로그만 남긴다.
      */
     private void triggerAiAssessmentIfNeeded() {
+        if (!aiAssessmentTriggerService.isAutoTriggerEnabled()) {
+            // 대기열 조회(요약 대기는 설명 전체를 읽는다)도 할 필요가 없어 바로 끝낸다. 대기열은 그대로 남는다.
+            log.info("공통코드 {}/{}가 꺼져 있어 스캔 후 AI 배치를 띄우지 않습니다.",
+                    AiAssessmentTriggerService.CONFIG_GROUP, AiAssessmentTriggerService.AUTO_TRIGGER_CODE);
+            return;
+        }
         try {
             boolean hasPendingAssessment = !vulnerabilityService.getUnassessedVulnerabilities().isEmpty();
             boolean hasPendingFixPlan = !fixPlanService.getPendingFixPlanTargets().isEmpty();
