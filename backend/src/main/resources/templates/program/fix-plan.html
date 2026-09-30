@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>조치안 · 보안취약점 모니터링 대시보드</title>
+    <link rel="stylesheet" href="/css/common-ui.css">
+    <link rel="stylesheet" href="/css/grid.css">
+    <style>
+        /* 화면 공통 뼈대·뱃지·모달·상세 표(.detail-list)는 common-ui.css, .grid는 grid.css. 여기는 이 화면에서만 다른 값만. */
+        .summary{ margin-bottom:18px; }
+        .summary .detail-list{ grid-template-columns:130px 1fr; background:var(--card); }
+        .summary .empty{ padding:14px; color:var(--text-sub); font-size:13px; }
+        /* pom.xml 전문·판단 근거는 길어서 기본 모달 폭(560px)으로는 줄이 다 꺾인다. */
+        .text-modal{ max-width:960px; }
+        .text-modal pre{
+            font-family:Consolas,"D2Coding",monospace; font-size:12px; line-height:1.6;
+            white-space:pre-wrap; word-break:break-word; margin:0;
+            padding:12px; background:var(--bg); border:1px solid var(--line); border-radius:var(--radius-box);
+        }
+        .impact-modal{ max-width:760px; }
+        .impact-modal .detail-list{ grid-template-columns:130px 1fr; } /* "호환성 위험 (AI)" 라벨이 한 줄에 들어가게 */
+        /* AI 판단 값 안내. 표·그리드와 같은 줄에 놓이므로 제목(panel-title)보다 작고 옅게. */
+        .ai-note{ font-size:12px; line-height:1.6; color:var(--text-sub); margin:4px 0 8px; }
+        .ai-note b{ color:var(--accent); }
+        .impact-modal .ai-caution{
+            margin-bottom:10px; padding:8px 12px; font-size:12px; line-height:1.6;
+            background:#fff3d6; color:#8a6400; border-radius:var(--radius-box);
+        }
+        .impact-modal ul{ margin:0; padding-left:18px; }
+        .impact-modal li + li{ margin-top:6px; }
+    </style>
+</head>
+<body>
+<div class="app-shell" th:classappend="${param.embed} ? 'app-shell--embedded'">
+    <div th:replace="~{fragments/sidebar :: sidebar}"></div>
+    <div th:replace="~{fragments/topbar :: topbar}"></div>
+    <div th:replace="~{fragments/loading-overlay :: overlay}"></div>
+
+    <main class="area-main">
+        <section th:replace="~{fragments/page-toolbar :: toolbar}"></section>
+
+        <section class="search-row" id="searchArea"></section>
+
+        <section class="panel-head">
+            <div class="panel-title">조치안 요약</div>
+        </section>
+        <section class="summary" id="summaryArea"><div class="empty">조회 중입니다...</div></section>
+
+        <section class="panel-head">
+            <div class="panel-title" id="changesTitle">버전 변경</div>
+        </section>
+        <!-- 호환성 위험은 CVE 심각도(취약점 관리 화면)가 아니라 "이 버전으로 올리면 앱이 깨질 위험"이다. 같은 화면에 취약점 이야기가
+             섞여 있어 헷갈리기 쉬워 여기서 한 번 더 밝힌다. 제목 옆에 두면 제목까지 줄이 꺾여서 제목 아래 줄에 둔다. -->
+        <div class="ai-note"><b>(AI)</b> 컬럼은 AI가 릴리스 노트를 읽고 판단한 값이다. 호환성 위험은 취약점 심각도가 아니라 버전을 올릴 때 앱이 깨질 위험이다.
+            라이브러리~방식도 AI가 만든 수정안에서 온 값이니, 조치 전에 상세의 출처 원문과 수정된 pom.xml을 확인할 것.</div>
+        <section>
+            <table class="grid">
+                <thead id="changeGridHead"></thead>
+                <tbody id="changeGridBody"></tbody>
+            </table>
+        </section>
+    </main>
+</div>
+
+<div class="modal-backdrop" id="textModalBackdrop">
+    <div class="modal text-modal">
+        <h3 id="textModalTitle"></h3>
+        <pre id="textModalBody"></pre>
+        <div class="modal-actions">
+            <button type="button" class="btn" id="textModalCopy">복사</button>
+            <button type="button" class="btn" id="textModalClose">닫기</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-backdrop" id="impactModalBackdrop">
+    <div class="modal impact-modal">
+        <h3 id="impactModalTitle">변경 상세</h3>
+        <div class="ai-caution" id="impactModalCaution" hidden>
+            (AI) 항목은 AI가 아래 근거 문서를 읽고 정리한 것이라 틀리거나 빠진 내용이 있을 수 있다. 조치하기 전에 [출처] 링크의 원문을 확인할 것.
+            호환성 위험은 취약점 심각도가 아니라 이 버전으로 올릴 때 코드·설정을 고쳐야 할 가능성이다(높음: 반드시 수정 필요 / 보통: 동작 변경 가능 / 낮음: 근거상 breaking change 없음).
+        </div>
+        <dl class="detail-list" id="impactModalList"></dl>
+        <div class="modal-actions"><button type="button" class="btn" id="impactModalClose">닫기</button></div>
+    </div>
+</div>
+
+<script src="/js/grid.js"></script>
+<script src="/js/search-form.js"></script>
+<script th:inline="javascript">
+    (function () {
+        const API_URL = '/api/fix-plans/';
+        const APPS_URL = '/api/apps';
+        const summaryArea = document.getElementById('summaryArea');
+        const gridBody = document.getElementById('changeGridBody');
+
+        const STRATEGY_LABELS = { PARENT_UPGRADE: 'parent 업그레이드', PROPERTY_OVERRIDE: '프로퍼티 override', MIXED: '혼합' };
+        const PLAN_STATUS_LABELS = { PENDING_REVIEW: '검토 대기' };
+        const VIA_LABELS = { PARENT: 'parent', BOM: 'BOM', PROPERTY: '프로퍼티', DIRECT: '직접 선언' };
+        const JUMP_LABELS = { PATCH: '패치', MINOR: '마이너', MAJOR: '메이저', UNKNOWN: '확인 필요' };
+        const RISK_LABELS = { HIGH: '높음', MEDIUM: '보통', LOW: '낮음' };
+        const CONFIDENCE_LABELS = { high: '높음', medium: '보통', low: '낮음' };
+
+        function badge(text, cssClass) {
+            const span = document.createElement('span');
+            span.className = 'badge ' + cssClass;
+            span.textContent = text;
+            return span;
+        }
+
+        /** 서버의 LocalDateTime(ISO)을 "2026-09-30 09:52:51"로. */
+        function formatDateTime(value) {
+            return value ? String(value).replace('T', ' ').substring(0, 19) : '';
+        }
+
+        /**
+         * 변경 한 건의 영향 분석 상태. 패치·UNKNOWN은 분석 대상이 아니라서 impact가 항상 비어 있다 — 그걸 "분석 대기"로
+         * 보이면 영원히 기다리는 것처럼 읽히므로 따로 구분한다.
+         */
+        function impactState(change) {
+            if (change.jump === 'PATCH') return { label: '분석 제외', cls: 'patch', detail: '패치 점프라 AI 분석을 하지 않는다. 하위 호환이 원칙이므로 회귀 테스트만 하면 된다.' };
+            if (change.jump === 'UNKNOWN') return { label: '확인 필요', cls: 'unknown', detail: '버전을 낮추거나 그대로 두는 변경이거나, 버전을 해석할 수 없다. fix-plan을 사람이 다시 확인해야 한다.' };
+            if (!change.impact) return { label: '분석 대기', cls: 'pending', detail: '다음 AI 배치에서 분석된다.' };
+            if (change.impact.status === 'ANALYZED') return { label: '분석 완료', cls: 'analyzed' };
+            if (change.impact.status === 'NO_SOURCE') return { label: '근거 없음', cls: 'no_source', detail: '릴리스 노트를 어디서도 찾지 못해 AI를 부르지 않았다. 사람이 직접 확인해야 한다.' };
+            return { label: '수집 실패', cls: 'fetch_failed', detail: '일시 오류로 릴리스 노트를 받지 못했다. 다음 AI 배치에서 다시 시도한다.' };
+        }
+
+        const COLUMNS = [
+            // 좌표는 "org.springframework.boot:spring-boot-starter-parent"처럼 길다 — 행 높이가 고정(32px)이라 좁으면 두 줄로 꺾여 넘친다.
+            { id: 'coordinate', label: '라이브러리', width: 325 },
+            { id: 'propertyName', label: '프로퍼티', width: 100 },
+            { id: 'fromVersion', label: '현재', width: 90 },
+            { id: 'toVersion', label: '목표', width: 90 },
+            { id: 'via', label: '방식', width: 80, align: 'center', render: function (value) { return VIA_LABELS[value] || value || ''; } },
+            {
+                id: 'jump', label: '점프', width: 65, align: 'center',
+                render: function (value) { return badge(JUMP_LABELS[value] || value || '', (value || '').toLowerCase()); }
+            },
+            {
+                id: 'risk', label: '호환성 위험 (AI)', width: 110, align: 'center',
+                render: function (value, row) {
+                    const risk = row.impact && row.impact.risk;
+                    return risk ? badge(RISK_LABELS[risk] || risk, risk.toLowerCase()) : '';
+                }
+            },
+            {
+                id: 'confidence', label: '신뢰도 (AI)', width: 75, align: 'center',
+                render: function (value, row) {
+                    const confidence = row.impact && row.impact.confidence;
+                    return confidence ? (CONFIDENCE_LABELS[confidence] || confidence) : '';
+                }
+            },
+            {
+                id: 'breakingCount', label: 'breaking (AI)', width: 95, align: 'right',
+                render: function (value, row) {
+                    return row.impact && row.impact.status === 'ANALYZED' ? String((row.impact.breakingChanges || []).length) : '';
+                }
+            },
+            {
+                id: 'impactStatus', label: '분석 상태', width: 85, align: 'center',
+                render: function (value, row) { const state = impactState(row); return badge(state.label, state.cls); }
+            },
+            {
+                label: '상세', width: 60, align: 'center',
+                render: function (value, row) {
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'btn grid-btn';
+                    btn.textContent = '상세';
+                    btn.addEventListener('click', function () { openImpactModal(row); });
+                    return btn;
+                }
+            }
+        ];
+
+        Grid.renderHeader(document.getElementById('changeGridHead'), COLUMNS, { initialMessage: '시스템을 선택하세요.' });
+
+        const search = SearchForm.render(document.getElementById('searchArea'), [
+            {
+                id: 'appId', label: '시스템명', type: 'select',
+                options: function () {
+                    return fetch(APPS_URL)
+                        .then(function (res) { return res.ok ? res.json() : []; })
+                        .then(function (apps) {
+                            return apps.map(function (app) { return { value: app.id, label: app.systemName }; });
+                        });
+                },
+                onChange: searchPlan
+            }
+        ], { onSearch: searchPlan });
+
+        // ---- 모달 ----------------------------------------------------------------------------------------------
+
+        function bindModal(backdropId, closeId) {
+            const backdrop = document.getElementById(backdropId);
+            const close = function () { backdrop.classList.remove('open'); };
+            document.getElementById(closeId).addEventListener('click', close);
+            backdrop.addEventListener('click', function (e) { if (e.target === backdrop) close(); });
+            return backdrop;
+        }
+
+        const textModal = bindModal('textModalBackdrop', 'textModalClose');
+        const impactModal = bindModal('impactModalBackdrop', 'impactModalClose');
+
+        function openTextModal(title, text) {
+            document.getElementById('textModalTitle').textContent = title;
+            document.getElementById('textModalBody').textContent = text || '(내용 없음)';
+            textModal.classList.add('open');
+        }
+
+        document.getElementById('textModalCopy').addEventListener('click', function () {
+            // http(사내 IP) 접속에서도 되도록 grid.js의 폴백 복사를 쓴다.
+            Grid.copyText(document.getElementById('textModalBody').textContent)
+                .then(function () { alert('복사했습니다.'); })
+                .catch(function (err) { alert(err.message); });
+        });
+
+        /** AI가 만든 문자열이 들어가므로 전부 textContent로 넣는다. 링크는 http(s)만 — 서버도 거르지만 화면에서 한 번 더. */
+        function link(url) {
+            if (!/^https?:\/\//.test(url || '')) return document.createTextNode(url || '');
+            const a = document.createElement('a');
+            a.href = url;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            a.textContent = url;
+            return a;
+        }
+
+        function list(items, renderItem) {
+            if (!items || items.length === 0) return document.createTextNode('없음');
+            const ul = document.createElement('ul');
+            items.forEach(function (item) {
+                const li = document.createElement('li');
+                renderItem(li, item);
+                ul.appendChild(li);
+            });
+            return ul;
+        }
+
+        function addRow(dl, label, content) {
+            const dt = document.createElement('dt');
+            dt.textContent = label;
+            const dd = document.createElement('dd');
+            if (content instanceof Node) dd.appendChild(content); else dd.textContent = content == null ? '' : String(content);
+            dl.appendChild(dt);
+            dl.appendChild(dd);
+        }
+
+        function openImpactModal(change) {
+            const dl = document.getElementById('impactModalList');
+            dl.innerHTML = '';
+            const state = impactState(change);
+            const impact = change.impact;
+
+            document.getElementById('impactModalTitle').textContent = change.coordinate;
+            const caution = document.getElementById('impactModalCaution');
+            caution.hidden = !(impact && impact.status === 'ANALYZED');
+            addRow(dl, '버전', change.fromVersion + ' → ' + change.toVersion + ' (' + (JUMP_LABELS[change.jump] || change.jump) + ')');
+            addRow(dl, '방식', (VIA_LABELS[change.via] || change.via) + (change.propertyName ? ' · ' + change.propertyName : ''));
+            addRow(dl, '분석 상태', badge(state.label, state.cls));
+            if (state.detail) addRow(dl, '설명', state.detail);
+
+            if (impact && impact.status === 'ANALYZED') {
+                addRow(dl, '호환성 위험 (AI)', badge(RISK_LABELS[impact.risk] || impact.risk, (impact.risk || '').toLowerCase()));
+                addRow(dl, '신뢰도 (AI)', CONFIDENCE_LABELS[impact.confidence] || impact.confidence);
+                addRow(dl, 'Breaking change (AI)', list(impact.breakingChanges, function (li, item) {
+                    li.appendChild(document.createTextNode(item.summary + ' '));
+                    const source = link(item.sourceUrl);
+                    if (source.tagName === 'A') source.textContent = '[출처]';
+                    li.appendChild(source);
+                }));
+                addRow(dl, '필요한 조치 (AI)', list(impact.requiredActions, function (li, item) { li.textContent = item; }));
+                addRow(dl, '테스트 영역 (AI)', list(impact.testFocus, function (li, item) { li.textContent = item; }));
+                addRow(dl, '근거 문서', list(impact.sources, function (li, item) {
+                    li.appendChild(document.createTextNode(item.kind + ' '));
+                    li.appendChild(link(item.url));
+                }));
+            }
+            if (impact && impact.note) addRow(dl, '메모', impact.note);
+            if (impact) addRow(dl, '분석 시각', formatDateTime(impact.analyzedAt));
+            impactModal.classList.add('open');
+        }
+
+        // ---- 조회 ----------------------------------------------------------------------------------------------
+
+        function viewButton(label, onClick) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn grid-btn';
+            btn.textContent = label;
+            btn.addEventListener('click', onClick);
+            return btn;
+        }
+
+        function renderSummary(plan) {
+            summaryArea.innerHTML = '';
+            const dl = document.createElement('dl');
+            dl.className = 'detail-list';
+            addRow(dl, '전략', STRATEGY_LABELS[plan.strategy] || plan.strategy || '');
+            addRow(dl, '검토 상태', PLAN_STATUS_LABELS[plan.status] || plan.status || '');
+            addRow(dl, '생성 시각', formatDateTime(plan.createdAt));
+            addRow(dl, '미해결 CVE', plan.unresolvedCves || '없음');
+            addRow(dl, '대상 제외 CVE', plan.lowSeverityNote || '없음');
+            addRow(dl, '판단 근거', viewButton('보기', function () { openTextModal('판단 근거', plan.reasoning); }));
+            addRow(dl, '수정된 pom.xml', viewButton('보기', function () { openTextModal('수정된 pom.xml', plan.pomXml); }));
+            summaryArea.appendChild(dl);
+        }
+
+        function renderEmpty(message) {
+            summaryArea.innerHTML = '';
+            const div = document.createElement('div');
+            div.className = 'empty';
+            div.textContent = message;
+            summaryArea.appendChild(div);
+            document.getElementById('changesTitle').textContent = '버전 변경';
+            Grid.renderMessage(gridBody, COLUMNS.length, message);
+        }
+
+        function searchPlan() {
+            const appId = search.values().appId;
+            if (!appId) {
+                renderEmpty('등록된 앱이 없습니다.');
+                return;
+            }
+            fetch(API_URL + encodeURIComponent(appId))
+                .then(function (res) {
+                    // 404 = 아직 fix-plan이 만들어지지 않은 앱(오류가 아니다).
+                    if (res.status === 404) return null;
+                    if (!res.ok) throw new Error('조회에 실패했습니다.');
+                    return res.json();
+                })
+                .then(function (plan) {
+                    if (!plan) {
+                        renderEmpty('아직 조치안이 없습니다. HIGH/CRITICAL 취약점이 확정되면 AI 배치가 만든다.');
+                        return;
+                    }
+                    renderSummary(plan);
+                    const changes = plan.changes || [];
+                    document.getElementById('changesTitle').textContent = '버전 변경 (' + changes.length + '건)';
+                    Grid.render(gridBody, COLUMNS, changes, {
+                        // changes 필드가 생기기 전에 만들어진 조치안은 변경 목록이 비어 있다.
+                        emptyMessage: '변경 목록이 없습니다. 이전 형식의 조치안이면 다음 스캔 후 AI 배치가 다시 만들 때 채워진다.'
+                    });
+                })
+                .catch(function (err) {
+                    renderEmpty(err.message);
+                });
+        }
+
+        PageButtons.bind({
+            btnSearch: searchPlan,
+            btnReset: function () {
+                search.reset();
+                searchPlan();
+            }
+        });
+
+        search.ready.then(searchPlan);
+    })();
+</script>
+</body>
+</html>

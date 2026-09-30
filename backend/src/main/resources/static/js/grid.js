@@ -926,6 +926,8 @@
         getRows: getRows,
         getRow: getRow,
         removeRows: removeRows,
-        addRow: addRow
+        addRow: addRow,
+        // 그리드 밖(조치안 화면의 pom.xml 모달 등)에서도 같은 폴백으로 복사하도록 공개한다.
+        copyText: copyText
     };
 })(window);

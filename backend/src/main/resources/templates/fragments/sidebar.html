@@ -75,6 +75,7 @@
         <a th:href="@{/program/vulnerability-mng}" data-menu="vulnerability-mng" data-title="취약점 관리" th:classappend="${activeMenu == 'vulnerability-mng'} ? 'is-active'"><span class="ico">⚠</span><span class="nav-label">취약점 관리</span></a>
         <a th:href="@{/program/vulnerability-search}" data-menu="vulnerability-search" data-title="취약점 조회" th:classappend="${activeMenu == 'vulnerability-search'} ? 'is-active'"><span class="ico">⌕</span><span class="nav-label">취약점 조회</span></a>
         <a th:href="@{/program/scan-history}" data-menu="scan-history" data-title="스캔 이력" th:classappend="${activeMenu == 'scan-history'} ? 'is-active'"><span class="ico">⟲</span><span class="nav-label">스캔 이력</span></a>
+        <a th:href="@{/program/fix-plan}" data-menu="fix-plan" data-title="조치안" th:classappend="${activeMenu == 'fix-plan'} ? 'is-active'"><span class="ico">🛠</span><span class="nav-label">조치안</span></a>
         <a th:href="@{/program/report}" data-menu="report" data-title="리포트" th:classappend="${activeMenu == 'report'} ? 'is-active'"><span class="ico">📄</span><span class="nav-label">리포트</span></a>
         <!-- 권한이 있는 추가 프로그램이 하나도 없으면 그룹 자체를 그리지 않는다. -->
         <div class="nav-group" id="navGroupMng" th:if="${!#lists.isEmpty(extraPrograms)}">

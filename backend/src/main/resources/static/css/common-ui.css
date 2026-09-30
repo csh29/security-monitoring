@@ -128,10 +128,22 @@ body{
 .modal h3:first-of-type{ cursor:move; user-select:none; }
 .modal.is-dragging{ user-select:none; }
 .modal-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
+/* 모달 안의 "라벨 | 값" 상세 표(취약점 관리 상세보기, fix-plan 변경 상세). 항목이 여러 줄로 늘어나면 라벨과 값의 경계가
+   흐려져서, 표처럼 칸마다 선을 긋고 라벨 칸에 배경을 깐다. 값은 줄바꿈을 그대로 살린다(AI 판단근거가 여러 줄이다). */
+.detail-list{
+    display:grid; grid-template-columns:100px 1fr; font-size:13px;
+    border:1px solid var(--line); border-radius:var(--radius-box); overflow:hidden;
+}
+.detail-list dt, .detail-list dd{ padding:9px 12px; border-bottom:1px solid var(--line); }
+.detail-list dt:last-of-type, .detail-list dd:last-of-type{ border-bottom:none; }
+.detail-list dt{ font-weight:700; color:var(--text-sub); background:var(--bg); border-right:1px solid var(--line); }
+.detail-list dd{ line-height:1.7; white-space:pre-wrap; word-break:break-word; }
+.detail-list a{ color:var(--navy); text-decoration:underline; word-break:break-all; }
 
 /* 그리드 셀 안의 상태 뱃지. 클래스는 코드값을 소문자로 쓴다 — 처리여부(OPEN/RESOLVED)·심각도는 취약점 관리,
    스캔 결과(RUNNING/SUCCESS/FAILED)는 스캔 이력 화면. */
-.badge{ display:inline-block; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:700; }
+/* nowrap: 컬럼이 좁아지면 "마이/너"처럼 뱃지 글자가 두 줄로 꺾여 행 높이(32px 고정)를 넘쳤다. */
+.badge{ display:inline-block; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:700; white-space:nowrap; }
 .badge.open{ background:#fff3d6; color:#b8860b; }
 .badge.resolved{ background:#e6f4ea; color:#2e7d32; }
 .badge.critical{ background:var(--accent-soft); color:var(--accent); }
@@ -141,3 +153,12 @@ body{
 .badge.running{ background:#e3ecff; color:#2f5bd3; }
 .badge.success{ background:#e6f4ea; color:#2e7d32; }
 .badge.failed{ background:var(--accent-soft); color:var(--accent); }
+/* fix-plan 화면: 버전 점프 폭(PATCH/MINOR/MAJOR/UNKNOWN)과 영향 분석 상태. 위험도는 심각도와 같은 high/medium/low를 쓴다. */
+.badge.patch{ background:#e6f4ea; color:#2e7d32; }
+.badge.minor{ background:#fff3d6; color:#b8860b; }
+.badge.major{ background:var(--accent-soft); color:var(--accent); }
+.badge.unknown{ background:#ececf4; color:var(--text-sub); }
+.badge.analyzed{ background:#e6f4ea; color:#2e7d32; }
+.badge.no_source{ background:#ececf4; color:var(--text-sub); }
+.badge.fetch_failed{ background:#fff3d6; color:#b8860b; }
+.badge.pending{ background:#e3ecff; color:#2f5bd3; }
