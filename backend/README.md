@@ -9,7 +9,7 @@ Git 저장소(Maven 프로젝트)를 clone 해서 의존성을 뽑고, OSV/NVD�
 | 모듈 | 역할 |
 | --- | --- |
 | `backend/` | Spring Boot 서버 + 화면(Thymeleaf). 스캔·판정·조회 전부 |
-| `ai/` | 파이썬 AI 판단 배치(`vuln_assessor.py`). 판정·fix-plan(`claude-sonnet-5`)과 CVE 설명 한국어 요약(`claude-haiku-4-5`)을 한다. 스캔 직후 AI 판단·fix-plan·설명 요약 대기 건이 있으면 서버가 띄우고, 배치는 `/api/ai/**`를 직접 호출해 대기 중인 취약점을 가져가 결과를 되돌려준다 |
+| `ai/` | 파이썬 AI 판단 배치(`vuln_assessor.py`). 판정·fix-plan·업그레이드 영향 분석(`claude-sonnet-5`)과 CVE 설명 한국어 요약(`claude-haiku-4-5`)을 한다. 영향 분석의 근거(릴리스 노트)는 `release_notes.py`가 AI 없이 모은다. 스캔 직후 AI 판단·fix-plan·설명 요약·영향 분석 대기 건이 있으면 서버가 띄우고, 배치는 `/api/ai/**`를 직접 호출해 대기 중인 취약점을 가져가 결과를 되돌려준다 |
 
 ## 개발 환경
 
@@ -69,7 +69,8 @@ Windows에서는 `mvnw.cmd`를 쓴다.
 | `nvd.api.key` | NVD CVE API |
 | `git.access.token` / `git.user.name` | 스캔 대상 저장소 clone |
 | `maven.home` | `dependency:tree` 실행용 Maven 홈 |
-| `claude.api.key` | AI 판단 / fix-plan / 설명 요약 |
+| `claude.api.key` | AI 판단 / fix-plan / 설명 요약 / 영향 분석 |
+| `github.token` *(선택)* | 영향 분석이 GitHub Releases를 받을 때 쓰는 읽기 전용 토큰. 없으면 토큰 없이 부른다(IP당 시간당 60회) |
 | `ai.internal.token` | 서버 ↔ 파이썬 배치 인증 토큰 |
 | `ai.python.command` | 파이썬 실행 명령 (이 PC는 `py`) |
 | `ai.assessor.script` | 배치 스크립트 경로 (`../ai/vuln_assessor.py`) |
@@ -91,6 +92,15 @@ py -m pip install -r ../ai/requirements.txt
 > 이 PC에서 `python` / `python3`은 Microsoft Store 스텁이라 실행되지 않는다. 항상 `py`를 쓴다.
 
 배치 로그는 `backend/ai-assessor.log`에 쌓인다.
+
+릴리스 노트 수집기(`ai/release_notes.py`)의 테스트는 네트워크 없이 돈다.
+
+```bash
+cd ../ai
+py -m unittest test_release_notes
+```
+
+영향 분석에서 "근거 없음"으로 자주 뜨는 라이브러리는 `ai/release_note_sources.json`에 공식 문서 주소를 추가한다.
 
 ## 패키지 구조
 

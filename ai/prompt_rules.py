@@ -40,3 +40,4 @@ def load_prompt(rel_path: str) -> str:
 ASSESS_SYSTEM = "assess.system.md"
 FIX_PLAN_SYSTEM = "fix_plan.system.md"
 SUMMARIZE_SYSTEM = "summarize.system.md"
+IMPACT_SYSTEM = "impact.system.md"

@@ -6,10 +6,13 @@ import com.sjinc.cvemonitor.dto.ai.AppFixPlanTarget;
 import com.sjinc.cvemonitor.dto.ai.CveSummaryRequest;
 import com.sjinc.cvemonitor.dto.ai.CveSummaryTarget;
 import com.sjinc.cvemonitor.dto.ai.FixPlanRequest;
+import com.sjinc.cvemonitor.dto.ai.UpgradeImpactRequest;
+import com.sjinc.cvemonitor.dto.ai.UpgradeImpactTarget;
 import com.sjinc.cvemonitor.dto.vulnerability.VulnerabilityInfo;
 import com.sjinc.cvemonitor.service.ai.AiAssessmentTriggerService;
 import com.sjinc.cvemonitor.service.ai.CveSummaryService;
 import com.sjinc.cvemonitor.service.ai.FixPlanService;
+import com.sjinc.cvemonitor.service.ai.UpgradeImpactService;
 import com.sjinc.cvemonitor.service.vulnerability.VulnerabilityService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -41,6 +44,7 @@ public class AiAssessmentController {
     private final VulnerabilityService vulnerabilityService;
     private final FixPlanService fixPlanService;
     private final CveSummaryService cveSummaryService;
+    private final UpgradeImpactService upgradeImpactService;
     private final AiAssessmentTriggerService aiAssessmentTriggerService;
 
     @Value("${ai.internal.token}")
@@ -85,6 +89,19 @@ public class AiAssessmentController {
                               @RequestBody CveSummaryRequest request) {
         verifyToken(token);
         cveSummaryService.saveSummary(request);
+    }
+
+    @GetMapping("/impacts/pending")
+    public List<UpgradeImpactTarget> getPendingImpacts(@RequestHeader("X-Internal-Token") String token) {
+        verifyToken(token);
+        return upgradeImpactService.getPendingTargets();
+    }
+
+    @PostMapping("/impacts")
+    public void submitImpact(@RequestHeader("X-Internal-Token") String token,
+                             @RequestBody UpgradeImpactRequest request) {
+        verifyToken(token);
+        upgradeImpactService.saveImpact(request);
     }
 
     @GetMapping("/status")

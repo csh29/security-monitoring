@@ -58,6 +58,13 @@ public class AiAssessmentTriggerService {
     @Value("${server.port:8080}")
     private String serverPort;
 
+    /**
+     * 영향 분석(stage 4)이 GitHub 릴리스 노트를 받을 때 쓰는 읽기 전용 토큰. 선택값이다 — 없으면 토큰 없이 부르고
+     * (IP당 시간당 60회), 한도에 걸린 건은 FETCH_FAILED로 남아 다음 배치에서 다시 시도된다.
+     */
+    @Value("${github.token:}")
+    private String githubToken;
+
     private volatile Process currentProcess;
     private volatile LocalDateTime startedAt;
     private volatile LocalDateTime lastFinishedAt;
@@ -85,6 +92,9 @@ public class AiAssessmentTriggerService {
             processBuilder.environment().put("CVE_MONITOR_AI_TOKEN", internalToken);
             processBuilder.environment().put("CVE_MONITOR_BASE_URL", "http://localhost:" + serverPort);
             processBuilder.environment().put("CVE_MONITOR_TRACE_ID", traceId);
+            if (!githubToken.isBlank()) {
+                processBuilder.environment().put("GITHUB_TOKEN", githubToken);
+            }
             // 출력이 파일로 리다이렉트되면 파이썬은 윈도우 기본 인코딩(cp949)으로 쓴다. IDE는 ai-assessor.log를 UTF-8로
             // 열어서(.idea/encodings.xml) 한글이 전부 깨져 보였다 — UTF-8로 쓰게 맞춘다.
             processBuilder.environment().put("PYTHONIOENCODING", "utf-8");

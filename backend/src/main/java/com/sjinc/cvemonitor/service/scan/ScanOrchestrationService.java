@@ -13,6 +13,7 @@ import com.sjinc.cvemonitor.repository.ScanSnapshotRepository;
 import com.sjinc.cvemonitor.service.ai.AiAssessmentTriggerService;
 import com.sjinc.cvemonitor.service.ai.CveSummaryService;
 import com.sjinc.cvemonitor.service.ai.FixPlanService;
+import com.sjinc.cvemonitor.service.ai.UpgradeImpactService;
 import com.sjinc.cvemonitor.service.maven.MavenDependencyExtractor;
 import com.sjinc.cvemonitor.service.maven.MavenDependencyExtractor.DependencyTreeResult;
 import com.sjinc.cvemonitor.dto.osv.OsvVulnDetail;
@@ -49,6 +50,7 @@ public class ScanOrchestrationService {
     private final FixPlanService fixPlanService;
     private final CveSummaryService cveSummaryService;
     private final ScanHistoryService scanHistoryService;
+    private final UpgradeImpactService upgradeImpactService;
 
     @Value("${git.access.token}")
     private String gitAccessToken;
@@ -211,6 +213,7 @@ public class ScanOrchestrationService {
      *   - AI 판단 대기: {@link VulnerabilityService#getUnassessedVulnerabilities()} (/api/ai/vulnerabilities/pending)
      *   - fix-plan 대기: {@link FixPlanService#getPendingFixPlanTargets()} (/api/ai/fix-plans/pending)
      *   - 설명 요약 대기: {@link CveSummaryService#getPendingSummaryTargets()} (/api/ai/summaries/pending)
+     *   - 영향 분석 대기: {@link UpgradeImpactService#getPendingTargets()} (/api/ai/impacts/pending)
      *
      * <p>배치는 Claude API를 호출한다(과금). 이미 떠 있으면 {@code triggerAsync}가 건너뛰므로 스캔을
      * 연달아 돌려도 프로세스가 쌓이지 않는다. 여기서 실패해도 스캔 결과는 이미 저장됐으니 스캔은
@@ -227,10 +230,13 @@ public class ScanOrchestrationService {
             boolean hasPendingAssessment = !vulnerabilityService.getUnassessedVulnerabilities().isEmpty();
             boolean hasPendingFixPlan = !fixPlanService.getPendingFixPlanTargets().isEmpty();
             boolean hasPendingSummary = !cveSummaryService.getPendingSummaryTargets().isEmpty();
-            if (hasPendingAssessment || hasPendingFixPlan || hasPendingSummary) {
+            // 영향 분석은 보통 같은 배치 안에서 fix-plan 직후에 돈다. 여기서는 지난번에 일시 오류(FETCH_FAILED)로
+            // 끝난 건을 다시 시도할 수 있게 대기열로 본다.
+            boolean hasPendingImpact = !upgradeImpactService.getPendingTargets().isEmpty();
+            if (hasPendingAssessment || hasPendingFixPlan || hasPendingSummary || hasPendingImpact) {
                 aiAssessmentTriggerService.triggerAsync();
             } else {
-                log.info("AI 판단·fix-plan·설명 요약 대기 건이 없어 AI 배치를 띄우지 않습니다.");
+                log.info("AI 판단·fix-plan·설명 요약·영향 분석 대기 건이 없어 AI 배치를 띄우지 않습니다.");
             }
         } catch (Exception e) {
             log.warn("AI 배치 실행 판단/시작에 실패했습니다(스캔 결과는 저장됨): {}", e.toString());

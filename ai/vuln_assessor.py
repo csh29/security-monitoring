@@ -9,6 +9,9 @@
   stage 3) 등급·판정과 무관하게, 아직 요약이 없거나 NVD가 설명을 바꾼 CVE의 영어 설명을 한국어 2~3문장으로
            요약해서 저장한다(CVE ID당 한 번, SUMMARY_BATCH_SIZE건씩 묶어 한 요청으로). 판단이 아니라 화면에서
            읽기 위한 것이라 싼 모델(SUMMARY_MODEL)을 쓴다.
+  stage 4) fix-plan이 제안한 마이너·메이저 업그레이드마다 릴리스 노트를 모아(release_notes.py, AI 없음) 그 근거만으로
+           breaking change·필요 조치·테스트 영역을 정리해 저장한다. (좌표, from, to) 단위라 여러 앱이 같은 업그레이드를
+           하면 한 번만 분석한다. 근거를 못 찾으면 AI를 부르지 않는다.
 """
 
 from __future__ import annotations
@@ -28,7 +31,8 @@ from typing import Optional
 import anthropic
 import requests
 
-from prompt_rules import ASSESS_SYSTEM, FIX_PLAN_SYSTEM, SUMMARIZE_SYSTEM, load_prompt
+from prompt_rules import ASSESS_SYSTEM, FIX_PLAN_SYSTEM, IMPACT_SYSTEM, SUMMARIZE_SYSTEM, load_prompt
+from release_notes import CollectionResult, ReleaseDocument, collect as collect_release_notes
 
 MODEL = "claude-sonnet-5"
 
@@ -124,6 +128,34 @@ FIX_PLAN_SCHEMA = {
     "required": ["strategy", "pom_xml", "unresolved_cves", "reasoning", "changes"],
     "additionalProperties": False,
 }
+
+IMPACT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "risk": {"type": "string", "enum": ["LOW", "MEDIUM", "HIGH"]},
+        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+        "breaking_changes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string"},
+                    "source_url": {"type": "string"},
+                },
+                "required": ["summary", "source_url"],
+                "additionalProperties": False,
+            },
+        },
+        "required_actions": {"type": "array", "items": {"type": "string"}},
+        "test_focus": {"type": "array", "items": {"type": "string"}},
+        "note": {"type": "string"},
+    },
+    "required": ["risk", "confidence", "breaking_changes", "required_actions", "test_focus", "note"],
+    "additionalProperties": False,
+}
+
+# 근거(최대 약 3~4만 토큰)를 읽고 목록 몇 개를 내는 일이라 출력 자체는 짧지만, adaptive thinking이 같은 한도를 쓴다.
+IMPACT_MAX_TOKENS = 32000
 
 ASSESS_MAX_TOKENS = 4096
 
@@ -404,6 +436,38 @@ class CveMonitorClient:
         response.raise_for_status()
 
 
+    def fetch_pending_impacts(self) -> list["UpgradeImpactTarget"]:
+        response = requests.get(
+            f"{self._base_url}/api/ai/impacts/pending",
+            headers=self._headers,
+            timeout=30,
+        )
+        response.raise_for_status()
+        return [UpgradeImpactTarget.from_json(item) for item in response.json()]
+
+    def submit_impact(self, target: "UpgradeImpactTarget", status: str, documents: list[ReleaseDocument],
+                      note: str, analysis: Optional["UpgradeImpact"] = None) -> None:
+        response = requests.post(
+            f"{self._base_url}/api/ai/impacts",
+            headers=self._headers,
+            json={
+                "coordinate": target.coordinate,
+                "fromVersion": target.from_version,
+                "toVersion": target.to_version,
+                "status": status,
+                "risk": analysis.risk if analysis else None,
+                "confidence": analysis.confidence if analysis else None,
+                "breakingChanges": [{"summary": c["summary"], "sourceUrl": c["source_url"]}
+                                    for c in analysis.breaking_changes] if analysis else [],
+                "requiredActions": analysis.required_actions if analysis else [],
+                "testFocus": analysis.test_focus if analysis else [],
+                "sources": [{"kind": d.kind, "url": d.url} for d in documents],
+                "note": note,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+
     def fetch_pending_summaries(self) -> list[CveSummaryTarget]:
         response = requests.get(
             f"{self._base_url}/api/ai/summaries/pending",
@@ -575,6 +639,118 @@ dependency:tree 텍스트를 다시 눈으로 훑어서 경로를 재구성하�
         )
 
 
+@dataclass
+class UpgradeImpactTarget:
+    """영향 분석할 업그레이드 한 건(자바 UpgradeImpactTarget)."""
+
+    coordinate: str
+    from_version: str
+    to_version: str
+    jump: str  # MINOR | MAJOR
+
+    @staticmethod
+    def from_json(data: dict) -> "UpgradeImpactTarget":
+        return UpgradeImpactTarget(
+            coordinate=data["coordinate"],
+            from_version=data["fromVersion"],
+            to_version=data["toVersion"],
+            jump=data.get("jump") or "",
+        )
+
+
+@dataclass
+class UpgradeImpact:
+    risk: str
+    confidence: str
+    breaking_changes: list[dict]  # [{summary, source_url}]
+    required_actions: list[str]
+    test_focus: list[str]
+    note: str
+    dropped_count: int = 0  # 출처가 근거 문서에 없어서 버린 breaking change 수
+
+
+class UpgradeImpactAnalyzerClient:
+    """stage 4: 모아 온 릴리스 노트만 근거로 업그레이드 한 건의 영향을 정리한다."""
+
+    def __init__(self, api_key: Optional[str] = None, model: str = MODEL, use_cache: bool = False):
+        self._client = anthropic.Anthropic(api_key=api_key or os.environ["ANTHROPIC_API_KEY"])
+        self._model = model
+        self._use_cache = use_cache
+        self.usage = TokenUsageTracker()
+
+    def analyze(self, target: UpgradeImpactTarget, collected: CollectionResult) -> UpgradeImpact:
+        # 근거가 수만 토큰이라 비스트리밍이면 HTTP 타임아웃에 걸릴 수 있다(fix-plan과 같은 이유).
+        with self._client.messages.stream(
+            model=self._model,
+            max_tokens=IMPACT_MAX_TOKENS,
+            system=_system_prompt(load_prompt(IMPACT_SYSTEM), self._use_cache),
+            output_config={"format": {"type": "json_schema", "schema": IMPACT_SCHEMA}},
+            messages=[{"role": "user", "content": self._build_prompt(target, collected)}],
+        ) as stream:
+            response = stream.get_final_message()
+
+        self.usage.record(f"{target.coordinate} {target.from_version}→{target.to_version}", response.usage)
+        _reject_if_truncated(response, IMPACT_MAX_TOKENS)
+        return self._parse_response(_extract_text(response), {d.url for d in collected.documents})
+
+    @staticmethod
+    def _build_prompt(target: UpgradeImpactTarget, collected: CollectionResult) -> str:
+        # 문서마다 제목 줄에 URL을 붙인다 — 모델이 breaking change의 출처로 이 값을 그대로 복사한다.
+        documents = "\n\n".join(
+            f"### [문서 {i}] {d.title}\nURL: {d.url}\n종류: {d.kind}\n\n{d.text}"
+            for i, d in enumerate(collected.documents, start=1)
+        )
+        notes = "\n".join(f"- {n}" for n in collected.notes + collected.errors) or "- 없음"
+        return f"""[업그레이드]
+- 라이브러리: {target.coordinate}
+- 현재 → 목표: {target.from_version} → {target.to_version} ({target.jump})
+
+[수집 메모]
+{notes}
+
+[근거 문서]
+{documents}
+"""
+
+    @staticmethod
+    def _parse_response(raw_text: str, source_urls: set[str]) -> UpgradeImpact:
+        data = json.loads(_strip_code_fence(raw_text))
+        # 근거 문서에 없는 URL을 출처로 단 항목은 모델이 지어냈을 수 있어 버린다(자바도 한 번 더 거른다).
+        requested = data.get("breaking_changes", [])
+        changes = [c for c in requested if c.get("summary", "").strip() and c.get("source_url") in source_urls]
+        return UpgradeImpact(
+            risk=data["risk"],
+            confidence=data["confidence"],
+            breaking_changes=changes,
+            required_actions=data.get("required_actions", []),
+            test_focus=data.get("test_focus", []),
+            note=data.get("note", ""),
+            dropped_count=len(requested) - len(changes),
+        )
+
+
+def _analyze_impact(analyzer: UpgradeImpactAnalyzerClient, backend: "CveMonitorClient",
+                    target: UpgradeImpactTarget) -> str:
+    """업그레이드 한 건을 수집 → (근거가 있으면) 분석 → 저장하고, 저장한 상태를 한 줄로 돌려준다.
+    AI 호출이나 저장이 실패하면 예외를 그대로 올린다 — 저장하지 않았으니 다음 배치에서 다시 대기로 잡힌다."""
+    collected = collect_release_notes(target.coordinate, target.from_version, target.to_version)
+    notes = collected.notes + collected.errors
+    if not collected.documents:
+        # 일시 오류가 있었으면 "근거 없음"으로 굳히지 않고 FETCH_FAILED로 남겨 다음 배치에서 다시 시도한다.
+        status = "FETCH_FAILED" if collected.errors else "NO_SOURCE"
+        backend.submit_impact(target, status, [], "\n".join(notes))
+        return status
+
+    analysis = analyzer.analyze(target, collected)
+    if analysis.dropped_count:
+        notes.append(f"출처가 근거 문서에 없는 breaking change {analysis.dropped_count}건을 버림")
+    if analysis.note:
+        notes.insert(0, analysis.note)
+    backend.submit_impact(target, "ANALYZED", collected.documents, "\n".join(notes), analysis)
+    return (f"ANALYZED risk={analysis.risk} confidence={analysis.confidence} "
+            f"breaking={len(analysis.breaking_changes)} 근거={len(collected.documents)}건")
+
+
 class DescriptionSummarizerClient:
     """stage 3: NVD 영어 설명을 한국어 2~3문장으로 요약한다.
 
@@ -714,6 +890,25 @@ def main() -> None:
                         skipped_summaries.append((target.cve_id, str(err)))
                         print(f"[{target.cve_id}] 요약 실패, 건너뜀: {err}")
 
+    # stage 4: 업그레이드 영향 분석. stage 2(fix-plan)가 만든 변경 목록이 입력이라 그 뒤에 돈다. 외부 문서를 받느라
+    # 건마다 수 초씩 걸리지만, GitHub 호출 한도(토큰 없으면 IP당 시간당 60회)를 나눠 쓰므로 병렬로 돌리지 않는다.
+    impact_targets = backend.fetch_pending_impacts()
+    impact_client = UpgradeImpactAnalyzerClient(use_cache=len(impact_targets) > 1)
+    print(f"영향 분석할 업그레이드 {len(impact_targets)}건")
+
+    skipped_impacts: list[tuple[str, str]] = []
+    impact_counts: dict[str, int] = {}
+    for target in impact_targets:
+        label = f"{target.coordinate} {target.from_version}→{target.to_version}"
+        try:
+            result = _analyze_impact(impact_client, backend, target)
+            status = result.split()[0]
+            impact_counts[status] = impact_counts.get(status, 0) + 1
+            print(f"[{label}] {result}")
+        except Exception as e:
+            skipped_impacts.append((label, str(e)))
+            print(f"[{label}] 영향 분석 실패, 건너뜀: {e}")
+
     # 한 화면 가득 스크롤한 로그 사이에서 실패 건만 놓치지 않도록 끝에 다시 요약해서 보여준다.
     print()
     print("=== 요약 ===")
@@ -726,6 +921,10 @@ def main() -> None:
     print(f"설명 요약: 성공 {len(summary_targets) - len(skipped_summaries)}건 / 건너뜀 {len(skipped_summaries)}건")
     for cve_id, reason in skipped_summaries:
         print(f"  - {cve_id}: {reason}")
+    # NO_SOURCE는 사람이 직접 봐야 하는 건이라 성공과 따로 센다.
+    print(f"영향 분석: {impact_counts or '없음'} / 건너뜀 {len(skipped_impacts)}건")
+    for label, reason in skipped_impacts:
+        print(f"  - {label}: {reason}")
 
     print()
     print("=== 토큰 사용량 ===")
@@ -733,10 +932,12 @@ def main() -> None:
     print(f"fix-plan: {fix_plan_client.usage.summary()}")
     # 설명 요약은 모델(Haiku)이 달라 단가가 다르므로 합계에 섞지 않고 따로 본다.
     print(f"설명 요약({SUMMARY_MODEL}): {summarizer.usage.summary()}")
-    total_input = ai_client.usage.input_tokens + fix_plan_client.usage.input_tokens
-    total_output = ai_client.usage.output_tokens + fix_plan_client.usage.output_tokens
-    total_cache_read = ai_client.usage.cache_read_tokens + fix_plan_client.usage.cache_read_tokens
-    total_cache_creation = ai_client.usage.cache_creation_tokens + fix_plan_client.usage.cache_creation_tokens
+    print(f"영향 분석: {impact_client.usage.summary()}")
+    same_model = [ai_client.usage, fix_plan_client.usage, impact_client.usage]
+    total_input = sum(u.input_tokens for u in same_model)
+    total_output = sum(u.output_tokens for u in same_model)
+    total_cache_read = sum(u.cache_read_tokens for u in same_model)
+    total_cache_creation = sum(u.cache_creation_tokens for u in same_model)
     print(f"합계({MODEL}): input={total_input} output={total_output} "
           f"cache_read={total_cache_read} cache_creation={total_cache_creation}")
 

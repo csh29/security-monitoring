@@ -36,6 +36,12 @@ Windows에서는 `mvnw.cmd`를 쓴다.
 py -m pip install -r ../ai/requirements.txt
 ```
 
+파이썬 쪽 테스트는 릴리스 노트 수집기(`ai/release_notes.py`)의 순수 함수만 있다. `ai/` 폴더에서 돌린다(네트워크·AI 호출 없음).
+
+```bash
+py -m unittest test_release_notes
+```
+
 ---
 
 ## 2. 개발 원칙 — 주먹구구식으로 개발하지 않는다
@@ -167,4 +173,4 @@ DB 스키마 변경, 대량 삭제, 외부로 나가는 호출(Git push, 외부 
 - [ ] 판단 로직을 넣었다면 Spring 없이 테스트 가능한 순수 클래스로 분리하고 테스트를 붙였는가?
 - [ ] 비자명한 선택에 "왜"를 설명하는 한국어 주석을 남겼는가?
 - [ ] 구조를 바꿨다면 관련 주석 / `backend/README.md` / `docs/llm-analysis.md`를 같이 고쳤는가?
-- [ ] `./mvnw test`가 통과하는가?
+- [ ] `./mvnw test`가 통과하는가? (`ai/release_notes.py`를 고쳤으면 `py -m unittest test_release_notes`도)

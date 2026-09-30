@@ -1,0 +1,79 @@
+{
+  "_comment": [
+    "업그레이드 영향 분석(stage 4)의 규칙 파일 — release_notes.py가 읽는다.",
+    "Maven Central POM의 <scm>만 따라가면 못 찾는, 그러나 가장 중요한 공식 문서를 groupId로 직접 지정한다.",
+    "match: 좌표(groupId:artifactId)가 이 문자열로 시작하면 적용. {line}은 업그레이드가 지나가는 '메이저.마이너' 라인마다 치환된다",
+    "(from 라인 초과 ~ to 라인 이하). 없는 라인의 문서는 404로 걸러진다.",
+    "fetch: 받을 주소, view: 사람이 열어볼 주소(AI가 출처로 인용, 없으면 fetch). html: HTML이면 텍스트로 바꾼다. container_id: 그 id 요소 안의 본문만 쓴다.",
+    "slice: 한 문서에 여러 버전이 있으면 범위 안 버전의 절만 남긴다.",
+    "'근거 없음'으로 자주 뜨는 라이브러리가 보이면 여기에 늘려 간다.",
+    "GitHub 위키는 raw 주소(raw.githubusercontent.com/wiki/...)가 404라 일반 위키 페이지 HTML에서 #wiki-body만 읽는다."
+  ],
+  "rules": [
+    {
+      "match": "org.springframework.boot:",
+      "kind": "OFFICIAL_DOC",
+      "sources": [
+        {
+          "title": "Spring Boot {line} Release Notes",
+          "fetch": "https://github.com/spring-projects/spring-boot/wiki/Spring-Boot-{line}-Release-Notes",
+          "html": true,
+          "container_id": "wiki-body"
+        },
+        {
+          "title": "Spring Boot {line} Migration Guide",
+          "fetch": "https://github.com/spring-projects/spring-boot/wiki/Spring-Boot-{line}-Migration-Guide",
+          "html": true,
+          "container_id": "wiki-body"
+        }
+      ]
+    },
+    {
+      "match": "org.apache.tomcat",
+      "kind": "OFFICIAL_DOC",
+      "sources": [
+        {
+          "title": "Apache Tomcat {line} Changelog",
+          "fetch": "https://tomcat.apache.org/tomcat-{line}-doc/changelog.html",
+          "html": true,
+          "slice": true
+        }
+      ]
+    },
+    {
+      "match": "org.hibernate",
+      "kind": "OFFICIAL_DOC",
+      "sources": [
+        {
+          "title": "Hibernate ORM {line} Migration Guide",
+          "fetch": "https://raw.githubusercontent.com/hibernate/hibernate-orm/{line}/migration-guide.adoc",
+          "view": "https://github.com/hibernate/hibernate-orm/blob/{line}/migration-guide.adoc"
+        }
+      ]
+    },
+    {
+      "match": "com.fasterxml.jackson",
+      "kind": "OFFICIAL_DOC",
+      "sources": [
+        {
+          "title": "Jackson {line} Release",
+          "fetch": "https://github.com/FasterXML/jackson/wiki/Jackson-Release-{line}",
+          "html": true,
+          "container_id": "wiki-body"
+        }
+      ]
+    },
+    {
+      "match": "io.netty:",
+      "kind": "OFFICIAL_DOC",
+      "sources": [
+        {
+          "title": "Netty {line} Migration Guide",
+          "fetch": "https://github.com/netty/netty/wiki/Netty-{line}-Migration-Guide",
+          "html": true,
+          "container_id": "wiki-body"
+        }
+      ]
+    }
+  ]
+}

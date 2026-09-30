@@ -21,7 +21,7 @@ Git 저장소(Maven 프로젝트)를 clone → 의존성 추출 → 취약점 DB
 | 모듈 | 역할 |
 | --- | --- |
 | `backend/` | Spring Boot 3.3.4 / Java 17 / Maven. 서버 + 화면(Thymeleaf) 전부 |
-| `ai/` | 파이썬 배치(`vuln_assessor.py`). 스캔이 끝나면 할 일이 있을 때 서버가 띄우고(`AiAssessmentTriggerService`, 아래 4장), 사람이 직접 실행해도 된다. 어느 쪽이든 **배치가 드라이버다** — 배치가 `/api/ai/**`를 호출해 대기 중인 취약점·fix-plan·설명 요약을 스스로 가져가고 결과를 되돌려준다. 자바는 띄우기만 하고 결과를 기다리지 않는다 |
+| `ai/` | 파이썬 배치(`vuln_assessor.py`). 스캔이 끝나면 할 일이 있을 때 서버가 띄우고(`AiAssessmentTriggerService`, 아래 4장), 사람이 직접 실행해도 된다. 어느 쪽이든 **배치가 드라이버다** — 배치가 `/api/ai/**`를 호출해 대기 중인 취약점·fix-plan·설명 요약·영향 분석을 스스로 가져가고 결과를 되돌려준다. 자바는 띄우기만 하고 결과를 기다리지 않는다 |
 
 DB는 H2 **파일 DB**(`jdbc:h2:file:./data/cvemonitor` → 서버를 띄운 `backend/data/cvemonitor.mv.db`, `ddl-auto=update`)다.
 재기동해도 데이터가 남는다. `DataInitializer`는 **DB가 비어 있을 때(사용자 0명) 한 번만** 초기 데이터를 심으므로,
@@ -65,7 +65,7 @@ com.sjinc.cvemonitor
 7. `ScanSnapshot` 저장 (fix-plan이 나중에 참고할 pom.xml + tree 원문)
    — 이어서 `ScanHistoryService.succeed`로 이번 회차의 스캔 이력을 완료 처리한다(아래 "스캔 이력")
 8. `triggerAiAssessmentIfNeeded` → 먼저 자동 실행 스위치(공통코드 `AI_CONFIG`/`AUTO_TRIGGER`의 사용여부)를 보고 꺼져 있으면 바로 끝낸다. 켜져 있으면 AI 판단 대기(`getUnassessedVulnerabilities`), fix-plan 대기
-   (`getPendingFixPlanTargets`), 설명 요약 대기(`CveSummaryService.getPendingSummaryTargets`)가 하나라도 있으면 `AiAssessmentTriggerService.triggerAsync()`로 파이썬
+   (`getPendingFixPlanTargets`), 설명 요약 대기(`CveSummaryService.getPendingSummaryTargets`), 영향 분석 대기(`UpgradeImpactService.getPendingTargets`)가 하나라도 있으면 `AiAssessmentTriggerService.triggerAsync()`로 파이썬
    배치를 백그라운드로 띄운다(fire-and-forget, 이미 떠 있으면 건너뜀). "새 CVE가 저장됐는가"가 아니라
    배치가 가져갈 대기열로 판단한다 — 새 CVE가 결정론 자동판정으로 끝나면 AI가 볼 게 없고, 새 CVE가
    없어도 스냅샷이 갱신되면 fix-plan은 다시 대기가 된다. 배치는 Claude API를 호출하므로(과금) 스캔마다
@@ -118,7 +118,7 @@ fix-plan 응답에는 수정된 pom.xml과 함께 **바꾼 버전 값 목록**(`
 바뀌었는지는 숫자 조각으로 본다. 낮추거나 그대로 둔 변경·해석 불가 버전은 UNKNOWN이다. 형식이 틀린 항목(좌표가
 `g:a`가 아님, 버전 누락, 정해지지 않은 via)은 **그 항목만 버리고** 수정안은 저장한다(`FixPlanService.validChanges`, 버린 건수는 로그).
 `changes` 필드가 생기기 전 배치가 보낸 요청(필드 없음)도 빈 목록으로 받는다. `GET /api/fix-plans/{appId}` 응답에 `changes`가 실린다.
-이 목록은 업그레이드 영향 분석(예정)의 입력이다 — 패치 점프는 AI 없이 끝내고 마이너·메이저만 분석한다.
+이 목록이 아래 영향 분석(stage 4)의 입력이다.
 
 AI에게 넘기는 근거도 마찬가지다. OSV에서 뽑은 `knownFixedVersions`가 있으면 AI가 설명 프로즈를
 다시 해석해 유추하지 않도록 그 값을 최우선으로 쓰게 한다.
@@ -137,6 +137,36 @@ AI에게 넘기는 근거도 마찬가지다. OSV에서 뽑은 `knownFixedVersio
 - **API:** `GET /api/ai/summaries/pending`, `POST /api/ai/summaries`(해시는 pending에서 받은 값을 그대로 되돌려준다).
   빈 요약·1000자 초과·미등록 CVE는 400으로 거절한다.
 - 화면 조회(`VulnerabilityService.getVulnerabilities`)가 CVE ID로 요약을 붙여 `VulnerabilityInfo.descriptionSummary`로 내려준다.
+
+### 업그레이드 영향 분석 — stage 4
+
+fix-plan이 올리는 라이브러리마다 "올리면 무엇이 깨지나"를 릴리스 노트 근거로 정리한다. 판정·fix-plan 뒤에 돈다.
+
+- **대상:** `fix_plan_changes` 중 점프가 `MINOR`/`MAJOR`인 것. PATCH는 하위 호환이 원칙이라, UNKNOWN은 사람이 fix-plan을 다시
+  봐야 하는 건이라 대상이 아니다. **단위는 `(좌표, from, to)`** — `UpgradeImpact`(`upgrade_impacts`)에 하나만 두고 여러 앱이 공유한다
+  (같은 Spring Boot 업그레이드를 앱마다 분석하면 같은 릴리스 노트로 앱 수만큼 과금된다).
+- **근거 수집(`ai/release_notes.py`, AI 없음):** ① 규칙 파일 `ai/release_note_sources.json`(groupId → 공식 문서 URL. Spring Boot
+  위키 Release Notes·Migration Guide, Tomcat changelog, Hibernate·Jackson·Netty 문서) ② ①이 없을 때만 Maven Central POM의 `<scm>`(부모 POM까지)
+  → GitHub/GitLab Releases, 없으면 저장소 CHANGELOG ③ 앞에서 아무것도 없을 때만 `<issueManagement>`의 JIRA 해결 이슈 목록.
+  **①을 찾으면 ②를 읽지 않는다** — Spring Boot 3.1.5→3.2.12 실측에서 GitHub 패치 노트 12건(대부분 버그 수정 목록)이 근거의 3/4(12만 자 중 9만 자)을
+  차지했다. 빼면 패치 노트의 "Noteworthy"(동반 라이브러리 버전 변경 알림)는 못 보므로 그 사실을 `note`에 남긴다.
+  GitHub Releases는 100개 미만 페이지에서 멈춘다(빈 다음 페이지 호출로 한도를 쓰지 않게).
+  - **범위:** from 초과 ~ to 이하. 라인이 바뀌면 옛 라인의 뒤늦은 패치(3.1.5→3.2.12에서 3.1.6~)는 뺀다. 마일스톤·RC는 빼되,
+    새 라인 x.y.0의 사전 릴리스는 넣는다(Tomcat 10.1은 breaking change가 10.1.0-M* 노트에만 있다).
+  - **한 문서에 여러 버전(CHANGELOG, Tomcat changelog):** 버전이 적힌 제목 줄로 절을 나눠 범위 안 절만 남기고, 새 라인 x.y.0 절을 앞에 둔다.
+    버전 없는 소제목("### Bug Fixes")은 절 경계가 아니다. 범위 안 절이 없으면 문서를 통째로 넘기지 않는다.
+  - **GitHub 위키는 raw 주소가 404**라 위키 페이지 HTML에서 `#wiki-body`만 읽는다(`container_id`).
+  - **상한:** 문서당 8만 자, 합계 12만 자. 넘으면 문서는 앞부분만, 합계는 뒤쪽 문서부터 빼고 `note`에 남긴다.
+  - GitHub API는 `GITHUB_TOKEN`(서버 설정 `github.token`, 선택)이 있으면 쓰고 없으면 토큰 없이 부른다(IP당 시간당 60회).
+- **상태:** 근거가 있으면 AI 분석 후 `ANALYZED`. 근거를 못 찾으면 **AI를 부르지 않고** `NO_SOURCE`(다시 대기로 잡지 않는다 — 규칙 파일에
+  추가한 뒤 다시 돌리려면 그 행을 지운다). 호출 한도·네트워크 같은 일시 오류로 근거가 없으면 `FETCH_FAILED`(다음 배치에서 다시 대기).
+  AI 호출·저장이 실패하면 저장하지 않으므로 역시 다음 배치에서 다시 대기가 된다.
+- **AI(`prompts/impact.system.md`, `MODEL`):** 근거 문서에 없는 내용을 쓰지 않게 하고, breaking change마다 근거 문서 URL을 `source_url`로 달게 한다.
+- **자바의 정규화(`UpgradeImpactService.normalize`):** 출처가 근거 목록에 없는 breaking change는 버린다(파이썬도 거른다). 메이저 점프는 risk를
+  `HIGH`로 올린다. 근거가 JIRA뿐이면 confidence `high`를 `medium`으로 낮춘다. `ANALYZED`인데 근거가 없거나, 상태·위험도·신뢰도 값이 틀리거나,
+  fix-plan에 없는 `(좌표, from, to)`면 400. `NO_SOURCE`/`FETCH_FAILED`는 분석 필드를 모두 비운다(모델 추측이 남지 않게).
+- **API:** `GET /api/ai/impacts/pending`, `POST /api/ai/impacts`. 결과는 `GET /api/fix-plans/{appId}`의 각 change에 `impact`로 붙는다(없으면 null).
+- "우리 코드가 영향받는가"(앱별 판정)는 아직 없다 — 스캔 때 import 목록을 남기는 다음 단계의 일이다.
 
 ### 판정 결과가 이상할 때 보는 필드
 
@@ -245,6 +275,7 @@ OPEN만)에서도 빠진다.
 | `ai.python.command` | 파이썬 실행 명령 (이 PC는 `py`) |
 | `ai.assessor.script` | 배치 스크립트 경로 (`../ai/vuln_assessor.py`) |
 | `ai.assessment.severities` | AI 판단 대상 등급 (기본 `HIGH,CRITICAL`) |
+| `github.token` | 선택. 영향 분석이 GitHub Releases를 받을 때 쓰는 읽기 전용 토큰. 배치에 `GITHUB_TOKEN`으로 넘긴다. 없으면 토큰 없이 부른다 |
 | `ai.auto-trigger.enabled` | 스캔 후 AI 배치 자동 실행 스위치의 **초기값**(기본 `true`, DB를 처음 만들 때만 쓰인다). 실제 스위치는 공통코드 `AI_CONFIG`/`AUTO_TRIGGER`의 사용여부로, 공통코드 관리 화면에서 바꾸면 재기동 없이 다음 스캔부터 적용된다(`ComCdService.isEnabled`). DB를 처음 만들 때만 이 값으로 심는다(파일 DB라 재기동해도 공통코드 값이 유지된다). 로컬은 `false`로 두면 과금 없이 스캔할 수 있다 |
 | `scan.allowed-repo-hosts` | 앱 등록을 허용할 저장소 호스트 목록(쉼표 구분, 기본 `git.sejung.co.kr`). 다른 호스트를 쓰게 되면 여기서 늘린다 |
 
@@ -266,8 +297,12 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `ComCdServiceTest` — 설정 스위치 공통코드의 켜짐 판단(사용여부 Y/N, 코드 없으면 기본값)
 - `VersionJumpClassifierTest` — fix-plan 버전 변경의 점프 폭(접미사·캘린더 버전·자리 부족·다운그레이드·해석 불가)
 - `FixPlanServiceTest` — fix-plan 변경 목록 중 형식이 틀린 항목만 버리기
+- `UpgradeImpactServiceTest` — 영향 분석 결과 정규화(출처 없는 항목 버리기, 메이저→HIGH, JIRA만이면 신뢰도 하향, 근거 없는 ANALYZED 거절, NO_SOURCE는 분석 필드 비우기)
 - `ScanHistoryServiceTest` — 스캔 이력의 신규 건수 계산(전후 OPEN 키 비교), 시작·성공·실패 기록, 오류 문구에 내부 메시지 미노출, 이력 저장 실패가 스캔을 막지 않음
 - `CveSummaryServiceTest` — 설명 요약 대기 판단(CVE ID 단위, 해시 비교, 최신 설명 선택)과 저장 검증
+
+파이썬은 `ai/test_release_notes.py`(unittest, 네트워크 없음) — 릴리스 노트 수집기의 버전 범위·절 자르기·HTML 본문 추출·scm 해석·총량 상한,
+가짜 세션으로 본 수집 순서(공식 문서가 있으면 GitHub·Maven Central을 부르지 않음, 없으면 POM의 scm을 따라감).
 
 즉 **컨트롤러·보안·화면에는 자동 테스트가 없다.** 그 영역의 변경을 분석할 때 "테스트가 통과했으니
 안전하다"고 결론 내리지 않는다.
@@ -282,4 +317,6 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `assess.system.md` — CVE 개별 판단
 - `fix_plan.system.md` — pom.xml 수정안
 - `summarize.system.md` — NVD 설명 한국어 요약(stage 3, Haiku). 규칙이 다른 프롬프트와 겹치지 않아 `rules/`를 include하지 않는다
+- `impact.system.md` — 업그레이드 영향 분석(stage 4). 근거 문서만 쓰고 항목마다 출처 URL을 달게 한다. 역시 `rules/`를 include하지 않는다
+- `ai/release_note_sources.json`(프롬프트가 아니라 수집 규칙) — groupId별 공식 문서 URL
 - `rules/` — `false_positives.md`, `maven_strategy.md`, `version_matching.md`

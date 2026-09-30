@@ -8,6 +8,7 @@ import com.sjinc.cvemonitor.dto.ai.AppFixPlanTarget;
 import com.sjinc.cvemonitor.dto.ai.AppFixPlanTarget.CveFinding;
 import com.sjinc.cvemonitor.dto.ai.FixPlanRequest;
 import com.sjinc.cvemonitor.dto.ai.FixPlanResponse;
+import com.sjinc.cvemonitor.dto.ai.UpgradeImpactView;
 import com.sjinc.cvemonitor.repository.AppRepository;
 import com.sjinc.cvemonitor.repository.FixPlanRepository;
 import com.sjinc.cvemonitor.repository.ScanSnapshotRepository;
@@ -41,6 +42,7 @@ public class FixPlanService {
     private final FixPlanRepository fixPlanRepository;
     private final AppRepository appRepository;
     private final MavenDependencyExtractor mavenDependencyExtractor;
+    private final UpgradeImpactService upgradeImpactService;
 
     /** fix-plan 변경 항목의 via 허용값. 파이썬 FIX_PLAN_SCHEMA의 enum과 같아야 한다. */
     private static final Set<String> CHANGE_VIA = Set.of("PARENT", "BOM", "PROPERTY", "DIRECT");
@@ -203,9 +205,11 @@ public class FixPlanService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "아직 fix-plan이 생성되지 않았습니다: appId=" + appId));
 
+        Map<String, UpgradeImpactView> impacts = upgradeImpactService.findImpacts(plan.getChanges());
         List<FixPlanResponse.Change> changes = plan.getChanges().stream()
                 .map(c -> new FixPlanResponse.Change(c.getCoordinate(), c.getPropertyName(), c.getFromVersion(),
-                        c.getToVersion(), c.getVia(), c.getJump()))
+                        c.getToVersion(), c.getVia(), c.getJump(),
+                        impacts.get(UpgradeImpactService.key(c.getCoordinate(), c.getFromVersion(), c.getToVersion()))))
                 .toList();
         return new FixPlanResponse(
                 appId, plan.getStrategy(), plan.getStatus(), plan.getPomXml(),
