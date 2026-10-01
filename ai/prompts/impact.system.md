@@ -19,6 +19,17 @@
 
 `summary` 는 한국어 한 문장으로, 무엇이 어떻게 바뀌어서 앱이 무엇을 해야 하는지까지 쓴다. 클래스·설정 키 이름은 원문 그대로 둔다.
 
+## symbols
+
+각 breaking change 가 가리키는 **이름만** 배열로 낸다. 서버가 이 이름을 애플리케이션의 import 문·설정 키 목록과 글자 그대로 대조해 "이 앱이 쓰는가"를 판단한다. 문장이나 설명을 넣지 마라.
+
+- 클래스는 **패키지까지 붙은 전체 이름**으로 쓴다(예: `org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter`). 근거 문서에 짧은 이름만 있고 패키지를 확신할 수 없을 때만 짧은 이름(`WebSecurityConfigurerAdapter`)을 쓴다 — 짧은 이름은 이름만 같은 다른 클래스와 구분이 안 돼 대조 결과가 "가능성"으로 낮아진다.
+- 메서드가 바뀐 거면 그 메서드가 있는 클래스 이름을 쓴다(import 는 클래스 단위다).
+- 패키지 전체가 옮겨졌거나 제거됐으면 패키지 이름을 쓴다(예: `javax.servlet`).
+- 설정 키는 전체 키 또는 이름이 바뀐 접두어를 쓴다(예: `spring.redis`, `server.max-http-header-size`).
+- 기본값·동작 변경처럼 이름으로 가리킬 수 없는 변경이면 빈 배열이다. 억지로 관련 있어 보이는 이름을 넣지 마라.
+- 근거 문서에 없는 이름을 지어내지 마라.
+
 # risk 기준
 
 - `HIGH`: 코드나 설정을 반드시 바꿔야 하는 항목이 있다(제거된 API, 필수 설정 변경, 최소 요구 버전 상승).

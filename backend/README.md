@@ -136,7 +136,7 @@ com.sjinc.cvemonitor
     ├── osv                 # OSV API 클라이언트, 수정 버전 해석
     ├── permission          # 사용자별 프로그램 권한
     ├── program             # 프로그램(화면) 관리
-    ├── scan                # 스캔 오케스트레이션, 스캔 이력
+    ├── scan                # 스캔 오케스트레이션, 스캔 이력, 소스 사용 목록(import·설정 키) 추출
     ├── user                # 사용자 관리, 인증
     └── vulnerability       # 취약점 조회/동기화/판정
 ```

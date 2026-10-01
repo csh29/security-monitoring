@@ -171,10 +171,22 @@ fix-plan이 올리는 라이브러리마다 "올리면 무엇이 깨지나"를 �
   AI가 판단한 값에는 `(AI)`를 붙이고 "조치 전 원문 확인" 안내를 둔다. **호환성 위험(`UpgradeImpact.risk`)은 CVE 심각도가 아니라 그 버전으로 올릴 때
   앱이 깨질 위험**이다(HIGH: 코드·설정 수정 필수 / MEDIUM: 동작 변경 가능 / LOW: 근거상 breaking change 없음 — `impact.system.md`의 risk 기준).
   신뢰도는 모델이 스스로 매긴 값이라 측정된 정확도가 아니다.
-  행의 상세 버튼으로 breaking change(출처 링크)·조치·테스트 영역·근거 문서·메모를 연다. 분석 상태는 PATCH면 "분석 제외", UNKNOWN이면
-  "확인 필요", impact가 없으면 "분석 대기"로 구분한다(패치를 "대기"로 보이면 영원히 기다리는 것처럼 읽힌다). fix-plan이 없는 앱은 404를 오류가 아니라
+  행을 클릭하면(상세 버튼 칸 없음 — 표가 넘쳐 밀려났다) breaking change(출처 링크)·조치·테스트 영역·근거 문서·메모를 연다. 분석 상태는 PATCH면
+  "분석 제외", UNKNOWN이면 "확인 필요(버전)", impact가 없으면 "분석 대기", NO_SOURCE는 **"확인 필요(문서 없음)"**, FETCH_FAILED는 "수집 실패"다
+  (패치를 "대기"로 보이면 영원히 기다리는 것처럼 읽히고, NO_SOURCE를 "근거 없음"이라 하면 "문제될 근거가 없다(안전)"로 읽힌다 — 실제로는 영향을 모른다).
+  뱃지 색은 노랑=사람이 확인해야 함, 파랑=배치가 알아서 처리함. fix-plan이 없는 앱은 404를 오류가 아니라
   "아직 조치안이 없음"으로 보여준다. AI 문자열은 전부 textContent로 넣고 링크는 http(s)만 만든다.
-- "우리 코드가 영향받는가"(앱별 판정)는 아직 없다 — 스캔 때 import 목록을 남기는 다음 단계의 일이다.
+- **우리 코드 대조(앱별, AI 없음):** AI가 breaking change마다 가리키는 이름(`symbols` — 클래스 전체 이름·영향받는 패키지·설정 키)을 내고,
+  서버가 조회 시점에 앱의 소스 사용 목록과 대조한다(`CodeUsageMatcher`). **코드도 목록도 AI로 보내지 않는다.**
+  - 목록: 스캔 때 clone을 지우기 전에 `SourceUsageExtractor`가 `.java`의 import 줄(정규식, static은 클래스까지)과 `application*.properties/yml`의
+    **키 이름만**(값은 버림, YAML은 SafeConstructor) 뽑아 `ScanSnapshot.sourceUsageJson`에 둔다. target/build 등은 건너뛴다. 실패해도 스캔은 계속(null).
+  - 판정: `USED` = 정확한 클래스(중첩 포함)·영향받는 패키지·설정 키(정확히 또는 이름이 바뀐 접두어, relaxed binding) 일치.
+    `POSSIBLE` = 짧은 클래스 이름·와일드카드 import(p.*)에 대상 클래스로만 걸림(이름만 같은 다른 클래스일 수 있어 낮춘다).
+    `NOT_FOUND` = import·설정 키에 없음 — **영향 없음이 아니다**(전체 이름 사용·리플렉션·XML·다른 라이브러리 경유는 못 잡는다).
+    `UNKNOWN` = 이름이 없는 변경, symbols가 없는 예전 분석 결과, 소스 목록이 없는 스냅샷(다시 스캔하면 채워짐).
+    전체는 하나라도 USED면 USED, 아니면 POSSIBLE, 판단 불가가 섞이면 UNKNOWN이다. 점 없는 이름·클래스처럼 보이는 이름은 설정 키와 대조하지 않는다.
+  - 결과는 `GET /api/fix-plans/{appId}` 각 change의 `codeUsage`(impact 분석 완료이고 breaking이 있을 때만). 화면 "우리 코드" 칸은
+    "사용 발견 1/3"처럼 건수를 함께 보여주고(그래서 breaking 건수 칸을 없앴다), 상세에는 항목별 결과와 걸린 import(파일 수)를 보여준다.
 
 ### 판정 결과가 이상할 때 보는 필드
 
@@ -305,7 +317,9 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `ComCdServiceTest` — 설정 스위치 공통코드의 켜짐 판단(사용여부 Y/N, 코드 없으면 기본값)
 - `VersionJumpClassifierTest` — fix-plan 버전 변경의 점프 폭(접미사·캘린더 버전·자리 부족·다운그레이드·해석 불가)
 - `FixPlanServiceTest` — fix-plan 변경 목록 중 형식이 틀린 항목만 버리기
-- `UpgradeImpactServiceTest` — 영향 분석 결과 정규화(출처 없는 항목 버리기, 메이저→HIGH, JIRA만이면 신뢰도 하향, 근거 없는 ANALYZED 거절, NO_SOURCE는 분석 필드 비우기)
+- `UpgradeImpactServiceTest` — 영향 분석 결과 정규화(출처 없는 항목 버리기, 메이저→HIGH, JIRA만이면 신뢰도 하향, 근거 없는 ANALYZED 거절, NO_SOURCE는 분석 필드 비우기, 대조용 이름 정리)
+- `CodeUsageMatcherTest` — 우리 코드 대조(정확한 클래스·패키지·설정 키는 사용 발견, 짧은 이름·와일드카드는 가능성, 점 없는 이름은 설정 키와 비교 안 함, 메서드가 붙은 이름, 판단 불가 섞이면 전체 판단 불가, 소스 목록 없음)
+- `SourceUsageExtractorTest` — import 추출(static·와일드카드·중복), properties/yml 키만 추출(값 버림, 깨진 파일 건너뜀), 빌드 폴더 제외·파일 수 집계
 - `ScanHistoryServiceTest` — 스캔 이력의 신규 건수 계산(전후 OPEN 키 비교), 시작·성공·실패 기록, 오류 문구에 내부 메시지 미노출, 이력 저장 실패가 스캔을 막지 않음
 - `CveSummaryServiceTest` — 설명 요약 대기 판단(CVE ID 단위, 해시 비교, 최신 설명 선택)과 저장 검증
 

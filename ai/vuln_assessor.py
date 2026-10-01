@@ -141,8 +141,11 @@ IMPACT_SCHEMA = {
                 "properties": {
                     "summary": {"type": "string"},
                     "source_url": {"type": "string"},
+                    # 이 변경이 가리키는 클래스·패키지·설정 키 이름. 서버가 앱의 import·설정 키와 대조한다(CodeUsageMatcher) —
+                    # 코드 목록을 AI로 보내지 않고 이름만 받아 서버 안에서 맞춰 보기 위함이다.
+                    "symbols": {"type": "array", "items": {"type": "string"}},
                 },
-                "required": ["summary", "source_url"],
+                "required": ["summary", "source_url", "symbols"],
                 "additionalProperties": False,
             },
         },
@@ -457,7 +460,8 @@ class CveMonitorClient:
                 "status": status,
                 "risk": analysis.risk if analysis else None,
                 "confidence": analysis.confidence if analysis else None,
-                "breakingChanges": [{"summary": c["summary"], "sourceUrl": c["source_url"]}
+                "breakingChanges": [{"summary": c["summary"], "sourceUrl": c["source_url"],
+                                     "symbols": c.get("symbols", [])}
                                     for c in analysis.breaking_changes] if analysis else [],
                 "requiredActions": analysis.required_actions if analysis else [],
                 "testFocus": analysis.test_focus if analysis else [],
@@ -662,7 +666,7 @@ class UpgradeImpactTarget:
 class UpgradeImpact:
     risk: str
     confidence: str
-    breaking_changes: list[dict]  # [{summary, source_url}]
+    breaking_changes: list[dict]  # [{summary, source_url, symbols}]
     required_actions: list[str]
     test_focus: list[str]
     note: str

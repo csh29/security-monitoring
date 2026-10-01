@@ -23,6 +23,7 @@
         /* AI 판단 값 안내. 표·그리드와 같은 줄에 놓이므로 제목(panel-title)보다 작고 옅게. */
         .ai-note{ font-size:12px; line-height:1.6; color:var(--text-sub); margin:4px 0 8px; }
         .ai-note b{ color:var(--accent); }
+        #changeGridBody tr{ cursor:pointer; } /* 행을 클릭하면 상세 모달이 열린다 */
         .impact-modal .ai-caution{
             margin-bottom:10px; padding:8px 12px; font-size:12px; line-height:1.6;
             background:#fff3d6; color:#8a6400; border-radius:var(--radius-box);
@@ -53,7 +54,8 @@
         <!-- 호환성 위험은 CVE 심각도(취약점 관리 화면)가 아니라 "이 버전으로 올리면 앱이 깨질 위험"이다. 같은 화면에 취약점 이야기가
              섞여 있어 헷갈리기 쉬워 여기서 한 번 더 밝힌다. 제목 옆에 두면 제목까지 줄이 꺾여서 제목 아래 줄에 둔다. -->
         <div class="ai-note"><b>(AI)</b> 컬럼은 AI가 릴리스 노트를 읽고 판단한 값이다. 호환성 위험은 취약점 심각도가 아니라 버전을 올릴 때 앱이 깨질 위험이다.
-            라이브러리~방식도 AI가 만든 수정안에서 온 값이니, 조치 전에 상세의 출처 원문과 수정된 pom.xml을 확인할 것.</div>
+            우리 코드는 breaking change가 가리키는 이름을 이 앱의 import·설정 키와 대조한 결과이고, "import에 없음"은 영향 없음이 아니다.
+            라이브러리~방식도 AI가 만든 수정안에서 온 값이니, 조치 전에 상세(행 클릭)의 출처 원문과 수정된 pom.xml을 확인할 것.</div>
         <section>
             <table class="grid">
                 <thead id="changeGridHead"></thead>
@@ -101,6 +103,14 @@
         const JUMP_LABELS = { PATCH: '패치', MINOR: '마이너', MAJOR: '메이저', UNKNOWN: '확인 필요' };
         const RISK_LABELS = { HIGH: '높음', MEDIUM: '보통', LOW: '낮음' };
         const CONFIDENCE_LABELS = { high: '높음', medium: '보통', low: '낮음' };
+        // "우리 코드" 대조 결과(CodeUsageMatcher). NOT_FOUND를 "영향 없음"이라 쓰지 않는다 — import에 안 보일 뿐이다.
+        const CODE_USAGE_LABELS = { USED: '사용 발견', POSSIBLE: '사용 가능성', NOT_FOUND: 'import에 없음', UNKNOWN: '판단 불가' };
+        const CODE_USAGE_NOTE = 'import 문·설정 키 이름으로만 대조한 결과다. "import에 없음"은 영향이 없다는 뜻이 아니다 — import 없이 전체 이름으로 쓰거나, '
+            + '리플렉션·XML·어노테이션 문자열로 쓰거나, 다른 라이브러리를 거쳐 영향받는 경우는 잡지 못한다.';
+
+        function codeUsageBadge(status) {
+            return badge(CODE_USAGE_LABELS[status] || status, 'code_' + String(status).toLowerCase());
+        }
 
         function badge(text, cssClass) {
             const span = document.createElement('span');
@@ -120,10 +130,11 @@
          */
         function impactState(change) {
             if (change.jump === 'PATCH') return { label: '분석 제외', cls: 'patch', detail: '패치 점프라 AI 분석을 하지 않는다. 하위 호환이 원칙이므로 회귀 테스트만 하면 된다.' };
-            if (change.jump === 'UNKNOWN') return { label: '확인 필요', cls: 'unknown', detail: '버전을 낮추거나 그대로 두는 변경이거나, 버전을 해석할 수 없다. fix-plan을 사람이 다시 확인해야 한다.' };
+            if (change.jump === 'UNKNOWN') return { label: '확인 필요(버전)', cls: 'needs_check', detail: '버전을 낮추거나 그대로 두는 변경이거나, 버전을 해석할 수 없다. fix-plan을 사람이 다시 확인해야 한다.' };
             if (!change.impact) return { label: '분석 대기', cls: 'pending', detail: '다음 AI 배치에서 분석된다.' };
             if (change.impact.status === 'ANALYZED') return { label: '분석 완료', cls: 'analyzed' };
-            if (change.impact.status === 'NO_SOURCE') return { label: '근거 없음', cls: 'no_source', detail: '릴리스 노트를 어디서도 찾지 못해 AI를 부르지 않았다. 사람이 직접 확인해야 한다.' };
+            // "근거 없음"이라고 쓰면 "문제될 근거가 없다(안전)"로 읽힌다. 실제로는 문서를 못 찾아 영향을 모른다는 뜻이다.
+            if (change.impact.status === 'NO_SOURCE') return { label: '확인 필요(문서 없음)', cls: 'no_source', detail: '릴리스 노트를 어디서도 찾지 못해 AI 분석을 하지 않았다. 영향이 없다는 뜻이 아니라 영향을 모른다는 뜻이므로 사람이 직접 확인해야 한다. 공식 문서가 있으면 ai/release_note_sources.json에 추가하면 다음부터 분석된다.' };
             return { label: '수집 실패', cls: 'fetch_failed', detail: '일시 오류로 릴리스 노트를 받지 못했다. 다음 AI 배치에서 다시 시도한다.' };
         }
 
@@ -153,26 +164,29 @@
                 }
             },
             {
-                id: 'breakingCount', label: 'breaking (AI)', width: 95, align: 'right',
+                // breaking change 건수 칸 대신 둔다 — "사용 발견 1/3"처럼 건수도 같이 보인다(칸이 모자라 둘 다 둘 수 없었다).
+                id: 'codeUsage', label: '우리 코드', width: 110, align: 'center',
                 render: function (value, row) {
-                    return row.impact && row.impact.status === 'ANALYZED' ? String((row.impact.breakingChanges || []).length) : '';
-                }
+                    const usage = row.codeUsage;
+                    if (!usage) {
+                        // 분석 완료인데 대조 결과가 없으면 breaking change가 0건이라 대조할 게 없는 것이다.
+                        return row.impact && row.impact.status === 'ANALYZED' ? 'breaking 없음' : '';
+                    }
+                    const hits = usage.items.filter(function (i) { return i.status === usage.status; }).length;
+                    const span = codeUsageBadge(usage.status);
+                    if (usage.status === 'USED' || usage.status === 'POSSIBLE') {
+                        span.textContent += ' ' + hits + '/' + usage.items.length;
+                    }
+                    return span;
+                },
+                title: function (value, row) { return row.codeUsage ? CODE_USAGE_NOTE : ''; }
             },
             {
-                id: 'impactStatus', label: '분석 상태', width: 85, align: 'center',
+                id: 'impactStatus', label: '분석 상태', width: 135, align: 'center',
                 render: function (value, row) { const state = impactState(row); return badge(state.label, state.cls); }
-            },
-            {
-                label: '상세', width: 60, align: 'center',
-                render: function (value, row) {
-                    const btn = document.createElement('button');
-                    btn.type = 'button';
-                    btn.className = 'btn grid-btn';
-                    btn.textContent = '상세';
-                    btn.addEventListener('click', function () { openImpactModal(row); });
-                    return btn;
-                }
             }
+            // 상세는 행 클릭으로 연다(Grid.render의 onRowClick). 상세 버튼 칸을 두었더니 분석 상태 문구("확인 필요(문서 없음)")가
+            // 길어진 만큼 표가 넘쳐 버튼 칸이 화면 밖으로 밀렸다.
         ];
 
         Grid.renderHeader(document.getElementById('changeGridHead'), COLUMNS, { initialMessage: '시스템을 선택하세요.' });
@@ -231,9 +245,9 @@
         function list(items, renderItem) {
             if (!items || items.length === 0) return document.createTextNode('없음');
             const ul = document.createElement('ul');
-            items.forEach(function (item) {
+            items.forEach(function (item, index) {
                 const li = document.createElement('li');
-                renderItem(li, item);
+                renderItem(li, item, index);
                 ul.appendChild(li);
             });
             return ul;
@@ -265,12 +279,29 @@
             if (impact && impact.status === 'ANALYZED') {
                 addRow(dl, '호환성 위험 (AI)', badge(RISK_LABELS[impact.risk] || impact.risk, (impact.risk || '').toLowerCase()));
                 addRow(dl, '신뢰도 (AI)', CONFIDENCE_LABELS[impact.confidence] || impact.confidence);
-                addRow(dl, 'Breaking change (AI)', list(impact.breakingChanges, function (li, item) {
+                const usage = change.codeUsage;
+                addRow(dl, 'Breaking change (AI)', list(impact.breakingChanges, function (li, item, index) {
                     li.appendChild(document.createTextNode(item.summary + ' '));
                     const source = link(item.sourceUrl);
                     if (source.tagName === 'A') source.textContent = '[출처]';
                     li.appendChild(source);
+                    // 이 앱 코드와의 대조(항목 순서가 breakingChanges와 같다). 걸린 import·설정 키를 같이 보여준다.
+                    const itemUsage = usage && usage.items[index];
+                    if (itemUsage) {
+                        const line = document.createElement('div');
+                        line.appendChild(codeUsageBadge(itemUsage.status));
+                        if (itemUsage.matches.length) {
+                            line.appendChild(document.createTextNode(' ' + itemUsage.matches.join(', ')));
+                        }
+                        li.appendChild(line);
+                    }
                 }));
+                if (usage) {
+                    const box = document.createElement('div');
+                    box.appendChild(codeUsageBadge(usage.status));
+                    box.appendChild(document.createTextNode(' ' + (usage.reason ? usage.reason + ' ' : '') + CODE_USAGE_NOTE));
+                    addRow(dl, '우리 코드', box);
+                }
                 addRow(dl, '필요한 조치 (AI)', list(impact.requiredActions, function (li, item) { li.textContent = item; }));
                 addRow(dl, '테스트 영역 (AI)', list(impact.testFocus, function (li, item) { li.textContent = item; }));
                 addRow(dl, '근거 문서', list(impact.sources, function (li, item) {
@@ -340,6 +371,7 @@
                     const changes = plan.changes || [];
                     document.getElementById('changesTitle').textContent = '버전 변경 (' + changes.length + '건)';
                     Grid.render(gridBody, COLUMNS, changes, {
+                        onRowClick: function (tr, row) { openImpactModal(row); },
                         // changes 필드가 생기기 전에 만들어진 조치안은 변경 목록이 비어 있다.
                         emptyMessage: '변경 목록이 없습니다. 이전 형식의 조치안이면 다음 스캔 후 AI 배치가 다시 만들 때 채워진다.'
                     });

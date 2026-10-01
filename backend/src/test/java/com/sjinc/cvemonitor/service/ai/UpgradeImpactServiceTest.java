@@ -26,8 +26,8 @@ class UpgradeImpactServiceTest {
     void 근거_문서에_없는_출처를_단_breaking_change는_버리고_메모를_남긴다() {
         UpgradeImpactRequest request = analyzed("3.1.5", "3.2.12", "HIGH", "high",
                 List.of(new Source("OFFICIAL_DOC", WIKI)),
-                List.of(new BreakingChange("-parameters 없이 컴파일하면 파라미터 이름을 못 찾는다", WIKI),
-                        new BreakingChange("모델이 지어낸 항목", "https://example.com/made-up")));
+                List.of(new BreakingChange("-parameters 없이 컴파일하면 파라미터 이름을 못 찾는다", WIKI, List.of()),
+                        new BreakingChange("모델이 지어낸 항목", "https://example.com/made-up", List.of())));
 
         UpgradeImpactService.Normalized normalized = UpgradeImpactService.normalize(request);
 
@@ -77,7 +77,7 @@ class UpgradeImpactServiceTest {
     void 근거를_못_찾은_건은_분석_필드를_모두_비운다() {
         UpgradeImpactRequest request = new UpgradeImpactRequest("org.apache.kafka:kafka-clients", "3.6.1", "3.7.0",
                 UpgradeImpact.NO_SOURCE, "HIGH", "high",
-                List.of(new BreakingChange("추측", "https://kafka.apache.org")), List.of("추측 조치"), List.of("x"),
+                List.of(new BreakingChange("추측", "https://kafka.apache.org", List.of())), List.of("추측 조치"), List.of("x"),
                 List.of(new Source("OFFICIAL_DOC", "https://kafka.apache.org")), "근거 문서를 찾지 못함");
 
         UpgradeImpactService.Normalized normalized = UpgradeImpactService.normalize(request);
@@ -88,6 +88,14 @@ class UpgradeImpactServiceTest {
         assertThat(normalized.requiredActions()).isEmpty();
         assertThat(normalized.sources()).isEmpty();
         assertThat(normalized.note()).isEqualTo("근거 문서를 찾지 못함");
+    }
+
+    @Test
+    void 대조용_이름은_공백_중복_문장을_걸러낸다() {
+        assertThat(UpgradeImpactService.normalizeSymbols(java.util.Arrays.asList(
+                " javax.servlet ", "javax.servlet", "", null, "이건 이름이 아니라 문장이다", "spring.redis")))
+                .containsExactly("javax.servlet", "spring.redis");
+        assertThat(UpgradeImpactService.normalizeSymbols(null)).isEmpty();
     }
 
     @Test

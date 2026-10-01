@@ -46,6 +46,9 @@ public class UpgradeImpactService {
     private static final Set<String> SOURCE_KINDS =
             Set.of("GITHUB_RELEASE", "GITLAB_RELEASE", "CHANGELOG", "JIRA", "OFFICIAL_DOC");
 
+    private static final int MAX_SYMBOLS = 10;
+    private static final int MAX_SYMBOL_LENGTH = 200;
+
     private final FixPlanChangeRepository fixPlanChangeRepository;
     private final UpgradeImpactRepository upgradeImpactRepository;
     private final ObjectMapper objectMapper;
@@ -112,7 +115,7 @@ public class UpgradeImpactService {
         List<BreakingChange> breakingChanges = requestedChanges.stream()
                 .filter(Objects::nonNull)
                 .filter(c -> !isBlank(c.summary()) && sourceUrls.contains(c.sourceUrl()))
-                .map(c -> new BreakingChange(c.summary().trim(), c.sourceUrl()))
+                .map(c -> new BreakingChange(c.summary().trim(), c.sourceUrl(), normalizeSymbols(c.symbols())))
                 .toList();
         int dropped = requestedChanges.size() - breakingChanges.size();
         if (dropped > 0) {
@@ -184,6 +187,17 @@ public class UpgradeImpactService {
             log.warn("영향 분석 JSON을 읽지 못했습니다: {}", e.getMessage());
             return List.of();
         }
+    }
+
+    /** 대조용 이름. 공백을 떼고 중복을 없애고, 한 항목에 너무 많거나 긴 이름은 모델이 문장을 넣은 것이라 자른다. */
+    static List<String> normalizeSymbols(List<String> symbols) {
+        return nullToEmpty(symbols).stream()
+                .filter(s -> !isBlank(s))
+                .map(String::trim)
+                .filter(s -> s.length() <= MAX_SYMBOL_LENGTH && !s.contains(" "))
+                .distinct()
+                .limit(MAX_SYMBOLS)
+                .toList();
     }
 
     private static List<String> trimAll(List<String> values) {

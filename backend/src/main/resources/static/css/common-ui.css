@@ -153,12 +153,20 @@ body{
 .badge.running{ background:#e3ecff; color:#2f5bd3; }
 .badge.success{ background:#e6f4ea; color:#2e7d32; }
 .badge.failed{ background:var(--accent-soft); color:var(--accent); }
-/* fix-plan 화면: 버전 점프 폭(PATCH/MINOR/MAJOR/UNKNOWN)과 영향 분석 상태. 위험도는 심각도와 같은 high/medium/low를 쓴다. */
+/* fix-plan 화면: 버전 점프 폭(PATCH/MINOR/MAJOR/UNKNOWN)과 영향 분석 상태. 위험도는 심각도와 같은 high/medium/low를 쓴다.
+   분석 상태 색 규칙 — 노랑: 사람이 확인해야 함(no_source, 분석 상태의 unknown), 파랑: 기다리면 배치가 알아서 처리함(pending, fetch_failed).
+   "근거 없음"을 회색으로 두었더니 "문제될 근거가 없다(안전)"로 읽혔다 — 실제로는 영향을 모른다는 뜻이라 주의색을 쓴다. */
 .badge.patch{ background:#e6f4ea; color:#2e7d32; }
 .badge.minor{ background:#fff3d6; color:#b8860b; }
 .badge.major{ background:var(--accent-soft); color:var(--accent); }
 .badge.unknown{ background:#ececf4; color:var(--text-sub); }
 .badge.analyzed{ background:#e6f4ea; color:#2e7d32; }
-.badge.no_source{ background:#ececf4; color:var(--text-sub); }
-.badge.fetch_failed{ background:#fff3d6; color:#b8860b; }
+.badge.no_source{ background:#fff3d6; color:#8a6400; }
+.badge.fetch_failed{ background:#e3ecff; color:#2f5bd3; }
 .badge.pending{ background:#e3ecff; color:#2f5bd3; }
+.badge.needs_check{ background:#fff3d6; color:#8a6400; }
+/* 조치안 "우리 코드" 대조 결과. "import에 없음"을 초록으로 칠하면 안전하다는 뜻으로 읽혀서 판단 불가와 같은 회색으로 둔다. */
+.badge.code_used{ background:var(--accent-soft); color:var(--accent); }
+.badge.code_possible{ background:#fff3d6; color:#8a6400; }
+.badge.code_not_found{ background:#ececf4; color:var(--text-sub); }
+.badge.code_unknown{ background:#ececf4; color:var(--text-sub); }
