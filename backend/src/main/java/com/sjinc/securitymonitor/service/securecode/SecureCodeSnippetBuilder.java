@@ -142,7 +142,7 @@ public class SecureCodeSnippetBuilder {
     }
 
     /** 하드코드된 비밀값 규칙(kisa-hardcoded-secret-*)은 조각·지문 모두 값을 가린 뒤 쓴다. */
-    static boolean isSecretRule(String ruleId) {
+    public static boolean isSecretRule(String ruleId) {
         return ruleId != null && ruleId.contains("hardcoded-secret");
     }
 

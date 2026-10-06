@@ -83,7 +83,7 @@ public class SecureCodeFindingService {
                 .map(finding -> SecureCodeFindingView.of(finding, systemNames.get(finding.getAppId()),
                         SecureCodeAiReviewService.isReviewCurrent(finding),
                         SecureCodeFinding.OPEN.equals(finding.getStatus())
-                                && aiReviewService.isTarget(finding.getSeverity(), finding.getTraceSafety())))
+                                && aiReviewService.isTarget(finding.getRuleId(), finding.getSeverity(), finding.getTraceSafety())))
                 .toList();
     }
 

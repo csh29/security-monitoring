@@ -12,7 +12,7 @@ Git 저장소(Maven 프로젝트)를 clone 해서 의존성을 뽑고, OSV/NVD�
 | `backend/` | Spring Boot 서버 + 화면(Thymeleaf). 스캔·판정·조회 전부 |
 | `securecode/rules/` | 시큐어코딩 점검 규칙(Semgrep YAML)과 규칙별 테스트 예제. AI 없이 서버가 Semgrep으로 돌린다 |
 | `securecode/trace-rules.yml` | MyBatis `${}` 연계 추적이 쓰는 시스템별 프레임워크 규칙(세션 값을 요청 맵에 덮어쓰는 어노테이션 등). 새 시스템을 점검할 때 항목을 추가한다 |
-| `ai/` | 파이썬 AI 판단 배치(`vuln_assessor.py`). 판정·fix-plan·업그레이드 영향 분석·코드 점검 탐지 판별(`claude-sonnet-5`)과 CVE 설명 한국어 요약(`claude-haiku-4-5`)을 한다. 영향 분석의 근거(릴리스 노트)는 `release_notes.py`가 AI 없이 모은다. 스캔 직후 AI 판단·fix-plan·설명 요약·영향 분석 대기 건이 있으면(코드 점검 직후에는 판별 대기 건이 있으면) 서버가 띄우고, 배치는 `/api/ai/**`를 직접 호출해 대기 중인 취약점을 가져가 결과를 되돌려준다 |
+| `ai/` | 파이썬 AI 판단 배치. 진입점 `vuln_assessor.py`가 기능별 모듈 `cve_assessor.py`(라이브러리 취약점)·`secure_code_reviewer.py`(시큐어코딩 판별)를 차례로 돌린다(공통 부분은 `ai_common.py`, 한 기능만 돌리려면 그 모듈을 직접 실행). 판정·fix-plan·업그레이드 영향 분석·코드 점검 탐지 판별(`claude-sonnet-5`)과 CVE 설명 한국어 요약(`claude-haiku-4-5`)을 한다. 영향 분석의 근거(릴리스 노트)는 `release_notes.py`가 AI 없이 모은다. 스캔 직후 AI 판단·fix-plan·설명 요약·영향 분석 대기 건이 있으면(코드 점검 직후에는 판별 대기 건이 있으면) 서버가 띄우고, 배치는 `/api/ai/**`를 직접 호출해 대기 중인 취약점을 가져가 결과를 되돌려준다 |
 
 ## 개발 환경
 
@@ -80,7 +80,7 @@ Windows에서는 `mvnw.cmd`를 쓴다.
 | `ai.python.command` | 파이썬 실행 명령 (이 PC는 `py`) |
 | `ai.assessor.script` | 배치 스크립트 경로 (`../ai/vuln_assessor.py`) |
 | `ai.assessment.severities` | AI 판단 대상 등급 (기본 `HIGH,CRITICAL`) |
-| `ai.securecode.severities` *(선택)* | 코드 점검 탐지 중 AI 판별 대상 등급 (기본 `HIGH,CRITICAL`). 연계 추적이 판정한 건은 등급과 무관하게 빠진다 |
+| `ai.securecode.severities` *(선택)* | 코드 점검 탐지 중 AI 판별 대상 등급 (기본 `HIGH,CRITICAL`). 연계 추적이 판정한 건과 하드코드된 비밀값 규칙(값이 가려져 AI가 판단할 근거가 없음)은 등급과 무관하게 빠진다 |
 | `securecode.semgrep.command` *(선택)* | semgrep 실행 파일(기본 `semgrep`). PATH에 없으면 `ai.python.command` 파이썬의 Scripts 폴더에서 자동으로 찾는다 |
 | `securecode.rules-dir` *(선택)* | 코드 점검 규칙 폴더(기본 `../securecode/rules`, backend/에서 띄우는 기준) |
 | `securecode.timeout-seconds` *(선택)* | 코드 점검 1회 제한시간(기본 600초) |

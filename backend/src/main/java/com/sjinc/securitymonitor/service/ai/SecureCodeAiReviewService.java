@@ -6,6 +6,7 @@ import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewRequest;
 import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewTarget;
 import com.sjinc.securitymonitor.repository.AppRepository;
 import com.sjinc.securitymonitor.repository.SecureCodeFindingRepository;
+import com.sjinc.securitymonitor.service.securecode.SecureCodeSnippetBuilder;
 import com.sjinc.securitymonitor.service.securecode.TraceSafety;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -27,7 +28,8 @@ import java.util.stream.Stream;
  *
  * <p>라이브러리 취약점과 같은 원칙으로 AI는 마지막 수단이다. 대상은 OPEN 중 <b>결정론으로 못 정한 것</b>(연계 추적 판정이 없거나
  * 판정 불가)이면서 등급이 {@code ai.securecode.severities}(기본 HIGH,CRITICAL)인 것뿐이다. 연계 추적이 클라이언트 값·서버 세팅으로
- * 정한 건은 보내지 않는다.
+ * 정한 건은 보내지 않는다. 하드코드된 비밀값 규칙도 보내지 않는다 — 점검 단계에서 값을 {@code ****}로 가려 두므로 AI가 평문인지 {@code ENC(...)}·
+ * {@code ${}} 참조인지 구분할 근거가 없다(첫 실행에서 22건이 "규칙이 걸렸으니 취약"만 되풀이했다). 값 자체를 보낼 수는 없다.
  *
  * <p>판별은 화면에 참고로만 보여준다. 처리여부(오탐 등)는 사람이 정한다 — 연계 추적이 안전으로 판정해도 자동 오탐 처리를 하지 않는 것과 같은 이유.
  *
@@ -56,11 +58,12 @@ public class SecureCodeAiReviewService {
     private List<String> severities;
 
     /**
-     * AI 판별 대상인가 — 등급이 기준 안이고 결정론(연계 추적)으로 정하지 못했다. 처리여부와 무관하다(점검 중 코드 문맥을 만들 때는
-     * 아직 처리여부를 모른다). 대기열은 여기에 OPEN 조건을 더한다.
+     * AI 판별 대상인가 — 비밀값 규칙이 아니고, 등급이 기준 안이고, 결정론(연계 추적)으로 정하지 못했다. 처리여부와 무관하다(점검 중 코드
+     * 문맥을 만들 때는 아직 처리여부를 모른다). 대기열은 여기에 OPEN 조건을 더한다.
      */
-    public boolean isTarget(String severity, String traceSafety) {
-        return severity != null && severities.contains(severity)
+    public boolean isTarget(String ruleId, String severity, String traceSafety) {
+        return !SecureCodeSnippetBuilder.isSecretRule(ruleId)
+                && severity != null && severities.contains(severity)
                 && (traceSafety == null || TraceSafety.UNKNOWN.name().equals(traceSafety));
     }
 
@@ -70,7 +73,7 @@ public class SecureCodeAiReviewService {
         Set<Long> appIds = appRepository.findAll().stream().map(App::getId).collect(Collectors.toSet());
         return findingRepository.findByStatus(SecureCodeFinding.OPEN).stream()
                 .filter(f -> appIds.contains(f.getAppId()))
-                .filter(f -> isTarget(f.getSeverity(), f.getTraceSafety()))
+                .filter(f -> isTarget(f.getRuleId(), f.getSeverity(), f.getTraceSafety()))
                 .flatMap(f -> {
                     SecureCodeReviewTarget target = toTarget(f);
                     boolean pending = target.code() != null && !target.code().isBlank()
@@ -103,9 +106,13 @@ public class SecureCodeAiReviewService {
         finding.applyAiReview(request.verdict(), request.confidence(), reasoning, request.inputHash(), LocalDateTime.now());
     }
 
-    /** 저장된 판별이 지금 입력 기준인가. 재점검으로 코드·근거가 바뀌었으면 옛 판별이라 화면에 보여주지 않는다. */
+    /**
+     * 저장된 판별을 화면에 보여줄 것인가. 재점검으로 코드·근거가 바뀌었으면 옛 판별이라 숨긴다. 비밀값 규칙의 판별도 숨긴다 — 대상에서 빼기 전에
+     * 값을 못 본 채 낸 판별이 DB에 남아 있다.
+     */
     public static boolean isReviewCurrent(SecureCodeFinding finding) {
-        return finding.getAiVerdict() != null && finding.getAiInputHash() != null
+        return !SecureCodeSnippetBuilder.isSecretRule(finding.getRuleId())
+                && finding.getAiVerdict() != null && finding.getAiInputHash() != null
                 && finding.getAiInputHash().equals(toTarget(finding).inputHash());
     }
 

@@ -217,7 +217,7 @@ public class SecureCodeScanService {
         List<DetectedFinding> result = new ArrayList<>(findings.size());
         int attached = 0;
         for (DetectedFinding f : findings) {
-            if (!aiReviewService.isTarget(f.severity(), f.traceSafety())) {
+            if (!aiReviewService.isTarget(f.ruleId(), f.severity(), f.traceSafety())) {
                 result.add(f);
                 continue;
             }

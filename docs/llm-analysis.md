@@ -29,7 +29,9 @@ H2 DB 파일(`data/cvemonitor.mv.db`)만 옛 이름이다 — 이름을 바꾸�
 | --- | --- |
 | `backend/` | Spring Boot 3.3.4 / Java 17 / Maven. 서버 + 화면(Thymeleaf) 전부 |
 | `securecode/rules/` | 시큐어코딩 점검 규칙(Semgrep YAML) + 규칙별 테스트 예제. 라이브러리 취약점과 분리된 기능(아래 "시큐어코딩 점검")이 쓴다 |
-| `ai/` | 파이썬 배치(`vuln_assessor.py`). 스캔이 끝나면 할 일이 있을 때 서버가 띄우고(`AiAssessmentTriggerService`, 아래 4장), 사람이 직접 실행해도 된다. 어느 쪽이든 **배치가 드라이버다** — 배치가 `/api/ai/**`를 호출해 대기 중인 취약점·fix-plan·설명 요약·영향 분석·코드 점검 판별을 스스로 가져가고 결과를 되돌려준다. 자바는 띄우기만 하고 결과를 기다리지 않는다 |
+| `ai/` | 파이썬 배치. 진입점은 `vuln_assessor.py`(서버 설정 `ai.assessor.script`)이고, 기능별로 파일이 나뉜다 — `cve_assessor.py`(라이브러리 취약점 stage 1~4),
+`secure_code_reviewer.py`(시큐어코딩 판별 stage 5), `ai_common.py`(모델·백엔드 접속·응답 처리·토큰 집계·배치 로그 형식). 진입점이 둘을 차례로 돌리고
+요약을 한 번에 찍는다. 한쪽이 예외로 멈춰도 다른 쪽은 돌고, 종료 코드는 실패(1)로 남는다. 한 기능만 돌리려면 그 모듈을 직접 실행한다. 스캔이 끝나면 할 일이 있을 때 서버가 띄우고(`AiAssessmentTriggerService`, 아래 4장), 사람이 직접 실행해도 된다. 어느 쪽이든 **배치가 드라이버다** — 배치가 `/api/ai/**`를 호출해 대기 중인 취약점·fix-plan·설명 요약·영향 분석·코드 점검 판별을 스스로 가져가고 결과를 되돌려준다. 자바는 띄우기만 하고 결과를 기다리지 않는다 |
 
 DB는 H2 **파일 DB**(`jdbc:h2:file:./data/cvemonitor` → 서버를 띄운 `backend/data/cvemonitor.mv.db`, `ddl-auto=update`)다.
 재기동해도 데이터가 남는다. `DataInitializer`는 **DB가 비어 있을 때(사용자 0명) 한 번만** 초기 데이터를 심으므로,
@@ -296,6 +298,9 @@ AI에게 넘기는 근거도 마찬가지다. OSV에서 뽑은 `knownFixedVersio
 - **대상(`isTarget`):** OPEN이면서 등급이 `ai.securecode.severities`(기본 HIGH,CRITICAL — 코드 점검 등급은 HIGH/MEDIUM/LOW뿐이라 사실상 HIGH)이고
   **연계 추적 판정이 없거나 판정 불가**인 것. 연계 추적이 클라이언트 값(HIGH)·서버 세팅(LOW) 등으로 정한 건은 보내지 않는다 — AI는 마지막 수단.
   판정 불가는 MEDIUM이라 기본 설정에선 대상이 안 된다. 그래서 실제 대상은 추적 대상이 아닌 ERROR 규칙(인증서 검증 끄기, 역직렬화, taint 규칙 등)이다.
+  **하드코드된 비밀값 규칙(id에 `hardcoded-secret`)은 뺀다** — 점검 단계에서 값을 `****`로 가려 두므로 AI가 평문인지 `ENC(...)`·`${}` 참조인지 구분할 근거가 없다.
+  첫 실행(2026-10-06, CRM_BACK·CRM_BATCH 30건)에서 22건이 비밀값 규칙이었고, 값을 못 본 채 거의 다 "취약(high)"을 냈다(규칙을 되풀이한 것뿐).
+  그때 저장된 판별은 DB에 남아 있지만 `isReviewCurrent`가 비밀값 규칙이면 숨긴다. 나머지 8건(업로드 원래 파일명 2·`isAdmin` 3·TLS 2·RSA 1024 1)은 대상 그대로.
 - **보내는 것:** 규칙·행안부 항목·CWE·등급·규칙 설명·파일 경로·줄, 코드 문맥(`aiContext`, 없으면 화면용 조각), 연계 추적 판정·근거.
   코드는 보내기 직전에 `SecretMasker`로 가린다(되돌릴 원문이 없어 대응표는 버린다). **소스 코드가 AI로 나가는 유일한 곳이다**(사내 정책 예외, 2026-10-06 승인).
 - **재판별 기준:** 입력(가린 코드·규칙·경로·연계 추적)의 SHA-256(`aiInputHash`)이 저장된 값과 다를 때만. 줄 번호는 넣지 않는다(위에 한 줄 추가로 재과금되지 않게).
@@ -485,7 +490,7 @@ OPEN만)에서도 빠진다.
 | `ai.python.command` | 파이썬 실행 명령 (이 PC는 `py`) |
 | `ai.assessor.script` | 배치 스크립트 경로 (`../ai/vuln_assessor.py`) |
 | `ai.assessment.severities` | AI 판단 대상 등급 (기본 `HIGH,CRITICAL`) |
-| `ai.securecode.severities` | 선택. 코드 점검 탐지 중 AI 판별 대상 등급 (기본 `HIGH,CRITICAL`). 연계 추적이 판정한 건은 등급과 무관하게 빠진다 |
+| `ai.securecode.severities` | 선택. 코드 점검 탐지 중 AI 판별 대상 등급 (기본 `HIGH,CRITICAL`). 연계 추적이 판정한 건과 하드코드된 비밀값 규칙은 등급과 무관하게 빠진다 |
 | `github.token` | 선택. 영향 분석이 GitHub Releases를 받을 때 쓰는 읽기 전용 토큰. 배치에 `GITHUB_TOKEN`으로 넘긴다. 없으면 토큰 없이 부른다 |
 | `ai.auto-trigger.enabled` | 스캔 후 AI 배치 자동 실행 스위치의 **초기값**(기본 `true`, DB를 처음 만들 때만 쓰인다). 실제 스위치는 공통코드 `AI_CONFIG`/`AUTO_TRIGGER`의 사용여부로, 공통코드 관리 화면에서 바꾸면 재기동 없이 다음 스캔부터 적용된다(`ComCdService.isEnabled`). DB를 처음 만들 때만 이 값으로 심는다(파일 DB라 재기동해도 공통코드 값이 유지된다). 로컬은 `false`로 두면 과금 없이 스캔할 수 있다 |
 | `securecode.semgrep.command` | 선택. semgrep 실행 파일(기본 `semgrep`). 기본값인데 PATH에 없으면 `ai.python.command`로 파이썬 Scripts 폴더를 물어 거기서 찾는다(`SemgrepRunner.findInPythonScripts` — 이 PC는 PATH에 없다). 직접 준 경로는 그대로 쓴다. `py -m semgrep`은 지원 중단됐다 |
@@ -521,7 +526,7 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `SemgrepReportParserTest` — Semgrep JSON 해석(규칙 id 접두어 제거, 역슬래시 경로, 심각도 변환, 경로 있는 오류만 분석 실패 파일)
 - `SecureCodeSnippetBuilderTest` — 지문(줄 밀림·들여쓰기 무관, 코드가 바뀌면 다름, 같은 코드 두 번은 순번), 앞뒤 5줄 조각, 비밀값 가림, MS949 폴백, 저장소 밖 경로 차단,
   AI 판별 문맥(감싼 메서드 전체, 긴 메서드는 걸린 줄 가운데로 80줄·끝이면 당김, 자바가 아니면 앞뒤 15줄·비밀값 가림)
-- `SecureCodeAiReviewServiceTest` — AI 판별 대상(결정론으로 못 정한 높은 등급만), 대기열(지워진 앱·판별 완료 제외), 코드가 바뀌면 옛 판별 숨김·재대기,
+- `SecureCodeAiReviewServiceTest` — AI 판별 대상(결정론으로 못 정한 높은 등급만, 비밀값 규칙 제외·남은 판별 숨김), 대기열(지워진 앱·판별 완료 제외), 코드가 바뀌면 옛 판별 숨김·재대기,
   줄 번호만 밀리면 재판별 안 함, 문맥 없으면 조각·비밀값 가림, 판별 값 검증, 처리여부는 그대로
 - `SecureCodeReconcilerTest` — 재점검 비교(신규·유지·해결, 분석 실패 파일·빠진 규칙은 해결 안 함, 수동 상태 유지, 재발견 시 OPEN)
 - `RuleSetLoaderTest` — 규칙 id·규칙셋 버전, 규칙 0개·폴더 없음은 실패, 실제 규칙 폴더 읽기

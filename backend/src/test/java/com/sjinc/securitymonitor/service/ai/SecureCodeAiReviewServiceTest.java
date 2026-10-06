@@ -37,6 +37,8 @@ class SecureCodeAiReviewServiceTest {
         when(appRepository.findAll()).thenReturn(List.of(App.builder().id(1L).systemName("CRM").build()));
     }
 
+    private static final String RULE = "kisa-os-command-exec";
+
     private static DetectedFinding detected(String fingerprint, String severity, String traceSafety, String aiContext) {
         return new DetectedFinding(fingerprint, "kisa-os-command-exec", "입력데이터 검증", "명령어 삽입", "CWE-78", severity,
                 "src/A.java", 5, 5, "메시지", "snippet", 1, traceSafety, traceSafety == null ? null : "근거1\n근거2",
@@ -49,14 +51,28 @@ class SecureCodeAiReviewServiceTest {
 
     @Test
     void 결정론으로_못_정한_높은_등급만_대상이다() {
-        assertThat(service.isTarget("HIGH", null)).isTrue();
-        assertThat(service.isTarget("CRITICAL", null)).isTrue();
-        assertThat(service.isTarget("HIGH", "UNKNOWN")).isTrue();
+        assertThat(service.isTarget(RULE, "HIGH", null)).isTrue();
+        assertThat(service.isTarget(RULE, "CRITICAL", null)).isTrue();
+        assertThat(service.isTarget(RULE, "HIGH", "UNKNOWN")).isTrue();
         // 연계 추적이 정한 건은 보내지 않는다(클라이언트 값 HIGH도, 서버 세팅 LOW도).
-        assertThat(service.isTarget("HIGH", "CLIENT")).isFalse();
-        assertThat(service.isTarget("LOW", "SERVER_SET")).isFalse();
-        assertThat(service.isTarget("MEDIUM", null)).isFalse();
-        assertThat(service.isTarget(null, null)).isFalse();
+        assertThat(service.isTarget(RULE, "HIGH", "CLIENT")).isFalse();
+        assertThat(service.isTarget(RULE, "LOW", "SERVER_SET")).isFalse();
+        assertThat(service.isTarget(RULE, "MEDIUM", null)).isFalse();
+        assertThat(service.isTarget(RULE, null, null)).isFalse();
+    }
+
+    @Test
+    void 비밀값_규칙은_값이_가려져_판단할_근거가_없어_대상이_아니고_남은_판별도_숨긴다() {
+        assertThat(service.isTarget("kisa-hardcoded-secret-config", "HIGH", null)).isFalse();
+        assertThat(service.isTarget("kisa-hardcoded-secret-java", "HIGH", null)).isFalse();
+
+        SecureCodeFinding f = finding(1L, new DetectedFinding("s", "kisa-hardcoded-secret-config", "보안기능", "하드코드된 중요정보",
+                "CWE-798", "HIGH", "app.properties", 3, 3, "메시지", "db.password=****", 3, null, null, null, null));
+        f.applyAiReview("VULNERABLE", "high", "이유", SecureCodeAiReviewService.toTarget(f).inputHash(), NOW);
+        when(findingRepository.findByStatus("OPEN")).thenReturn(List.of(f));
+
+        assertThat(SecureCodeAiReviewService.isReviewCurrent(f)).isFalse();
+        assertThat(service.getPendingTargets()).isEmpty();
     }
 
     @Test
