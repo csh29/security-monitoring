@@ -33,7 +33,7 @@ RULES_FILE = Path(__file__).resolve().parent / "release_note_sources.json"
 MAVEN_CENTRAL = "https://repo1.maven.org/maven2"
 GITHUB_API = "https://api.github.com"
 TIMEOUT = 20
-USER_AGENT = "cve-monitoring-impact-collector"
+USER_AGENT = "security-monitoring-impact-collector"
 
 # 한 업그레이드에 AI로 넘기는 근거의 총 글자 수 상한(대략 3~4만 토큰). 넘치면 오래된 문서부터 빼고 note에 남긴다 —
 # 잘린 줄 모르고 분석하면 "breaking change 없음"이 근거 부족 때문인지 알 수 없다.

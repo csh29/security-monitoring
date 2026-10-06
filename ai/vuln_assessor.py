@@ -57,9 +57,9 @@ ASSESS_MAX_WORKERS = 5
 
 # 자바 백엔드 접속 정보. SecurityConfig에서 /api/ai/**는 세션 로그인 없이
 # X-Internal-Token 헤더만으로 인증하므로, application.properties의
-# ai.internal.token과 반드시 같은 값을 CVE_MONITOR_AI_TOKEN에 넣어줘야 한다.
-BASE_URL = os.environ.get("CVE_MONITOR_BASE_URL", "http://localhost:8080")
-AI_TOKEN = os.environ.get("CVE_MONITOR_AI_TOKEN", "")
+# ai.internal.token과 반드시 같은 값을 SECURITY_MONITOR_AI_TOKEN에 넣어줘야 한다.
+BASE_URL = os.environ.get("SECURITY_MONITOR_BASE_URL", "http://localhost:8080")
+AI_TOKEN = os.environ.get("SECURITY_MONITOR_AI_TOKEN", "")
 
 # Structured Outputs 스키마. output_config.format 으로 넘기면 응답이 이 스키마를
 # 만족하는 JSON 텍스트임이 보장되므로 코드펜스를 벗겨낼 필요가 없다.
@@ -373,12 +373,12 @@ class CveSummaryTarget:
         )
 
 
-class CveMonitorClient:
+class SecurityMonitorClient:
     """자바 백엔드의 /api/ai/** 와 통신하는 클라이언트."""
 
     def __init__(self, base_url: str = BASE_URL, token: str = AI_TOKEN):
         if not token:
-            raise ValueError("CVE_MONITOR_AI_TOKEN 환경변수가 비어 있습니다.")
+            raise ValueError("SECURITY_MONITOR_AI_TOKEN 환경변수가 비어 있습니다.")
         self._base_url = base_url.rstrip("/")
         self._headers = {"X-Internal-Token": token}
 
@@ -733,7 +733,7 @@ class UpgradeImpactAnalyzerClient:
         )
 
 
-def _analyze_impact(analyzer: UpgradeImpactAnalyzerClient, backend: "CveMonitorClient",
+def _analyze_impact(analyzer: UpgradeImpactAnalyzerClient, backend: "SecurityMonitorClient",
                     target: UpgradeImpactTarget) -> str:
     """업그레이드 한 건을 수집 → (근거가 있으면) 분석 → 저장하고, 저장한 상태를 한 줄로 돌려준다.
     AI 호출이나 저장이 실패하면 예외를 그대로 올린다 — 저장하지 않았으니 다음 배치에서 다시 대기로 잡힌다."""
@@ -795,7 +795,7 @@ class DescriptionSummarizerClient:
         return "\n\n".join(f"### {t.cve_id}\n{t.description}" for t in targets)
 
 
-def _summarize_group(summarizer: "DescriptionSummarizerClient", backend: "CveMonitorClient",
+def _summarize_group(summarizer: "DescriptionSummarizerClient", backend: "SecurityMonitorClient",
                      group: list[CveSummaryTarget]) -> list[tuple[CveSummaryTarget, Optional[Exception]]]:
     """묶음 하나를 요약하고 CVE별로 저장한다. _assess_one과 같은 이유로 예외를 잡아서 돌려준다.
     요청 자체가 실패하면 묶음 전체가, 응답에서 빠졌거나 저장이 실패한 CVE는 그 건만 실패로 남는다 —
@@ -817,7 +817,7 @@ def _summarize_group(summarizer: "DescriptionSummarizerClient", backend: "CveMon
     return results
 
 
-def _assess_one(ai_client: "VulnAssessorClient", backend: "CveMonitorClient",
+def _assess_one(ai_client: "VulnAssessorClient", backend: "SecurityMonitorClient",
                  ctx: DependencyContext) -> tuple[DependencyContext, Optional[VulnAssessment], Optional[Exception]]:
     """CVE 하나를 판단하고 저장한다. 병렬 실행 시 스레드에서 그대로 호출되므로
     예외를 여기서 잡아 (ctx, 결과, 에러) 형태로 돌려준다 — 한 건 실패가 나머지를 막지 않도록."""
@@ -830,7 +830,7 @@ def _assess_one(ai_client: "VulnAssessorClient", backend: "CveMonitorClient",
 
 
 def main() -> None:
-    backend = CveMonitorClient()
+    backend = SecurityMonitorClient()
 
     # stage 1: CVE 하나씩 개별 판단. 시스템 프롬프트가 CVE 건마다 동일해서 2건 이상이면 프롬프트
     # 캐시를 쓰는데, 처음부터 여러 건을 동시에 보내면 캐시가 만들어지기 전에 여러
@@ -985,9 +985,9 @@ class _TimestampedStream:
 
 
 if __name__ == "__main__":
-    # 서버가 띄우면 CVE_MONITOR_TRACE_ID를 넘기고 서버 로그의 "배치 실행 시작" 줄에도 같은 값을 찍는다 — 두 로그를
+    # 서버가 띄우면 SECURITY_MONITOR_TRACE_ID를 넘기고 서버 로그의 "배치 실행 시작" 줄에도 같은 값을 찍는다 — 두 로그를
     # 이 값으로 서로 찾아간다. 사람이 직접 돌리면 없으므로 여기서 만든다.
-    trace_id = os.environ.get("CVE_MONITOR_TRACE_ID") or uuid.uuid4().hex[:8]
+    trace_id = os.environ.get("SECURITY_MONITOR_TRACE_ID") or uuid.uuid4().hex[:8]
     sys.stdout = _TimestampedStream(sys.stdout, trace_id)
     sys.stderr = _TimestampedStream(sys.stderr, trace_id)
     print("===== AI 배치 시작 =====")

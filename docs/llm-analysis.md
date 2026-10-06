@@ -8,8 +8,15 @@
 
 ## 1. 무엇을 하는 시스템인가
 
-Git 저장소(Maven 프로젝트)를 clone → 의존성 추출 → 취약점 DB 조회 → 판정 → pom.xml 수정안 생성
-까지를 한 줄로 잇는 **CVE 취약점 수집·모니터링 시스템**이다.
+등록된 Git 저장소의 보안취약점을 점검·관리하는 **보안취약점 모니터링 시스템**(프로젝트 이름 `security-monitoring`)이다. 두 기능으로 나뉜다.
+
+- **라이브러리 취약점(CVE):** clone → 의존성 추출 → 취약점 DB 조회 → 판정 → pom.xml 수정안 생성까지를 한 줄로 잇는다(아래 흐름).
+- **시큐어코딩 점검:** 같은 저장소의 소스를 행안부 SW 보안약점 규칙(Semgrep)으로 점검하고 연계 추적으로 판정한다(3장 "시큐어코딩 점검").
+
+처음엔 CVE 모니터링(`cve-monitoring`, 패키지 `com.sjinc.cvemonitor`)으로 시작해 2026-10-06에 이름을 바꿨다
+(패키지 `com.sjinc.securitymonitor`, `SecurityMonitorApplication`, 배치 환경변수 `SECURITY_MONITOR_*`).
+H2 DB 파일(`data/cvemonitor.mv.db`)만 옛 이름이다 — 이름을 바꾸면 서버가 새 빈 DB를 만들어 기존 데이터를 못 찾으므로, 바꾸려면 서버를 멈춘 상태에서
+파일(`.mv.db`·`.trace.db`)을 옮기고 `spring.datasource.url`을 같이 고친다.
 
 ```
 [앱 등록]  →  [스캔]  →  [CVE 저장]  →  [자동/AI 판단]  →  [fix-plan 생성]  →  [화면 조회]
@@ -39,7 +46,7 @@ DB는 H2 **파일 DB**(`jdbc:h2:file:./data/cvemonitor` → 서버를 띄운 `ba
 서비스에서 쓰이는지 알 수 있다.
 
 ```
-com.sjinc.cvemonitor
+com.sjinc.securitymonitor
 ├── config       # Spring 설정 (SecurityConfig, WebClientConfig, DataInitializer)
 ├── controller   # REST API (@RestController) — 화면용 컨트롤러는 여기가 아니라 mvc/
 ├── mvc          # 화면(뷰) 반환 컨트롤러 + 전역 모델(ControllerAdvice)
@@ -115,17 +122,32 @@ AI를 쓰지 않는다(1단계 — 오탐 비율을 보고 AI 분류를 붙일�
    앞뒤 5줄 조각과 **지문**을 만든다. 지문 = SHA-256(규칙 id + 파일 경로 + 걸린 줄의 공백 정리 텍스트 + 같은 키의 파일 내 순번). 줄 번호는 넣지 않는다
    (위에 한 줄 추가로 전부 "해결+신규"가 되지 않게). 규칙 id에 `hardcoded-secret`이 들어가면 조각·지문 모두 문자열 리터럴·설정 값을 `****`로 가린 뒤 쓴다.
    UTF-8로 깨지면 MS949로 다시 읽는다. 저장소 밖(실제 경로 기준, 심볼릭 링크 포함)을 가리키면 읽지 않는다
-6-1. **MyBatis `${}` 연계 추적** — `kisa-sql-injection-mybatis-dollar` 탐지가 있을 때만. `MybatisDollarTracer`(순수)가 clone의 매퍼 XML·Java 소스를
-   읽어(`MapperXmlIndex`, `JavaSourceIndex` — JavaParser, 타입 해석기 없이 소스만) `${key}`마다 값의 출처를 판정하고, `DollarTraceMerger`가 (파일, 줄,
-   줄 안 순서)로 탐지에 붙여 등급을 다시 매긴다. 지문은 그대로라 재점검 비교·처리여부에 영향이 없다.
+6-1. **연계 추적** — 출처를 따라갈 수 있는 탐지가 있을 때만(`SecureCodeScanService.traceFindings`). clone의 Java 소스를 한 번만 구문 분석해
+   (`JavaSourceIndex` — JavaParser, 타입 해석기 없이 소스만) 아래 두 추적이 같은 색인을 쓴다. 값의 출처를 따라가는 엔진은 `ValueOriginTracer`(순수)다 —
+   지역 변수는 모든 대입, 파라미터는 모든 호출자(호출 문맥 Frame), 맵은 실행 직전까지 모든 경로의 `put`, 우리 메서드는 반환문, 컨트롤러 요청 매핑 파라미터는
+   클라이언트 값, 세션 덮어쓰기·로그인 정보는 `trace-rules.yml`. JDK 값 객체(날짜·난수·UUID·숫자 — `PURE_VALUE_TYPES`)·클래스 정적 메서드·정적 상수는
+   재료(받는 쪽·인자)의 출처를 따르고, 클라이언트가 보낸 객체(업로드 파일 등)의 메서드 결과는 클라이언트 값이다. RestTemplate·SqlSession처럼 외부에서
+   값을 가져오는 객체의 결과는 판정 불가로 둔다. 판정은 `TraceSafety`(공용 enum), 등급은 `TraceSafety.severity()` — 클라이언트 값·우회 가능 HIGH,
+   판정 불가 MEDIUM, 안전 판정 LOW. 판정·근거는 `SecureCodeFinding.traceSafety`·`traceEvidence`에 저장하고, 지문은 그대로라 재점검 비교·처리여부에 영향이 없다.
+   - **위험 호출 지점**(`SinkTracer`): SSRF 변수 주소(`kisa-ssrf-dynamic-url`)·명령 실행(`kisa-os-command-exec`)·다운로드 경로(`kisa-path-traversal-download`)·
+     업로드 저장(`kisa-file-upload-save`)·문자열 연결 SQL(`kisa-sql-injection-java-concat`) 탐지 줄에서 규칙이 보는 호출을 구문 트리로 다시 찾아(`JavaSourceIndex.nodesAt`)
+     그 인자(주소·명령·경로·SQL)의 출처를 판정한다. 무료판 Semgrep taint는 한 메서드 안만 봐서, 컨트롤러가 받은 값을 서비스에서 쓰는 사내 구조에서는
+     Spring 출처를 넣어도 이어지지 않던 것을 호출자를 거슬러 컨트롤러까지 따라가 확정한다. SSRF는 고정 호스트로 시작하는 주소(지역 변수에 만든 것도)를
+     안전으로 본다(규칙의 sanitizer와 같은 기준). 호출을 못 찾으면 판정을 붙이지 않는다(Semgrep 등급 그대로).
+   - **실측(2026-10-06):** CRM_BACK 6건 — 업로드 저장 4건 중 원래 파일명의 확장자를 저장 경로에 쓰는 2곳(`Crc020Service:898`·`Crd010Service:72`, `.jsp` 업로드
+     가능)은 HIGH, 설정값 + 날짜 + 난수로 이름을 만드는 2곳은 LOW. SSRF 변수 주소 2건(`callUrl` 대입 3곳 모두 서버 값, `batchUrl` `@Value`)은 LOW.
+     ext-api 2건 — 상수 주소를 넘겨받은 `new URL(url)` LOW, 외부 HTML의 `img.attr("src")`는 판정 불가.
+     처음엔 `.append()` 체인 깊이(MAX_DEPTH 14 → 40), JDK 날짜·난수 객체, `File.separator` 같은 클래스 상수를 몰라 안전한 2곳이 판정 불가였다.
+   - Set.of는 JVM마다 순회 순서가 달라, 구문 실행 메서드를 그대로 돌면 같은 코드인데 근거로 고르는 공통 실행 경로가 실행마다 바뀌었다 — 정렬해서 돈다.
+6-1-a. **MyBatis `${}`** — `kisa-sql-injection-mybatis-dollar`. `MybatisDollarTracer`(순수)가 매퍼 XML(`MapperXmlIndex`)과 Java 소스를 이어 `${key}`마다
+   값의 출처를 판정하고, `DollarTraceMerger`가 (파일, 줄, 줄 안 순서)로 탐지에 붙인다.
    - 따라가는 길: `${key}` → 구문 실행(`sqlSession.selectList("ns.id", map)`, 구문 id를 파라미터로 받는 감싼 메서드면 그 호출자까지) → 실행 직전까지
      `map.put("key", 값)`이 **모든 경로에서** 일어나는가(if 한쪽·반복·catch·람다 안이면 조건부 — `@RequestBody Map`에는 클라이언트 키가 이미 있어서
      조건이 거짓이면 원래 값이 남는다) → 값이 상수·로그인 정보·모든 반환이 상수인 메서드인가, 요청 값인가. 맵이 파라미터면 호출자로, 컨트롤러 요청 매핑까지 가면 클라이언트 값.
    - **공통 실행 경로:** 클라이언트가 구문 id까지 정하는 실행(`selectList(param.getStatement(), paramData)`)을 찾아 모든 구문의 추가 호출처로 함께 판정한다.
      서비스에서 세팅한 값도 그 경로로 직접 부르면 우회되기 때문이다. List를 넘기는 실행은 MyBatis가 `list`로 감싸 `${key}`에 닿지 않아 판정에서 뺀다.
-   - 판정(`DollarVerdict.Safety`)과 등급: 클라이언트 값·공통 경로로 우회 가능 → 규칙 등급 그대로(HIGH), 판정 불가 → MEDIUM,
-     세션 값으로 덮어씀·서버가 세팅·XML에서 결정(bind 상수, 상수 비교 if/when 안) → LOW. 안전해도 자동 오탐 처리는 하지 않는다.
-     판정과 근거 경로는 `SecureCodeFinding.traceSafety`·`traceEvidence`에 저장하고 재점검마다 최신으로 바꾼다.
+   - 판정: 클라이언트 값·공통 경로로 우회 가능 → HIGH, 판정 불가 → MEDIUM, 세션 값으로 덮어씀·서버가 세팅·XML에서 결정(bind 상수, 상수 비교 if/when 안) → LOW.
+     안전해도 자동 오탐 처리는 하지 않는다. 재점검마다 최신 판정으로 바꾼다.
    - **시스템별 프레임워크 규칙은 `securecode/trace-rules.yml`(`TraceRules`)에만 둔다** — 세션 값을 요청 맵에 덮어쓰는 장치(어노테이션·덮어쓰는 위치·
      첫 파라미터 조건·키), 로그인 정보로 볼 메서드 접두어·타입 이름. 판정 로직에는 특정 시스템 이름이 없다. 규칙은 대상 코드에 그 어노테이션이 있을 때만
      적용돼 여러 시스템 항목을 같이 둔다. 지금은 sjinc 프레임워크 `@AddUserInfo` 하나(첫 파라미터가 HttpServletRequest일 때 `paramData`의 login* 키).
@@ -433,7 +455,7 @@ OPEN만)에서도 빠진다.
 | `git.access.token` / `git.user.name` | 스캔 대상 저장소 clone |
 | `maven.home` | `dependency:tree` 실행용 Maven 홈 |
 | `claude.api.key` | AI 판단 / fix-plan / 설명 요약 |
-| `ai.internal.token` | 자바 ↔ 파이썬 배치 인증 (`CVE_MONITOR_AI_TOKEN`과 같은 값) |
+| `ai.internal.token` | 자바 ↔ 파이썬 배치 인증 (`SECURITY_MONITOR_AI_TOKEN`과 같은 값) |
 | `ai.python.command` | 파이썬 실행 명령 (이 PC는 `py`) |
 | `ai.assessor.script` | 배치 스크립트 경로 (`../ai/vuln_assessor.py`) |
 | `ai.assessment.severities` | AI 판단 대상 등급 (기본 `HIGH,CRITICAL`) |
@@ -445,7 +467,7 @@ OPEN만)에서도 빠진다.
 | `securecode.trace-rules` | 선택. MyBatis `${}` 연계 추적의 시스템별 프레임워크 규칙 파일(기본 `../securecode/trace-rules.yml`) |
 | `scan.allowed-repo-hosts` | 앱 등록을 허용할 저장소 호스트 목록(쉼표 구분, 기본 `git.sejung.co.kr`). 다른 호스트를 쓰게 되면 여기서 늘린다 |
 
-AI 배치 실행 로그는 `backend/ai-assessor.log`에 이어 쌓인다(gitignore 대상). 줄마다 `[YYYY-MM-DD HH:MM:SS][traceId]`가 붙는다(`_TimestampedStream`, traceback 포함). traceId는 실행마다 하나 — 서버가 띄우면 `AiAssessmentTriggerService`가 만들어 `CVE_MONITOR_TRACE_ID`로 넘기고 서버 로그의 "배치 실행 시작/종료" 줄에도 찍는다(사람이 직접 돌리면 파이썬이 만든다). 실행마다 `===== AI 배치 시작 =====` / `===== AI 배치 종료(exit=N) =====` 줄과 끝의 빈 줄이 남는다. 서버가 `PYTHONIOENCODING=utf-8`로 띄워 로그는 UTF-8이다(예전엔 윈도우 기본 cp949라 IDE에서 한글이 깨졌다).
+AI 배치 실행 로그는 `backend/ai-assessor.log`에 이어 쌓인다(gitignore 대상). 줄마다 `[YYYY-MM-DD HH:MM:SS][traceId]`가 붙는다(`_TimestampedStream`, traceback 포함). traceId는 실행마다 하나 — 서버가 띄우면 `AiAssessmentTriggerService`가 만들어 `SECURITY_MONITOR_TRACE_ID`로 넘기고 서버 로그의 "배치 실행 시작/종료" 줄에도 찍는다(사람이 직접 돌리면 파이썬이 만든다). 실행마다 `===== AI 배치 시작 =====` / `===== AI 배치 종료(exit=N) =====` 줄과 끝의 빈 줄이 남는다. 서버가 `PYTHONIOENCODING=utf-8`로 띄워 로그는 UTF-8이다(예전엔 윈도우 기본 cp949라 IDE에서 한글이 깨졌다).
 
 ---
 
@@ -476,6 +498,8 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `MybatisDollarTracerTest` — `${}` 연계 추적(상수·삼항·모든 분기 상수 반환은 서버 세팅, else 없는 조건부 세팅은 클라이언트 값, XML 상수 비교·bind,
   세션 덮어쓰기는 container 안의 키만·첫 파라미터 조건, 공통 실행 경로 우회, List 실행 제외, 다른 프레임워크 규칙은 설정만으로, 규칙 없으면 클라이언트 값, 설정 파일 읽기, XML 줄 번호·주석 제외)
 - `DollarTraceMergerTest` — 판정별 등급 재매김·근거·지문 유지, 한 줄 여러 `${}`는 순서로, 줄 안 개수가 다르면 Semgrep 등급 유지, 다른 규칙은 그대로
+- `SinkTracerTest` — 서비스의 위험 호출을 컨트롤러까지 따라가 판정(요청값 주소 CLIENT, `@Value` 주소·고정 호스트 + 쿼리 SERVER_SET, 원래 파일명 저장 CLIENT,
+  UUID 파일명 SERVER_SET, 상수 명령 SERVER_SET), 판정으로 등급 재매김(CLIENT HIGH·서버 LOW), 호출을 못 찾은 탐지·다른 규칙은 그대로, 지문 유지
 - `TraceRuleDrafterTest` — AOP 포인트컷·호출 추적으로 세션 덮어쓰기 후보(세션 값 아닌 키는 따로), 이름 붙은 포인트컷·요청 맵 자체 덮어쓰기, AOP 없음·XML AOP 안내,
   초안 YAML을 그대로 TraceRules가 읽음, 지금 설정 대비 상태(이미 있음/신규/다름), 반영 시 판정 변화, 점검 완료 알림 문구(설정과 같으면 없음), 카멜 공통 접두어
 - `SecretMaskerTest` — pom 비밀값만 가림(버전·좌표·`${}` 참조는 남김), AI 결과 되돌림, 보낸 뒤 pom이 바뀌면 되돌리지 않음, 비밀값 없으면 원문 그대로

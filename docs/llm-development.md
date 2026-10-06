@@ -70,7 +70,7 @@ py -m pip install -r ../securecode/requirements.txt
   구문 오류가 난다(그래서 `hardcoded-secret.yml`과 `hardcoded-secret-config.yml`을 나눴다).
 - `metavariable-regex`는 값의 **처음부터** 맞춘다(re.match). 중간 문자열을 찾으려면 `.*`로 시작한다.
 - 규칙 id에 점(.)을 넣지 않는다 — 결과의 `check_id`에서 마지막 점 뒤를 규칙 id로 쓴다(SemgrepReportParser).
-- MyBatis `${}` 연계 추적(`MybatisDollarTracer`)에 **특정 시스템의 어노테이션·키·클래스 이름을 넣지 않는다.** 시스템마다 다른 장치(세션 값을 요청 맵에
+- 연계 추적(`ValueOriginTracer`·`MybatisDollarTracer`·`SinkTracer`)에 **특정 시스템의 어노테이션·키·클래스 이름을 넣지 않는다.** 시스템마다 다른 장치(세션 값을 요청 맵에
   덮어쓰는 AOP, 로그인 정보 객체 이름)는 `securecode/trace-rules.yml`에 항목으로 추가한다. 새 시스템을 점검 대상에 넣으면 그 시스템이 로그인 정보를
   요청 값에 어떻게 넣는지 확인하고 항목을 추가한다 — 없으면 그 값이 클라이언트 값으로 판정된다(위험한 쪽이라 놓치지는 않지만 오탐이 된다).
   이 파일은 `rules/` 밖에 둔다(안에 두면 Semgrep이 규칙으로 읽는다).

@@ -1,5 +1,5 @@
-# cve-monitoring
-CVE 취약점 정보 수집 및 보안 위험 모니터링 시스템
+# security-monitoring
+보안취약점 모니터링 시스템 — 오픈소스 라이브러리 취약점(CVE)과 소스 코드 시큐어코딩 약점을 함께 점검·관리한다.
 
 Git 저장소(Maven 프로젝트)를 clone 해서 의존성을 뽑고, OSV/NVD로 취약점을 조회한 뒤,
 버전 범위로 판단할 수 없는 건만 AI로 판단해 pom.xml 수정안(fix-plan)까지 만들어 준다.
@@ -21,8 +21,8 @@ Git 저장소(Maven 프로젝트)를 clone 해서 의존성을 뽑고, OSV/NVD�
 | Language | Java 17 |
 | Framework | Spring Boot 3.3.4 |
 | Build Tool | Maven (Maven Wrapper 포함, `./mvnw` \| `mvnw.cmd`) |
-| Group / Artifact | `org.example` / `cve-monitoring` |
-| 기본 패키지 | `com.sjinc.cvemonitor` |
+| Group / Artifact | `org.example` / `security-monitoring` |
+| 기본 패키지 | `com.sjinc.securitymonitor` |
 | View | Thymeleaf (서버 렌더링) |
 | DB | H2 파일 DB (`backend/data/cvemonitor.mv.db`, `ddl-auto=update`) |
 | 인증 | Spring Security 폼 로그인 + 프로그램별 권한 |
@@ -138,7 +138,7 @@ py test_rules.py
 이름만 보고 어떤 DTO가 어느 서비스에서 쓰이는지 알 수 있도록 하기 위함이다.
 
 ```
-com.sjinc.cvemonitor
+com.sjinc.securitymonitor
 ├── config                  # Spring 설정 (Security, WebClient, 초기 데이터)
 ├── controller              # REST API 엔드포인트
 ├── mvc                     # 화면(뷰) 반환 컨트롤러 + 사이드바·상단바 전역 모델
@@ -168,7 +168,7 @@ com.sjinc.cvemonitor
     ├── permission          # 사용자별 프로그램 권한
     ├── program             # 프로그램(화면) 관리
     ├── scan                # 스캔 오케스트레이션, 스캔 이력, 소스 사용 목록(import·설정 키) 추출
-    ├── securecode          # 코드 점검: Semgrep 실행·결과 해석·코드 조각/지문·재점검 비교, MyBatis ${} 연계 추적·추적 규칙 확인
+    ├── securecode          # 코드 점검: Semgrep 실행·결과 해석·코드 조각/지문·재점검 비교, 연계 추적(MyBatis ${}·위험 호출 지점)·추적 규칙 확인
     ├── user                # 사용자 관리, 인증
     └── vulnerability       # 취약점 조회/동기화/판정
 ```
