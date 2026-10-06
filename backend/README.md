@@ -168,7 +168,7 @@ com.sjinc.cvemonitor
     ├── permission          # 사용자별 프로그램 권한
     ├── program             # 프로그램(화면) 관리
     ├── scan                # 스캔 오케스트레이션, 스캔 이력, 소스 사용 목록(import·설정 키) 추출
-    ├── securecode          # 코드 점검: Semgrep 실행·결과 해석·코드 조각/지문·재점검 비교, MyBatis ${} 연계 추적·추적 규칙 초안
+    ├── securecode          # 코드 점검: Semgrep 실행·결과 해석·코드 조각/지문·재점검 비교, MyBatis ${} 연계 추적·추적 규칙 확인
     ├── user                # 사용자 관리, 인증
     └── vulnerability       # 취약점 조회/동기화/판정
 ```

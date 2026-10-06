@@ -23,6 +23,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -149,7 +150,8 @@ public class SecureCodeScanService {
             return new TraceOutcome(detected, null);
         }
         try {
-            MybatisDollarTracer.Result result = MybatisDollarTracer.trace(projectDir, traceRules);
+            Map<String, String> sources = MybatisDollarTracer.readSources(projectDir);
+            MybatisDollarTracer.Result result = MybatisDollarTracer.trace(sources, traceRules);
             DollarTraceMerger.Merged merged = DollarTraceMerger.merge(detected, result.verdicts());
             log.info("[{}] MyBatis ${…} 연계 추적: {}건 판정, 맞추지 못함 {}건, 공통 실행 경로 {}개, Java 구문 분석 실패 {}개",
                     app.getSystemName(), merged.traced(), merged.unmatched(), result.genericRoutes().size(), result.failedFiles().size());
@@ -161,10 +163,38 @@ public class SecureCodeScanService {
                 log.warn("[{}] 연계 추적이 구문 분석하지 못한 Java 파일: {}", app.getSystemName(), result.failedFiles());
                 notes.add("Java 파일 " + result.failedFiles().size() + "개를 구문 분석하지 못해 그 안의 값 세팅·호출은 추적하지 못했습니다.");
             }
+            String ruleNote = checkTraceRules(app, sources, traceRules, result);
+            if (ruleNote != null) notes.add(ruleNote);
             return new TraceOutcome(merged.findings(), notes.isEmpty() ? null : String.join("\n", notes));
         } catch (Exception e) {
             log.warn("[{}] MyBatis ${…} 연계 추적 실패 — Semgrep 등급 그대로 저장", app.getSystemName(), e);
             return new TraceOutcome(detected, "MyBatis ${} 연계 추적에 실패해 ${} 탐지는 Semgrep 등급 그대로 두었습니다. 서버 로그를 확인하세요.");
+        }
+    }
+
+    /**
+     * 이 저장소의 프레임워크 장치(세션 값을 요청 맵에 덮어쓰는 AOP, 로그인 정보 타입)가 trace-rules.yml과 맞는지 확인한다(TraceRuleDrafter).
+     * 설정이 빠졌거나 틀리면 연계 추적 판정이 조용히 틀린다 — 빠지면 그 ${}가 전부 클라이언트 값(오탐), 세션 값이 아닌 키가 들어가면 위험을 놓친다.
+     * 다를 때만 점검 완료 알림에 올리고 초안 YAML은 로그에 남긴다. 설정 파일은 사람이 고친다.
+     * 부가 확인이라 실패해도 연계 추적 결과는 그대로 쓴다(로그만).
+     */
+    private String checkTraceRules(App app, Map<String, String> sources, TraceRules current, MybatisDollarTracer.Result currentResult) {
+        try {
+            TraceRuleDrafter.Draft draft = TraceRuleDrafter.draft(sources);
+            draft.notes().forEach(n -> log.info("[{}] 추적 규칙 확인: {}", app.getSystemName(), n));
+            List<TraceRuleDraftPreview.Item> items = TraceRuleDraftPreview.compare(current, draft);
+            if (items.stream().allMatch(i -> i.status() == TraceRuleDraftPreview.Status.SAME)) {
+                return null;
+            }
+            // 반영했을 때 바뀌는 판정 수 — 설정과 다를 때만 한 번 더 돌린다(평소 점검 시간은 늘지 않는다).
+            TraceRules merged = TraceRuleDraftPreview.merge(current, draft, app.getSystemName());
+            int changes = TraceRuleDraftPreview.changes(currentResult, MybatisDollarTracer.trace(sources, merged)).size();
+            log.warn("[{}] 추적 규칙(trace-rules.yml)과 다른 프레임워크 장치가 있습니다. 확인 후 반영할 초안:\n{}",
+                    app.getSystemName(), TraceRuleDrafter.toYaml(draft, app.getSystemName()));
+            return TraceRuleDraftPreview.note(items, changes);
+        } catch (Exception e) {
+            log.warn("[{}] 추적 규칙 확인 실패(연계 추적 결과는 그대로 사용)", app.getSystemName(), e);
+            return null;
         }
     }
 

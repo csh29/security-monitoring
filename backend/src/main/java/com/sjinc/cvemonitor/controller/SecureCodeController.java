@@ -5,11 +5,9 @@ import com.sjinc.cvemonitor.dto.securecode.SecureCodeFindingView;
 import com.sjinc.cvemonitor.dto.securecode.SecureCodeScanRequest;
 import com.sjinc.cvemonitor.dto.securecode.SecureCodeScanResult;
 import com.sjinc.cvemonitor.dto.securecode.SecureCodeStatusRequest;
-import com.sjinc.cvemonitor.dto.securecode.TraceRuleDraftView;
 import com.sjinc.cvemonitor.service.securecode.SecureCodeFindingService;
 import com.sjinc.cvemonitor.service.securecode.SecureCodeScanException;
 import com.sjinc.cvemonitor.service.securecode.SecureCodeScanService;
-import com.sjinc.cvemonitor.service.securecode.TraceRuleDraftService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -38,7 +36,6 @@ public class SecureCodeController {
 
     private final SecureCodeScanService scanService;
     private final SecureCodeFindingService findingService;
-    private final TraceRuleDraftService traceRuleDraftService;
 
     /** 화면의 "점검" 버튼. clone·Semgrep이 끝날 때까지 기다린다(라이브러리 스캔과 같다). */
     @PostMapping("/scan")
@@ -60,18 +57,6 @@ public class SecureCodeController {
     public List<SecureCodeFindingView> getFindings(@RequestParam(required = false) Long appId,
                                                    @RequestParam(required = false, defaultValue = "OPEN") String status) {
         return findingService.getFindings(appId, status.isBlank() ? null : status);
-    }
-
-    /**
-     * 코드 점검 화면의 "추적 규칙 초안" 버튼. 저장소를 받아 trace-rules.yml 초안·지금 설정 대비 상태·반영 시 판정 변화를 돌려준다.
-     * 설정 파일은 바꾸지 않는다(사람이 반영). 점검과 같이 POST — clone이라는 서버 작업을 일으키고, CSRF 검증을 받게 하기 위함이다.
-     */
-    @PostMapping("/trace-rule-draft")
-    public TraceRuleDraftView traceRuleDraft(@RequestBody SecureCodeScanRequest request) throws Exception {
-        if (request.appId() == null) {
-            throw new IllegalArgumentException("초안을 만들 앱을 선택하세요.");
-        }
-        return traceRuleDraftService.draft(request.appId());
     }
 
     @PostMapping("/findings/status")

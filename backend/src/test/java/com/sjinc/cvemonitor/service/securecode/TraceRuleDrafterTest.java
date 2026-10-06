@@ -179,6 +179,19 @@ class TraceRuleDrafterTest {
     }
 
     @Test
+    void 점검_완료_알림_문구는_설정과_다를_때만_만든다() {
+        Draft draft = TraceRuleDrafter.draft(sources(ASPECT, UTIL, USER_VO));
+        TraceRules same = new TraceRules(List.of(new TraceRules.SessionOverwrite("x", "AddUser", "paramData",
+                "HttpServletRequest", Set.of("loginCompCd", "loginUserId"))), Set.of("getLogin"), Set.of("UserVo"));
+        TraceRules wrongKey = new TraceRules(List.of(new TraceRules.SessionOverwrite("x", "AddUser", "paramData",
+                "HttpServletRequest", Set.of("loginCompCd", "pgmId"))), Set.of("getLogin"), Set.of("UserVo"));
+
+        assertThat(TraceRuleDraftPreview.note(TraceRuleDraftPreview.compare(same, draft), 0)).isNull();
+        assertThat(TraceRuleDraftPreview.note(TraceRuleDraftPreview.compare(wrongKey, draft), 3))
+                .contains("다른 항목 1개", "@AddUser → paramData", "빠짐 [pgmId]", "판정 3건", "서버 로그");
+    }
+
+    @Test
     void 카멜_단어_경계_공통_접두어() {
         assertThat(TraceRuleDrafter.commonCamelPrefix(Set.of("getLoginCompCd", "getLoginUserId"))).isEqualTo("getLogin");
         assertThat(TraceRuleDrafter.commonCamelPrefix(Set.of("getLoginId", "getLogoutAt"))).isEqualTo("get");

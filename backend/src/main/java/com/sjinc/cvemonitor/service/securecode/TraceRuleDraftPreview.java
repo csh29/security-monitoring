@@ -123,6 +123,21 @@ public final class TraceRuleDraftPreview {
         return changes;
     }
 
+    /**
+     * 점검 완료 알림에 붙일 문구. 지금 설정과 같으면 null.
+     * 예: "추적 규칙(trace-rules.yml)과 다른 항목 2개 — 세션 덮어쓰기 @AddUserInfo → paramData(다름: 빠짐 [regPgmId]), …
+     *      반영하면 ${} 판정 3건이 바뀝니다. 초안은 서버 로그에 있습니다."
+     */
+    public static String note(List<Item> items, int changeCount) {
+        List<Item> different = items.stream().filter(i -> i.status() != Status.SAME).toList();
+        if (different.isEmpty()) return null;
+        List<String> parts = different.stream()
+                .map(i -> i.kind() + " " + i.value() + "(" + i.status().label() + (i.detail().isBlank() ? "" : ": " + i.detail()) + ")")
+                .toList();
+        return "추적 규칙(trace-rules.yml)과 다른 항목 " + different.size() + "개 — " + String.join(", ", parts)
+                + ". 반영하면 ${} 판정 " + changeCount + "건이 바뀝니다. 초안은 서버 로그에 있으니 확인 후 반영하세요.";
+    }
+
     private static String key(DollarVerdict v) {
         return v.path() + ":" + v.line() + ":" + v.expr();
     }

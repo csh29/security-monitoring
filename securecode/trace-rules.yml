@@ -16,7 +16,7 @@
 sessionOverwrites:
   # com.sjinc 사내 프레임워크(CRM 등) — UserInfoAspect가 @Before("@annotation(AddUserInfo) && args(request, ..)")로
   # FrameEtcUtil.addUserInfo를 불러 요청 맵의 paramData(맵 또는 맵 목록의 각 행)에 아래 키를 세션 값으로 넣는다.
-  # regPgmId도 같이 넣지만 값이 클라이언트가 보낸 statement 앞 6자리라 세션 값이 아니다 — 넣지 않는다(추적 규칙 초안이 찾아냈다).
+  # regPgmId도 같이 넣지만 값이 클라이언트가 보낸 statement 앞 6자리라 세션 값이 아니다 — 넣지 않는다(점검 때 하는 추적 규칙 확인이 찾아냈다).
   - name: sjinc 프레임워크 @AddUserInfo
     annotation: AddUserInfo
     container: paramData

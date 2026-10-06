@@ -146,17 +146,23 @@ AI를 쓰지 않는다(1단계 — 오탐 비율을 보고 AI 분류를 붙일�
   같은 지문이 다시 걸려도·안 걸려도 스캔이 바꾸지 않는다. OPEN으로 되돌리면 다시 스캔을 따른다. 코드가 바뀌면 지문이 바뀌어 새 건이 된다(판단도 다시).
   `SC_STATUS`는 `DataInitializer`가 **그룹이 없을 때만** 매 기동 심는다(사용자 0명일 때만 심는 다른 초기 데이터와 다르다 — 기존 DB에도 들어가야 해서).
 - **API**(`SecureCodeController`, `/api/secure-code`): `POST /scan {appId}`, `GET /scans?appId=`(최신 500건), `GET /findings?appId=&status=`(기본 OPEN, 빈 값=전체),
-  `POST /findings/status`(실제로 바뀐 항목만 반영), `POST /trace-rule-draft {appId}`(추적 규칙 초안 — 아래). 화면이 고정 메뉴라 `@RequiresProgram` 없이 로그인만 필요 — 취약점 관리와 같은 기준이다. 누가 바꿨는지는 `statusChangedBy`.
-- **추적 규칙 초안**(`TraceRuleDraftService` → `TraceRuleDrafter`·`TraceRuleDraftPreview`, 순수): 코드 점검 화면 앱 행의 "초안" 버튼. 등록 앱을 clone해
-  `trace-rules.yml` 초안을 만든다. **결정론, AI 없음, 소스는 서버 밖으로 나가지 않고 설정 파일도 쓰지 않는다** — 사람이 근거를 보고 반영·커밋한다.
+  `POST /findings/status`(실제로 바뀐 항목만 반영). 화면이 고정 메뉴라 `@RequiresProgram` 없이 로그인만 필요 — 취약점 관리와 같은 기준이다. 누가 바꿨는지는 `statusChangedBy`.
+- **추적 규칙 확인**(`SecureCodeScanService.checkTraceRules` → `TraceRuleDrafter`·`TraceRuleDraftPreview`, 순수): 코드 점검의 연계 추적 단계에서
+  (`${}` 탐지가 있을 때만) 이미 받은 clone으로 이 저장소의 프레임워크 장치를 읽어 `trace-rules.yml`과 비교한다. **다를 때만** 점검 완료 알림
+  (`traceNote`)에 빠지거나 다른 항목과 "반영하면 판정 N건이 바뀜"을 올리고, 근거 주석이 달린 초안 YAML은 서버 로그(WARN)에 남긴다. 같으면 아무것도
+  띄우지 않는다. 설정이 빠지면 그 `${}`가 전부 클라이언트 값(오탐), 세션 값이 아닌 키가 들어가면 위험을 놓치는데 둘 다 조용히 일어나서 넣었다.
+  처음엔 코드 점검 화면에 "초안" 버튼·모달·API로 두었는데, 규칙은 앱이 아니라 프레임워크마다 한 번이면 돼서 누를 일이 드물고(CRM은 "이미 있음"만 나옴)
+  점검 화면 사용자가 아니라 설정 관리자용이라 점검 때 자동 확인으로 바꿨다. **결정론, AI 없음, 소스는 서버 밖으로 나가지 않고 설정 파일도 쓰지 않는다**
+  — 사람이 로그의 초안을 보고 반영·커밋한다. 확인이 실패해도 연계 추적 결과는 그대로 쓴다(로그만). 설정과 다를 때만 판정을 한 번 더 돌려 평소 점검 시간은
+  초안 분석(약 1~2초)만 는다.
   - 찾는 것: `@Aspect` 클래스의 `@Before`/`@Around` 포인트컷(`@Pointcut` 메서드 이름도 펼침)의 `@annotation(X)` → 어노테이션, `args(request, ..)` → 첫 파라미터 조건.
     어드바이스 본문에서 우리 메서드 호출을 따라가며(깊이 4) `joinPoint.getArgs()`의 요청 인자 기준 맵 경로(`arg.get("paramData")`, 맵 목록의 행)에 하는
     `put("key", 값)` → 덮어쓰는 위치·키. **값이 세션에서 온 것만 키로 넣고**, 아닌 것은 "세션 값 아님"으로 따로 보여준다
     (CRM `regPgmId`는 클라이언트가 보낸 statement 앞 6자리라 여기서 걸렸다 — 손으로 쓴 설정에 잘못 들어가 있던 것을 뺐다).
     `(T) session.getAttribute(...)`의 T → 로그인 정보 타입, T의 getter(필드 이름으로도 만든다 — Lombok) 카멜 단어 경계 공통 접두어 → 로그인 getter 접두어.
   - XML AOP(`<aop:config>`)·`HttpServletRequestWrapper` 상속 클래스는 찾지 못해 "직접 확인할 것"으로만 남긴다.
-  - 화면: 항목별 지금 설정 대비 상태(신규/이미 있음/다름/직접 확인), 초안을 반영하면 바뀌는 `${}` 판정(지금 설정 vs 지금 설정+초안으로 연계 추적을 두 번 돌린 차이),
-    근거 주석이 달린 YAML(복사 버튼). CRM 실측: 지금 설정 기준 "모두 이미 있음·변화 0", 설정 파일이 없다고 치면 신규 3·변화 26건.
+  - 비교: 항목별 지금 설정 대비 상태(신규/이미 있음/다름/직접 확인), 반영 시 바뀌는 `${}` 판정 수(지금 설정 vs 지금 설정+초안으로 연계 추적을 두 번 돌린 차이).
+    CRM 실측: 지금 설정 기준 알림 없음, 설정 파일이 없다고 치면 "다른 항목 3개(@AddUserInfo → paramData, LoginUserVo, getLogin)·판정 26건이 바뀜".
 - **규칙셋 버전**은 `rules/*.yml`과 함께 `trace-rules.yml` 내용도 해시한다(`RuleSetLoader.load(rulesDir, extraFiles)`) — 추적 규칙이 바뀌면 같은 코드도 판정이 달라져서, 점검 이력에서 그 이유를 추적할 수 있게.
 - **화면:** 사이드바 "시큐어코딩" 구역의 고정 메뉴 **코드 점검**(`secure-code-scan` — 앱별 점검 버튼·마지막 점검·점검 이력)과
   **코드 점검 결과**(`secure-code-mng` — 탐지 그리드, 처리여부 select·비고 저장, 항목별 건수 요약, 상세 모달의 줄 번호·강조 코드 조각과 CWE 링크,
@@ -471,7 +477,7 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
   세션 덮어쓰기는 container 안의 키만·첫 파라미터 조건, 공통 실행 경로 우회, List 실행 제외, 다른 프레임워크 규칙은 설정만으로, 규칙 없으면 클라이언트 값, 설정 파일 읽기, XML 줄 번호·주석 제외)
 - `DollarTraceMergerTest` — 판정별 등급 재매김·근거·지문 유지, 한 줄 여러 `${}`는 순서로, 줄 안 개수가 다르면 Semgrep 등급 유지, 다른 규칙은 그대로
 - `TraceRuleDrafterTest` — AOP 포인트컷·호출 추적으로 세션 덮어쓰기 후보(세션 값 아닌 키는 따로), 이름 붙은 포인트컷·요청 맵 자체 덮어쓰기, AOP 없음·XML AOP 안내,
-  초안 YAML을 그대로 TraceRules가 읽음, 지금 설정 대비 상태(이미 있음/신규/다름), 반영 시 판정 변화, 카멜 공통 접두어
+  초안 YAML을 그대로 TraceRules가 읽음, 지금 설정 대비 상태(이미 있음/신규/다름), 반영 시 판정 변화, 점검 완료 알림 문구(설정과 같으면 없음), 카멜 공통 접두어
 - `SecretMaskerTest` — pom 비밀값만 가림(버전·좌표·`${}` 참조는 남김), AI 결과 되돌림, 보낸 뒤 pom이 바뀌면 되돌리지 않음, 비밀값 없으면 원문 그대로
 
 규칙 자체는 `securecode/rules/`의 예제 파일로 `securecode/test_rules.py`(규칙 파일마다 `semgrep --test`)가 검증한다(22개 규칙 파일 통과).
