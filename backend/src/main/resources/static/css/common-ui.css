@@ -140,6 +140,47 @@ body{
 .detail-list dd{ line-height:1.7; white-space:pre-wrap; word-break:break-word; }
 .detail-list a{ color:var(--navy); text-decoration:underline; word-break:break-all; }
 
+/* 모달 안의 코드·원문 블록(조치안 pom.xml, 코드 점검 결과의 코드 조각). 줄 번호가 필요하면 줄마다
+   .code-line(> .code-no + .code-text)으로 감싸고, 강조할 줄에 .hit을 붙인다. */
+.code-block{
+    font-family:Consolas,"D2Coding",monospace; font-size:12px; line-height:1.6;
+    white-space:pre-wrap; word-break:break-word; margin:0;
+    padding:12px; background:var(--bg); border:1px solid var(--line); border-radius:var(--radius-box);
+}
+/* 줄 단위 구조(코드 점검 결과): 줄 번호 칸(.code-no) | 코드(.code-text). 긴 줄이 꺾여도 코드가 줄 번호 칸 아래로
+   파고들지 않도록 flex로 나눈다. 줄 배경은 블록 좌우 여백(padding 12px)까지 꽉 차게 음수 margin으로 넓힌다. */
+.code-block .code-line{ display:flex; margin:0 -12px; padding:0 12px 0 0; }
+.code-block .code-no{
+    flex:none; min-width:52px; padding:0 10px 0 12px; margin-right:12px;
+    border-right:1px solid var(--line); color:var(--text-sub); text-align:right; user-select:none;
+}
+.code-block .code-text{ flex:1; min-width:0; }
+/* 탐지된 줄 — 노란 배경, 줄 번호 칸에 경고색 막대. */
+.code-block .code-line.hit{ background:#fff3d6; }
+.code-block .code-line.hit .code-no{ color:#b8860b; font-weight:700; box-shadow:inset 3px 0 0 var(--accent); }
+/* 마우스를 올린 줄 — IDE의 현재 줄 강조처럼 줄 전체와 줄 번호를 진하게 보여준다. 탐지된 줄은 노란색을 조금 진하게. */
+.code-block .code-line:hover{ background:#e8e8f4; }
+.code-block .code-line:hover .code-no{ color:var(--navy); font-weight:700; }
+.code-block .code-line.hit:hover{ background:#ffe7ad; }
+/* 구문 색(/js/code-highlight.js가 붙이는 .tok-*) — IntelliJ 기본 라이트 테마 색에 맞췄다. 탐지 줄의 노란 배경 위에서도 읽히는 진한 색들. */
+.code-block{ color:#080808; }
+.code-block .tok-keyword{ color:#0033b3; font-weight:600; }
+.code-block .tok-string{ color:#067d17; }
+.code-block .tok-comment{ color:#8c8c8c; font-style:italic; }
+.code-block .tok-number{ color:#1750eb; }
+.code-block .tok-annotation{ color:#9e880d; }
+.code-block .tok-type{ color:#000000; }
+.code-block .tok-function{ color:#00627a; }
+.code-block .tok-tag{ color:#0033b3; }
+.code-block .tok-attr{ color:#174ad4; }
+.code-block .tok-cdata{ color:#8c8c8c; }
+.code-block .tok-key{ color:#871094; }
+.code-block .tok-value{ color:#067d17; }
+.code-block .tok-constant{ color:#871094; font-style:italic; }
+.code-block .tok-param{ color:#871094; }
+/* MyBatis ${} — 점검 규칙이 잡는 위험 패턴이라 눈에 띄게. */
+.code-block .tok-danger{ color:#c7254e; font-weight:700; background:var(--accent-soft); border-radius:2px; }
+
 /* 그리드 셀 안의 상태 뱃지. 클래스는 코드값을 소문자로 쓴다 — 처리여부(OPEN/RESOLVED)·심각도는 취약점 관리,
    스캔 결과(RUNNING/SUCCESS/FAILED)는 스캔 이력 화면. */
 /* nowrap: 컬럼이 좁아지면 "마이/너"처럼 뱃지 글자가 두 줄로 꺾여 행 높이(32px 고정)를 넘쳤다. */
@@ -170,3 +211,6 @@ body{
 .badge.code_possible{ background:#fff3d6; color:#8a6400; }
 .badge.code_not_found{ background:#ececf4; color:var(--text-sub); }
 .badge.code_unknown{ background:#ececf4; color:var(--text-sub); }
+/* 코드 점검 처리여부(공통코드 SC_STATUS). OPEN/RESOLVED는 위의 처리여부 뱃지를 같이 쓴다. */
+.badge.false_positive{ background:#ececf4; color:var(--text-sub); }
+.badge.accepted{ background:#e3ecff; color:#2f5bd3; }

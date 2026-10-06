@@ -110,6 +110,14 @@
             <artifactId>spring-boot-starter-mail</artifactId>
         </dependency>
 
+        <!-- 시큐어코딩 점검: MyBatis ${} 값이 어디서 오는지 Java 소스를 구문 분석해 따라간다(MybatisDollarTracer).
+             대상 앱을 빌드하지 않고 소스만 읽기 위해 컴파일러가 아닌 파서를 쓴다. -->
+        <dependency>
+            <groupId>com.github.javaparser</groupId>
+            <artifactId>javaparser-core</artifactId>
+            <version>3.26.2</version>
+        </dependency>
+
     </dependencies>
 
     <build>

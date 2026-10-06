@@ -1,0 +1,65 @@
+# 행안부 SW 보안약점 진단가이드 — 입력데이터 검증 및 표현 / 크로스사이트 스크립트 (CWE-79)
+rules:
+  # th:text는 이스케이프하지만 th:utext는 HTML을 그대로 출력한다.
+  - id: kisa-xss-thymeleaf-utext
+    languages: [generic]
+    paths:
+      include: ["*.html"]
+    pattern-regex: 'th:utext\s*='
+    message: "th:utext는 값을 이스케이프하지 않고 출력합니다. th:text를 쓰거나, HTML 출력이 꼭 필요하면 서버에서 허용 태그만 남기세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: 크로스사이트 스크립트
+      cwe: CWE-79
+
+  # JSP 표현식 <%= %>와 EL을 직접 출력하는 경우는 이스케이프가 없다. c:out(escapeXml 기본 true)은 안전.
+  - id: kisa-xss-jsp-unescaped
+    languages: [generic]
+    paths:
+      include: ["*.jsp", "*.jspf", "*.tag"]
+    pattern-either:
+      - pattern-regex: '<%=(?!\s*(?:org\.owasp|ESAPI|StringEscapeUtils|Encode\.))[^%]*%>'
+      - pattern-regex: 'escapeXml\s*=\s*"false"'
+    message: "JSP에서 값을 이스케이프 없이 출력합니다. <c:out value=\"...\"/> 또는 fn:escapeXml을 쓰세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: 크로스사이트 스크립트
+      cwe: CWE-79
+
+  # 화면 JS에서 서버 응답 문자열을 innerHTML로 넣는 경우. 이 저장소처럼 Thymeleaf+fetch 구조는 XSS가 여기서 생긴다.
+  - id: kisa-xss-innerhtml
+    languages: [generic]
+    paths:
+      include: ["*.html", "*.js", "*.jsp", "*.vue", "*.jsx", "*.ts", "*.tsx"]
+      exclude: ["*.min.js"]
+    pattern-either:
+      # 빈 문자열 대입(초기화)은 제외. 공백을 앞뒤 둘 다에 두면 역추적으로 lookahead가 무력화돼 공백도 lookahead 안에 둔다.
+      - pattern-regex: '\.(innerHTML|outerHTML)\s*\+?=(?!\s*[''"`]\s*[''"`])'
+      - pattern-regex: '\.insertAdjacentHTML\s*\('
+      - pattern-regex: 'document\.write(ln)?\s*\('
+    message: "HTML 문자열을 그대로 DOM에 넣습니다. 서버·사용자 값이 섞이면 textContent를 쓰거나 이스케이프하세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: 크로스사이트 스크립트
+      cwe: CWE-79
+
+  # Vue의 v-html, React의 dangerouslySetInnerHTML — 프레임워크가 해 주던 이스케이프를 끄고 HTML을 그대로 넣는다.
+  # 프런트를 별도 저장소(Vue·React)로 둔 시스템은 XSS가 대부분 여기서 생긴다.
+  - id: kisa-xss-framework-raw-html
+    languages: [generic]
+    paths:
+      include: ["*.vue", "*.html", "*.js", "*.jsx", "*.ts", "*.tsx"]
+      exclude: ["*.min.js"]
+    pattern-either:
+      - pattern-regex: '\bv-html\s*='
+      - pattern-regex: 'dangerouslySetInnerHTML\s*=\s*\{'
+      - pattern-regex: '\[innerHTML\]\s*='
+    message: "프레임워크의 자동 이스케이프를 끄고 HTML을 그대로 넣습니다(v-html·dangerouslySetInnerHTML·[innerHTML]). 서버·사용자 값이면 DOMPurify 등으로 정제하거나 텍스트 바인딩({{ }})을 쓰세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: 크로스사이트 스크립트
+      cwe: CWE-79

@@ -1,0 +1,58 @@
+# 행안부 SW 보안약점 진단가이드 — 입력데이터 검증 및 표현 / SQL 삽입 (CWE-89)
+rules:
+  # MyBatis는 #{}만 바인딩 변수로 처리하고 ${}는 문자열 그대로 SQL에 이어 붙인다.
+  # 정렬 컬럼처럼 ${}가 불가피한 곳도 있어서(허용 목록 검증이 있으면 안전) 오탐이 섞인다 — 1단계에서 비율을 본다.
+  - id: kisa-sql-injection-mybatis-dollar
+    languages: [generic]
+    paths:
+      # pom.xml·logback.xml 등의 ${프로퍼티}까지 잡지 않도록 매퍼로 보이는 파일만 본다.
+      include:
+        - "*Mapper.xml"
+        - "*mapper*.xml"
+        - "*Sql*.xml"
+        - "*sql*.xml"
+        - "**/mapper/**/*.xml"
+        - "**/mappers/**/*.xml"
+        - "**/sqlmap/**/*.xml"
+    patterns:
+      - pattern-regex: '\$\{[^}]+\}'
+      # XML 주석(<!-- -->) 안은 MyBatis가 실행하지 않는다 — 주석 처리된 옛 SQL이 걸려 사람이 매번 오탐 처리하던 것을 뺀다
+      # (CRM_BACK commonMapper.xml에서 실제로 걸렸다). 주석을 풀면 일반 코드가 되어 다시 걸리므로 놓치는 것은 없다.
+      # CDATA(<![CDATA[ ]]>)는 주석이 아니라 그 안의 SQL은 실행되므로 그대로 잡는다. 여러 줄 주석도 빼도록 (?s).
+      - pattern-not-regex: '(?s)<!--.*?-->'
+    message: "MyBatis ${} 는 값을 SQL에 그대로 이어 붙입니다. #{} 바인딩을 쓰거나, 컬럼명·정렬처럼 불가피하면 허용 목록으로 검증하세요."
+    severity: ERROR
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: SQL 삽입
+      cwe: CWE-89
+
+  # 문자열 연결·format으로 만든 쿼리를 JDBC/JPA/JdbcTemplate 실행 메서드에 넘기는 경우.
+  # 무료판은 메서드 밖으로 값을 추적하지 못해 "연결된 값이 상수인지"는 모른다 — 연결 자체를 잡는다.
+  - id: kisa-sql-injection-java-concat
+    languages: [java]
+    patterns:
+      - pattern-either:
+          - pattern: $X.$M("..." + $E, ...)
+          - pattern: $X.$M($E + "...", ...)
+          - pattern: $X.$M(String.format(...), ...)
+          # 쿼리를 변수에 먼저 만든 경우 — 위치는 선언이 아니라 실행하는 줄로 잡는다(pattern-inside).
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      String $Q = "..." + $E;
+                      ...
+                  - pattern-inside: |
+                      $Q += $E;
+                      ...
+              - pattern: $X.$M($Q, ...)
+          - pattern: $X.$M($SB.append(...).toString(), ...)
+      - metavariable-regex:
+          metavariable: $M
+          regex: ^(executeQuery|executeUpdate|execute|addBatch|prepareStatement|prepareCall|createQuery|createNativeQuery|createSQLQuery|query|queryForObject|queryForList|queryForMap|queryForRowSet|update|batchUpdate)$
+    message: "문자열 연결로 만든 SQL을 실행합니다. PreparedStatement 파라미터(?)·이름 있는 파라미터로 바인딩하세요."
+    severity: ERROR
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: SQL 삽입
+      cwe: CWE-89

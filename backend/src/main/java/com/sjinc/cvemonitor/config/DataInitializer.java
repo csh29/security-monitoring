@@ -4,6 +4,7 @@ import com.sjinc.cvemonitor.domain.App;
 import com.sjinc.cvemonitor.domain.ComCd;
 import com.sjinc.cvemonitor.domain.ComCdGroup;
 import com.sjinc.cvemonitor.domain.Program;
+import com.sjinc.cvemonitor.domain.SecureCodeFinding;
 import com.sjinc.cvemonitor.domain.User;
 import com.sjinc.cvemonitor.domain.UserProgramPermission;
 import com.sjinc.cvemonitor.repository.AppRepository;
@@ -41,6 +42,7 @@ public class DataInitializer implements CommandLineRunner {
 
     private static final String INITIAL_PASSWORD_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
     private static final int INITIAL_PASSWORD_LENGTH = 20;
+    private static final String SECURE_CODE_STATUS_GROUP = "SC_STATUS";
 
     private final UserRepository userRepository;
     private final ProgramRepository programRepository;
@@ -56,6 +58,9 @@ public class DataInitializer implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
+        // 아래 "DB가 비었을 때 한 번만" 규칙보다 먼저 돈다 — 기능이 생기기 전에 만들어진 DB에도 들어가야 화면 select가 채워진다.
+        seedSecureCodeStatusIfAbsent();
+
         if (userRepository.count() > 0) return;
 
         String initialPassword = generateInitialPassword();
@@ -211,6 +216,28 @@ public class DataInitializer implements CommandLineRunner {
                 .systemName("CRM_BATCH")
                 .description("CRM 배치")
                 .build());
+    }
+
+    /**
+     * 코드 점검 처리여부(공통코드 SC_STATUS). 그룹이 없을 때만 심는다 — 이미 있으면 공통코드 관리 화면에서 사람이 고친 이름·순서를
+     * 덮어쓰지 않는다. 값은 SecureCodeFinding의 상태 상수와 같아야 한다(뱃지 클래스도 이 값을 소문자로 쓴다).
+     */
+    private void seedSecureCodeStatusIfAbsent() {
+        if (comCdGroupRepository.existsById(SECURE_CODE_STATUS_GROUP)) return;
+
+        comCdGroupRepository.save(ComCdGroup.builder()
+                .codeGroup(SECURE_CODE_STATUS_GROUP).groupName("코드 점검 처리여부").sortOrder(5).useYn("Y").build());
+        int sort = 1;
+        comCdRepository.save(ComCd.builder().codeGroup(SECURE_CODE_STATUS_GROUP)
+                .codeValue(SecureCodeFinding.OPEN).codeName("미조치").sortOrder(sort++).useYn("Y").build());
+        comCdRepository.save(ComCd.builder().codeGroup(SECURE_CODE_STATUS_GROUP)
+                .codeValue(SecureCodeFinding.RESOLVED).codeName("조치완료").sortOrder(sort++).useYn("Y").build());
+        comCdRepository.save(ComCd.builder().codeGroup(SECURE_CODE_STATUS_GROUP)
+                .codeValue(SecureCodeFinding.FALSE_POSITIVE).codeName("오탐").sortOrder(sort++).useYn("Y").build());
+        comCdRepository.save(ComCd.builder().codeGroup(SECURE_CODE_STATUS_GROUP)
+                .codeValue(SecureCodeFinding.ACCEPTED).codeName("위험수용").sortOrder(sort).useYn("Y")
+                .remark("실제 약점이지만 다른 통제가 있거나 영향이 작아 고치지 않기로 한 건").build());
+        log.info("공통코드 {}(코드 점검 처리여부)를 추가했습니다.", SECURE_CODE_STATUS_GROUP);
     }
 
     /** 혼동되기 쉬운 문자(0/O, 1/l/I 등)를 뺀 문자셋에서 무작위로 뽑은 초기 비밀번호. */

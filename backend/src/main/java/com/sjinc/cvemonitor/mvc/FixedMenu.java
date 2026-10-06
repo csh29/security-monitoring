@@ -17,7 +17,10 @@ enum FixedMenu {
     VULNERABILITY_SEARCH("vulnerability-search", "취약점 조회", ProgramButton.SEARCH, ProgramButton.RESET),
     SCAN_HISTORY("scan-history", "스캔 이력", ProgramButton.SEARCH, ProgramButton.RESET),
     FIX_PLAN("fix-plan", "조치안", ProgramButton.SEARCH, ProgramButton.RESET),
-    REPORT("report", "리포트");
+    REPORT("report", "리포트"),
+    // 시큐어코딩 점검 — 라이브러리 취약점과 분리된 기능이라 사이드바에서도 구역을 나눴다.
+    SECURE_CODE_SCAN("secure-code-scan", "코드 점검", ProgramButton.SEARCH, ProgramButton.RESET),
+    SECURE_CODE_MNG("secure-code-mng", "코드 점검 결과", ProgramButton.SEARCH, ProgramButton.SAVE);
 
     private final String view;
     private final String programNm;

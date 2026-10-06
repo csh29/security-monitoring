@@ -1,0 +1,77 @@
+# 행안부 SW 보안약점 진단가이드 — 입력데이터 검증 및 표현 / 경로 조작 및 자원 삽입 (CWE-22)
+#
+# 출처: HttpServletRequest 값과 Spring 요청 파라미터(@RequestParam·@PathVariable·@RequestHeader).
+# 무료판 Semgrep은 한 메서드 안에서만 흐름을 본다 — 서비스로 넘긴 뒤 파일을 여는 경우는 아래 WARNING 규칙이 지점만 잡는다.
+rules:
+  # 요청값이 같은 메서드 안에서 파일 경로로 그대로 쓰인다. 파일 다운로드(?file=../../etc/passwd)가 전형이다.
+  - id: kisa-path-traversal-request
+    languages: [java]
+    mode: taint
+    pattern-sources:
+      - pattern: (HttpServletRequest $REQ).$GET(...)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $RET $M(..., @RequestParam $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @RequestParam(...) $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @PathVariable $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @PathVariable(...) $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @RequestHeader(...) $T $P, ...) { ... }
+              # @RequestBody Map·DTO도 클라이언트 값이다(param.get("x")·dto.getX()로 꺼내도 오염이 따라간다).
+              - pattern-inside: |
+                  $RET $M(..., @RequestBody $T $P, ...) { ... }
+          - pattern: $P
+    pattern-sanitizers:
+      # 경로 부분을 떼고 파일 이름만 남긴다.
+      - pattern: FilenameUtils.getName(...)
+      - pattern: org.apache.commons.io.FilenameUtils.getName(...)
+      - pattern: (Path $X).getFileName()
+    pattern-sinks:
+      - pattern: new File(...)
+      - pattern: new java.io.File(...)
+      - pattern: new FileInputStream(...)
+      - pattern: new FileOutputStream(...)
+      - pattern: new FileReader(...)
+      - pattern: new FileWriter(...)
+      - pattern: new RandomAccessFile(...)
+      - pattern: Paths.get(...)
+      - pattern: Path.of(...)
+      - pattern: (Path $BASE).resolve(...)
+      - pattern: new FileSystemResource(...)
+      - pattern: new UrlResource(...)
+    message: "요청값이 파일 경로에 그대로 들어갑니다(../ 로 다른 파일 접근). 파일은 서버가 정한 키(ID)로 찾고, 경로를 받아야 하면 정규화 후 허용 폴더 안인지 검사하세요(getCanonicalPath().startsWith(기준폴더))."
+    severity: ERROR
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: 경로 조작 및 자원 삽입
+      cwe: CWE-22
+
+  # 변수로 만든 경로로 파일을 내려보내는 지점. 경로가 외부 입력에서 오는지는 메서드 밖이라 모른다 — 사람이 확인할 목록.
+  # 파일 다운로드 응답(Content-Disposition)을 쓰는 메서드 안의 파일 열기만 본다(모든 new File을 잡으면 너무 많다).
+  - id: kisa-path-traversal-download
+    languages: [java]
+    patterns:
+      - pattern-inside: |
+          $RET $M(...) {
+            ...
+            $RESP.setHeader("Content-Disposition", ...);
+            ...
+          }
+      - pattern-either:
+          - pattern: new File($X, ...)
+          - pattern: new FileInputStream($X)
+          - pattern: Paths.get($X, ...)
+          - pattern: Files.newInputStream($X, ...)
+      - pattern-not: new File("...", ...)
+      - pattern-not: new FileInputStream("...")
+      - pattern-not: Paths.get("...", ...)
+    message: "파일 다운로드에서 변수로 만든 경로를 엽니다. 경로가 요청값에서 오지 않는지, 온다면 정규화 후 허용 폴더 안인지 검사하는지 확인하세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: 경로 조작 및 자원 삽입
+      cwe: CWE-22

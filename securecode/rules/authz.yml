@@ -1,0 +1,136 @@
+# 행안부 SW 보안약점 진단가이드 — 보안기능 / 인증·인가 (CWE-306, CWE-285, CWE-352, CWE-807)
+#
+# 인증·인가 약점은 대부분 "있어야 할 검사가 없는" 것이라 패턴으로 확정하기 어렵다. 그래서 확실한 것(클라이언트 값으로 권한 판단)만 ERROR,
+# 나머지는 사람이 확인할 후보 목록(WARNING)으로 둔다. 규칙은 CRM_BACK 구조를 보고 만들었다:
+#   Spring Security는 전부 허용(permitAll)·CSRF 끔 → 인증은 HandlerInterceptor(JWT 쿠키)가, 사용자 범위(브랜드·회사·사용자)는
+#   @AddUserInfo AOP가 세션 값을 요청 파라미터에 덮어써서 맞춘다.
+rules:
+  # 권한·역할을 요청 값으로 판단한다 — 클라이언트가 isAdmin=Y를 보내면 관리자 흐름을 탄다. 확실한 위험이라 ERROR.
+  # 권한은 서버가 로그인 정보(세션·토큰)에서 꺼내야 한다.
+  - id: kisa-authz-client-controlled-role
+    languages: [java]
+    patterns:
+      - pattern-either:
+          - pattern: (HttpServletRequest $REQ).getParameter("$KEY")
+          - pattern: (HttpServletRequest $REQ).getHeader("$KEY")
+          - pattern: ($MAP).get("$KEY")
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i)^(is_?admin|admin(_?yn|_?flag)?|is_?manager|role|roles|role_?cd|auth|auth_?cd|authority|authorities|user_?auth|user_?role|grant|perm|permission|permissions|is_?super)$
+    message: "권한·역할을 요청 값으로 판단합니다. 클라이언트가 값을 바꿔 보내면 권한이 올라갑니다. 권한은 로그인 정보(세션·토큰)에서 서버가 꺼내 쓰세요."
+    severity: ERROR
+    metadata:
+      kisa_category: 보안기능
+      kisa_name: 보안기능 결정에 사용되는 부적절한 입력값
+      cwe: CWE-807
+
+  # Spring Security에서 모든 요청을 허용한다. 인증을 다른 곳(인터셉터·필터)에서 하는 구조일 수 있어 그 자체로 취약은 아니다 —
+  # 그 경우 인증을 거치지 않는 예외 경로(excludePathPatterns 등)가 최소인지 확인할 지점이다.
+  - id: kisa-authn-permit-all
+    languages: [java]
+    pattern-either:
+      - pattern: $X.anyRequest().permitAll()
+      - pattern: $X.antMatchers("/**").permitAll()
+      - pattern: $X.requestMatchers("/**").permitAll()
+    message: "Spring Security가 모든 요청을 허용합니다. 인증을 인터셉터·필터에서 한다면 그 예외 경로가 최소한인지, 아니라면 경로별 인증을 설정하세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 보안기능
+      kisa_name: 적절한 인증 없는 중요 기능 허용
+      cwe: CWE-306
+
+  # CSRF 방어를 끈다. 인증 정보가 쿠키(세션·JWT 쿠키)로 자동 전송되는 구조면 악성 페이지가 로그인한 사용자 대신 요청을 보낼 수 있다.
+  # 토큰을 Authorization 헤더로만 보내는 API라면 괜찮다(그래서 WARNING).
+  - id: kisa-csrf-disabled
+    languages: [java]
+    pattern-either:
+      - pattern: $X.csrf(AbstractHttpConfigurer::disable)
+      - pattern: $X.csrf().disable()
+      - pattern: $X.csrf($C -> $C.disable())
+    message: "CSRF 방어를 껐습니다. 인증 정보가 쿠키로 전송되면(세션·JWT 쿠키) 위조 요청이 가능합니다. 쿠키 인증이면 CSRF 토큰이나 SameSite=Strict를 쓰세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: 크로스사이트 요청 위조
+      cwe: CWE-352
+
+  # 특정 아이디·비밀번호를 코드에 박아 넣고 비교한다 — 백도어 계정이나 테스트 우회가 남은 것. 비교 대상이 로그인 값이 아닐 수도 있어 WARNING.
+  - id: kisa-authz-hardcoded-account
+    languages: [java]
+    patterns:
+      - pattern-either:
+          - pattern: '"$ACCOUNT".equals($X)'
+          - pattern: '$X.equals("$ACCOUNT")'
+          - pattern: '"$ACCOUNT".equalsIgnoreCase($X)'
+          - pattern: '$X.equalsIgnoreCase("$ACCOUNT")'
+      - metavariable-regex:
+          metavariable: $ACCOUNT
+          regex: (?i)^(admin|administrator|root|superuser|master|sysadmin|test|tester|guest)$
+      - metavariable-regex:
+          metavariable: $X
+          regex: (?i).*(user|login|account|id|name|emp).*
+    message: "특정 계정명을 코드에 박아 비교합니다(백도어·테스트 우회 의심). 권한은 계정명이 아니라 권한 정보로 판단하세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 보안기능
+      kisa_name: 부적절한 인가
+      cwe: CWE-285
+
+  # 사내 프레임워크(com.sjinc 앱): 사용자 범위(브랜드·회사·사용자)는 @AddUserInfo가 세션 값을 요청 파라미터에 덮어써서 맞춘다.
+  # 그게 없는 컨트롤러 메서드는 클라이언트가 보낸 loginBrndzCd·loginUserId를 그대로 쓸 수 있다(다른 브랜드·사용자 데이터 접근).
+  # 메서드 안에서 직접 세션을 읽거나 FrameEtcUtil.addUserInfo를 부르면 뺀다. 그 밖은 사람이 확인할 후보(WARNING).
+  - id: kisa-authz-missing-user-scope
+    languages: [java]
+    patterns:
+      # 파일명(*Controller.java) 대신 클래스 어노테이션으로 컨트롤러를 가린다 — 이름 규칙을 안 지킨 컨트롤러도 잡고 테스트 예제에도 걸린다.
+      - pattern-either:
+          - pattern-inside: |
+              @RestController
+              class $CLS { ... }
+          - pattern-inside: |
+              @Controller
+              class $CLS { ... }
+      - pattern-either:
+          - pattern: |
+              @$MAP(...)
+              $RET $M(..., @RequestBody $T $P, ...) { ... }
+          - pattern: |
+              @$MAP(...)
+              $RET $M(..., @RequestParam HashMap<$K, $V> $P, ...) { ... }
+          - pattern: |
+              @$MAP(...)
+              $RET $M(..., @RequestParam Map<$K, $V> $P, ...) { ... }
+          - pattern: |
+              @$MAP(...)
+              $RET $M(..., @RequestPart(...) $T $P, ...) { ... }
+      - metavariable-regex:
+          metavariable: $MAP
+          regex: ^(Get|Post|Put|Delete|Patch|Request)Mapping$
+      - pattern-not: |
+          @AddUserInfo
+          $RET $M(...) { ... }
+      - pattern-not: |
+          $RET $M(...) {
+            ...
+            $VAR = <... $REQ.getSession(...) ...>;
+            ...
+          }
+      - pattern-not: |
+          $RET $M(...) {
+            ...
+            $VT $VAR = <... $REQ.getSession(...) ...>;
+            ...
+          }
+      - pattern-not: |
+          $RET $M(...) {
+            ...
+            FrameEtcUtil.addUserInfo(...);
+            ...
+          }
+      - focus-metavariable: $M
+    message: "요청 데이터를 받는데 @AddUserInfo도 세션 조회도 없습니다. 클라이언트가 보낸 login*(브랜드·회사·사용자) 값이 그대로 쓰이면 다른 사용자 데이터에 접근할 수 있습니다. 로그인·공개 API가 아니면 @AddUserInfo를 붙이세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 보안기능
+      kisa_name: 부적절한 인가
+      cwe: CWE-285

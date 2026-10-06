@@ -1,0 +1,77 @@
+# 행안부 SW 보안약점 진단가이드 — 에러처리 / 오류 메시지 정보노출(CWE-209), 오류상황 대응 부재(CWE-390)
+rules:
+  # 스택 트레이스를 표준 출력·응답으로 내보낸다. 운영 로그 체계(logger)를 거치지 않고, 서블릿 기본 오류 화면으로 사용자에게 보일 수도 있다.
+  - id: kisa-error-stacktrace
+    languages: [java]
+    pattern-either:
+      - pattern: $E.printStackTrace()
+      - pattern: $E.printStackTrace(System.out)
+      - pattern: $E.printStackTrace(System.err)
+    paths:
+      exclude: ["**/test/**", "**/*Test.java"]
+    message: "printStackTrace로 예외 내부(클래스·경로·SQL)를 출력합니다. 로거(log.error(\"...\", e))로 남기고 사용자에게는 일반 문구만 보여주세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 에러처리
+      kisa_name: 오류 메시지 정보노출
+      cwe: CWE-209
+
+  # 컨트롤러가 예외 메시지를 응답에 그대로 싣는다. DB 오류 메시지(테이블·컬럼·SQL), 내부 경로가 사용자에게 간다.
+  # 직접 정한 문구의 예외(IllegalArgumentException 등)를 일부러 보여주는 경우도 걸린다 — 그런 곳은 오탐 처리한다(WARNING).
+  - id: kisa-error-message-response
+    languages: [java]
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              @RestController
+              class $C { ... }
+          - pattern-inside: |
+              @Controller
+              class $C { ... }
+          - pattern-inside: |
+              @ControllerAdvice
+              class $C { ... }
+          - pattern-inside: |
+              @RestControllerAdvice
+              class $C { ... }
+      - pattern-either:
+          - pattern-inside: |
+              try { ... } catch ($T $E) { ... }
+          - pattern-inside: |
+              @ExceptionHandler(...)
+              $RET $M(..., $T $E, ...) { ... }
+      - pattern-either:
+          - pattern: return <... $E.getMessage() ...>;
+          - pattern: return <... $E.toString() ...>;
+          - pattern: $B.body(<... $E.getMessage() ...>)
+          - pattern: new ResponseEntity<$R>(<... $E.getMessage() ...>, ...)
+          - pattern: new ResponseEntity<>(<... $E.getMessage() ...>, ...)
+          - pattern: (HttpServletResponse $RESP).sendError($CODE, <... $E.getMessage() ...>)
+          - pattern: $W.print(<... $E.getMessage() ...>)
+          - pattern: $W.println(<... $E.getMessage() ...>)
+          - pattern: $W.write(<... $E.getMessage() ...>)
+    message: "예외 메시지를 응답에 그대로 내보냅니다(DB 오류의 테이블·SQL, 서버 경로 노출). 원인은 로그에 남기고 사용자에게는 정해 둔 문구만 보여주세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 에러처리
+      kisa_name: 오류 메시지 정보노출
+      cwe: CWE-209
+
+  # 예외를 잡고 아무것도 하지 않는다. 인증·권한·저장 실패가 조용히 성공처럼 지나간다.
+  # 일부러 무시하는 곳은 변수 이름을 ignored로 쓰면 뺀다(관례).
+  - id: kisa-error-empty-catch
+    languages: [java]
+    patterns:
+      - pattern: |
+          try { ... } catch ($T $E) {}
+      - metavariable-regex:
+          metavariable: $E
+          regex: ^(?!ignored?$|expected$).*
+    paths:
+      exclude: ["**/test/**", "**/*Test.java"]
+    message: "예외를 잡고 아무 처리도 하지 않습니다. 실패가 성공처럼 지나갑니다. 로그를 남기고 실패를 호출자에게 알리세요(일부러 무시한다면 변수 이름을 ignored로 하고 이유를 주석으로 남기세요)."
+    severity: WARNING
+    metadata:
+      kisa_category: 에러처리
+      kisa_name: 오류상황 대응 부재
+      cwe: CWE-390

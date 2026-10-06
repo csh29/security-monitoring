@@ -1,0 +1,74 @@
+# 행안부 SW 보안약점 진단가이드 — 입력데이터 검증 및 표현 / 서버사이드 요청 위조 (CWE-918)
+rules:
+  # 요청값이 같은 메서드 안에서 서버의 외부 호출 주소로 흘러가는 경우 — 내부망 주소·클라우드 메타데이터(169.254.169.254)로 요청을 보낼 수 있다.
+  - id: kisa-ssrf-request
+    languages: [java]
+    mode: taint
+    pattern-sources:
+      - pattern: (HttpServletRequest $REQ).$GET(...)
+      # Spring 요청 파라미터도 클라이언트 값이다(@RequestBody Map이면 param.get("x")로 꺼내도 오염이 따라간다).
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $RET $M(..., @RequestParam $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @RequestParam(...) $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @PathVariable $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @PathVariable(...) $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @RequestHeader(...) $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @RequestBody $T $P, ...) { ... }
+          - pattern: $P
+    pattern-sanitizers:
+      # 앞부분이 고정 호스트(https://api.example.com/... 또는 상수 + "/...")면 요청값은 경로·쿼리에만 들어가 호출 대상을 바꿀 수 없다.
+      # 상수 + 값(→ https://api.com@169.254.169.254)은 호스트를 바꿀 수 있어 그대로 잡는다(open-redirect.yml과 같은 기준).
+      - patterns:
+          - pattern: $PREFIX + $REST
+          - metavariable-regex:
+              metavariable: $PREFIX
+              regex: '^("https?://[^"/]+/|[A-Z][A-Z0-9_.]*\s*\+\s*"/)'
+    pattern-sinks:
+      - pattern: new java.net.URL(...)
+      - pattern: new URL(...)
+      - pattern: java.net.URI.create(...)
+      - pattern: URI.create(...)
+      - pattern: (RestTemplate $RT).$M(...)
+      - pattern: (WebClient $WC).$M(...).uri(...)
+      - pattern: HttpRequest.newBuilder(...)
+      - pattern: (HttpRequest.Builder $B).uri(...)
+    message: "요청값으로 만든 주소로 서버가 외부 요청을 보냅니다. 호출 대상 호스트를 허용 목록으로 검증하고, 내부망·루프백·메타데이터 주소를 막으세요."
+    severity: ERROR
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: 서버사이드 요청 위조
+      cwe: CWE-918
+
+  # 주소를 변수로 받아 외부 요청을 만드는 지점. 출처를 메서드 밖까지 따라가지 못해 "검토 지점" 수준이다(WARNING).
+  - id: kisa-ssrf-dynamic-url
+    languages: [java]
+    patterns:
+      - pattern-either:
+          - pattern: new java.net.URL($U)
+          - pattern: new URL($U)
+          # 메서드 이름 조건은 RestTemplate 쪽에만 둔다 — 바깥에 두면 $M이 없는 URL 패턴까지 조건에 걸려 new URL(변수)를 놓친다(실제로 그랬다).
+          - patterns:
+              - pattern: (RestTemplate $RT).$M($U, ...)
+              - metavariable-regex:
+                  metavariable: $M
+                  regex: ^(getForObject|getForEntity|postForObject|postForEntity|postForLocation|exchange|execute|put|delete|patchForObject|headForHeaders|optionsForAllow)$
+      - pattern-not: new java.net.URL("...")
+      - pattern-not: new URL("...")
+      - pattern-not: (RestTemplate $RT).$M("...", ...)
+      # 앞부분이 고정 호스트인 연결은 호출 대상이 바뀌지 않는다(kisa-ssrf-request의 sanitizer와 같은 기준).
+      - metavariable-regex:
+          metavariable: $U
+          regex: '^(?!"https?://[^"/]+/|[A-Z][A-Z0-9_.]*\s*\+\s*"/)'
+    message: "변수로 만든 주소로 서버가 외부 요청을 보냅니다. 주소가 외부 입력에서 오지 않는지 확인하고, 온다면 호스트를 허용 목록으로 검증하세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: 서버사이드 요청 위조
+      cwe: CWE-918

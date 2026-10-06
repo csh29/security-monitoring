@@ -1,0 +1,17 @@
+<!--
+    홈 대시보드의 "프로젝트별 미해결 TOP N" 가로 막대. 라이브러리 취약점·시큐어코딩 구역이 같은 모양으로 쓴다.
+    counts: AppVulnerabilityCount 목록(건수 내림차순 — 첫 행이 100% 기준), emptyText: 목록이 비었을 때 문구.
+    모양(.bars/.bar-row)은 home.html의 <style>에 있다.
+-->
+<div xmlns:th="http://www.thymeleaf.org" th:fragment="appBars(counts, emptyText)">
+    <div class="bars" th:if="${not #lists.isEmpty(counts)}">
+        <div class="bar-row" th:each="count : ${counts}">
+            <span class="cap" th:text="${count.systemName}">시스템명</span>
+            <span class="track">
+                <i class="fill" th:style="|width:${counts[0].openCount > 0 ? count.openCount * 100 / counts[0].openCount : 0}%|"></i>
+                <span class="num" th:text="${count.openCount}">0</span>
+            </span>
+        </div>
+    </div>
+    <p th:if="${#lists.isEmpty(counts)}" class="bars-empty" th:text="${emptyText}">없습니다.</p>
+</div>

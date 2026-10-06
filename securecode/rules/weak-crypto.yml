@@ -1,0 +1,37 @@
+# 행안부 SW 보안약점 진단가이드 — 보안기능 / 취약한 암호화 알고리즘 사용 (CWE-327, CWE-328)
+rules:
+  - id: kisa-weak-crypto-cipher
+    languages: [java]
+    patterns:
+      - pattern: javax.crypto.Cipher.getInstance("$ALG", ...)
+      - metavariable-regex:
+          metavariable: $ALG
+          # DES/3DES/RC2/RC4/Blowfish, ECB 모드, 그리고 모드 없이 "AES"만 쓰면 JDK 기본값이 AES/ECB다.
+          # metavariable-regex는 값의 처음부터 맞춰 본다(re.match) — 중간의 /ECB/를 잡으려면 .*로 시작해야 한다.
+          regex: (?i)^((DES|DESede|TripleDES|RC2|RC4|ARCFOUR|Blowfish)(/.*)?|.*/ECB/.*|AES)$
+    message: "취약한 암호 알고리즘·모드입니다. AES/GCM/NoPadding 등 인증 암호 모드를 쓰세요(\"AES\"만 쓰면 ECB 모드)."
+    severity: ERROR
+    metadata:
+      kisa_category: 보안기능
+      kisa_name: 취약한 암호화 알고리즘 사용
+      cwe: CWE-327
+
+  - id: kisa-weak-crypto-hash
+    languages: [java]
+    pattern-either:
+      - patterns:
+          - pattern: java.security.MessageDigest.getInstance("$ALG", ...)
+          - metavariable-regex:
+              metavariable: $ALG
+              regex: (?i)^(MD2|MD4|MD5|SHA|SHA-?1)$
+      - patterns:
+          - pattern: org.apache.commons.codec.digest.DigestUtils.$M(...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(md2|md5|sha|sha1)(Hex)?$|^getMd5Digest$|^getSha1Digest$
+    message: "MD5·SHA-1은 충돌이 알려진 해시입니다. SHA-256 이상을 쓰고, 비밀번호 저장이면 BCrypt·PBKDF2 같은 전용 함수를 쓰세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 보안기능
+      kisa_name: 취약한 암호화 알고리즘 사용
+      cwe: CWE-328

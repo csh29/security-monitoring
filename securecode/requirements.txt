@@ -1,0 +1,4 @@
+# 시큐어코딩 점검 엔진. 버전을 고정한다 — PC마다 다른 버전이 깔리면 같은 규칙이라도 탐지 결과가 달라질 수 있다.
+# 설치: py -m pip install -r securecode/requirements.txt (저장소 루트 기준)
+# 서버는 기동할 때 설치된 버전을 이 값과 비교해 다르면 로그로 알린다(SemgrepRunner.checkOnStartup).
+semgrep==1.178.0

@@ -1,0 +1,116 @@
+# 행안부 SW 보안약점 진단가이드 — 캡슐화 / 잘못된 세션에 의한 데이터 정보 노출(CWE-488), 제거되지 않고 남은 디버그 코드(CWE-489),
+# Public 메소드로부터 반환된 Private 배열(CWE-495), Private 배열에 Public 데이터 할당(CWE-496)
+rules:
+  # Spring 빈(컨트롤러·서비스)은 싱글톤이라 모든 요청이 같은 객체를 쓴다. 요청 처리 중에 인스턴스 필드에 값을 넣으면
+  # 동시에 들어온 다른 사용자의 요청이 그 값을 읽는다(다른 사람의 데이터가 보인다).
+  # 생성자·@PostConstruct·setter 주입(@Autowired/@Value)에서 넣는 것은 초기화라 뺀다.
+  - id: kisa-singleton-field-write
+    languages: [java]
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              @RestController
+              class $C { ... }
+          - pattern-inside: |
+              @Controller
+              class $C { ... }
+          - pattern-inside: |
+              @Service
+              class $C { ... }
+      - pattern-either:
+          - pattern-inside: |
+              class $C { ... private $FT $F; ... }
+          - pattern-inside: |
+              class $C { ... protected $FT $F; ... }
+          - pattern-inside: |
+              class $C { ... public $FT $F; ... }
+          - pattern-inside: |
+              class $C { ... $FT $F; ... }
+      - pattern-not-inside: |
+          class $C { ... final $FT $F; ... }
+      - pattern-not-inside: |
+          class $C { ... private final $FT $F; ... }
+      - pattern-not-inside: |
+          class $C { ... static $FT $F; ... }
+      - pattern-not-inside: |
+          class $C { ... private static $FT $F; ... }
+      - pattern-inside: |
+          $RET $M(...) { ... }
+      - pattern-not-inside: |
+          @PostConstruct
+          $RET $M(...) { ... }
+      - pattern-not-inside: |
+          @Autowired
+          $RET $M(...) { ... }
+      - pattern-not-inside: |
+          @Value(...)
+          $RET $M(...) { ... }
+      - pattern-either:
+          - pattern: this.$F = $V;
+          - pattern: $F = $V;
+      - pattern-not-inside: |
+          $C(...) { ... }
+    message: "싱글톤 빈(컨트롤러·서비스)의 필드에 요청 처리 중 값을 넣습니다. 동시에 들어온 다른 사용자 요청이 이 값을 읽어 다른 사람의 데이터가 보일 수 있습니다. 지역 변수나 파라미터로 넘기세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 캡슐화
+      kisa_name: 잘못된 세션에 의한 데이터 정보 노출
+      cwe: CWE-488
+
+  # 운영 코드에 남은 main 메서드(테스트용 실행 진입점). Spring Boot 애플리케이션 클래스는 뺀다.
+  - id: kisa-debug-main-method
+    languages: [java]
+    patterns:
+      - pattern: |
+          public static void main(String[] $ARGS) { ... }
+      - pattern-not-inside: |
+          @SpringBootApplication
+          class $C { ... }
+    paths:
+      exclude: ["**/test/**", "**/*Test.java"]
+    message: "운영 코드에 main 메서드가 남아 있습니다(테스트·디버그용 진입점). 배포 전에 지우거나 테스트 코드로 옮기세요."
+    severity: INFO
+    metadata:
+      kisa_category: 캡슐화
+      kisa_name: 제거되지 않고 남은 디버그 코드
+      cwe: CWE-489
+
+  - id: kisa-private-array-returned
+    languages: [java]
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              class $C { ... private $T[] $F; ... }
+          - pattern-inside: |
+              class $C { ... private $T[] $F = $INIT; ... }
+      - pattern-inside: |
+          public $T[] $M(...) { ... }
+      - pattern-either:
+          - pattern: return $F;
+          - pattern: return this.$F;
+    message: "private 배열을 public 메서드가 그대로 반환합니다. 받은 쪽이 배열 내용을 바꾸면 객체 내부가 바뀝니다. 복사본(clone()·Arrays.copyOf)을 반환하세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 캡슐화
+      kisa_name: Public 메소드로부터 반환된 Private 배열
+      cwe: CWE-495
+
+  - id: kisa-private-array-assigned
+    languages: [java]
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              class $C { ... private $T[] $F; ... }
+          - pattern-inside: |
+              class $C { ... private $T[] $F = $INIT; ... }
+      - pattern-inside: |
+          public $RET $M(..., $T[] $P, ...) { ... }
+      - pattern-either:
+          - pattern: this.$F = $P;
+          - pattern: $F = $P;
+    message: "public 메서드로 받은 배열을 private 필드에 그대로 넣습니다. 넘긴 쪽이 나중에 배열을 바꾸면 객체 내부가 바뀝니다. 복사해서 넣으세요(clone()·Arrays.copyOf)."
+    severity: WARNING
+    metadata:
+      kisa_category: 캡슐화
+      kisa_name: Private 배열에 Public 데이터 할당
+      cwe: CWE-496

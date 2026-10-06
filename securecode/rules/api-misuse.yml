@@ -1,0 +1,24 @@
+# 행안부 SW 보안약점 진단가이드 — API 오용 / DNS lookup에 의존한 보안결정 (CWE-350)
+rules:
+  # 접속한 쪽의 호스트 이름(역방향 DNS)으로 허용 여부를 정한다. DNS 응답은 공격자가 조작할 수 있다(DNS 스푸핑).
+  - id: kisa-dns-lookup-security-decision
+    languages: [java]
+    patterns:
+      - pattern-either:
+          - pattern: $X.getCanonicalHostName()
+          - pattern: (InetAddress $X).getHostName()
+          - pattern: (HttpServletRequest $R).getRemoteHost()
+      - pattern-either:
+          - pattern-inside: $H.equals(...)
+          - pattern-inside: $H.equalsIgnoreCase(...)
+          - pattern-inside: $H.endsWith(...)
+          - pattern-inside: $H.startsWith(...)
+          - pattern-inside: $H.contains(...)
+          - pattern-inside: '"...".equals($H)'
+          - pattern-inside: $SET.contains($H)
+    message: "호스트 이름(DNS 조회 결과)으로 보안 판단을 합니다. DNS 응답은 조작될 수 있습니다. IP 주소(getRemoteAddr)나 인증으로 판단하세요."
+    severity: WARNING
+    metadata:
+      kisa_category: API 오용
+      kisa_name: DNS lookup에 의존한 보안결정
+      cwe: CWE-350

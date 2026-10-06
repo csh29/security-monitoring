@@ -1,0 +1,32 @@
+# MyBatis ${} 연계 추적 규칙 (MybatisDollarTracer / TraceRules)
+#
+# 코드 점검이 ${} 값의 출처를 Java 소스에서 따라갈 때, 시스템마다 다른 프레임워크 장치를 알려 주는 파일이다.
+# 판정 로직에는 특정 시스템 이름을 넣지 않고 여기에만 둔다. 규칙은 대상 코드에 그 어노테이션·메서드가 있을 때만
+# 적용되므로 여러 시스템의 항목을 같이 둬도 된다. 새 시스템을 점검 대상에 넣을 때 그 시스템이 로그인 정보를 어떻게
+# 요청 값에 넣는지 확인하고 항목을 추가한다.
+#
+# 이 파일은 규칙 폴더(rules/) 밖에 둔다 — rules/ 안의 *.yml은 Semgrep이 규칙으로 읽는다.
+# 여기에 없는 장치로 덮어쓰는 값은 클라이언트 값으로 판정된다(모르면 위험한 쪽으로).
+
+# 요청 매핑 메서드에 붙으면 요청 맵의 키를 세션 값으로 덮어쓰는 장치(AOP·인터셉터 등).
+#   annotation         요청 매핑 메서드에 붙는 어노테이션 이름
+#   container          덮어쓰는 위치. 요청 맵 안의 이 키가 가리키는 맵(또는 맵 목록의 각 행). 비우면 요청 맵 자체
+#   requiredFirstParam 이 타입이 첫 파라미터일 때만 동작(AOP 포인트컷이 args(request, ..)인 경우). 비우면 조건 없음
+#   keys               세션 값으로 덮어쓰는 키
+sessionOverwrites:
+  # com.sjinc 사내 프레임워크(CRM 등) — UserInfoAspect가 @Before("@annotation(AddUserInfo) && args(request, ..)")로
+  # FrameEtcUtil.addUserInfo를 불러 요청 맵의 paramData(맵 또는 맵 목록의 각 행)에 아래 키를 세션 값으로 넣는다.
+  # regPgmId도 같이 넣지만 값이 클라이언트가 보낸 statement 앞 6자리라 세션 값이 아니다 — 넣지 않는다(추적 규칙 초안이 찾아냈다).
+  - name: sjinc 프레임워크 @AddUserInfo
+    annotation: AddUserInfo
+    container: paramData
+    requiredFirstParam: HttpServletRequest
+    keys: [loginCompCd, loginUserId, loginUserNm, loginUserIp, loginBrndzCd, loginEmpNo]
+
+# 이 이름으로 시작하는 메서드의 반환값은 로그인 정보(서버가 세션에서 꺼낸 값)로 본다.
+# 예: loginUserVo.getLoginBrndzCd()
+loginMethodPrefixes: [getLogin]
+
+# 이 문자열이 타입 이름에 들어간 객체에서 꺼낸 값은 로그인 정보로 본다.
+# 예: LoginUserVo loginUserVo = (LoginUserVo) session.getAttribute(...)
+loginTypeNames: [LoginUser]

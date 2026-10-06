@@ -1,0 +1,39 @@
+<mapper namespace="UserMapper">
+  <select id="bad">
+    <!-- ruleid: kisa-sql-injection-mybatis-dollar -->
+    SELECT * FROM users WHERE name = '${name}'
+  </select>
+  <select id="good">
+    <!-- ok: kisa-sql-injection-mybatis-dollar -->
+    SELECT * FROM users WHERE name = #{name}
+  </select>
+
+  <!-- CDATA는 주석이 아니다 — 안의 SQL은 실행되므로 계속 잡아야 한다. -->
+  <select id="badCdata">
+    <![CDATA[
+    <!-- ruleid: kisa-sql-injection-mybatis-dollar -->
+    SELECT * FROM t WHERE a < ${limit}
+    ]]>
+  </select>
+
+  <!-- 주석 처리된 SQL은 MyBatis가 실행하지 않는다 — 아래 세 경우는 걸리면 안 된다(주석이 없는 줄에 걸리면 테스트 실패). -->
+  <select id="commentedOut">
+    SELECT * FROM t
+    <!-- AND name = '${oldName}' -->
+    <!--
+    <if test="query != null and query != ''">
+        ${query}
+    </if>
+    -->
+    <!--
+        여러 줄짜리 주석 안의 ${a}
+        와 ${b}
+    -->
+  </select>
+
+  <!-- 주석 뒤 같은 줄의 진짜 코드는 잡는다. -->
+  <select id="afterComment">
+    <!-- ruleid: kisa-sql-injection-mybatis-dollar -->
+    <!-- 정렬 --> ORDER BY ${sort}
+  </select>
+</mapper>

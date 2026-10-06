@@ -24,10 +24,9 @@
         }
         .nav a .ico{ width:16px; text-align:center; }
         .nav a.is-active{ background:var(--accent); color:#fff; font-weight:700; }
-
-        /* 관리 그룹(2뎁스). 권한으로 보이는 추가 프로그램(extraPrograms)은 전부 관리성 화면이라 한 그룹으로
-           접어 둔다 — 늘어날수록 매일 쓰는 고정 메뉴가 묻히기 때문. 접을 때 링크를 지우지 않고 숨기기만
-           한다(tabs.js가 .nav a 목록을 읽어 탭으로 연다). */
+        /* 2뎁스 그룹 — 기능 그룹(라이브러리 취약점 / 시큐어코딩)과 관리 그룹. 관리 그룹은 권한으로 보이는 추가
+           프로그램(extraPrograms)을 한 그룹으로 접어 둔다 — 늘어날수록 매일 쓰는 메뉴가 묻히기 때문. 접을 때 링크를
+           지우지 않고 숨기기만 한다(tabs.js가 .nav a 목록을 읽어 탭으로 연다). */
         .nav-group-toggle{
             display:flex; align-items:center; gap:10px; width:100%;
             padding:11px 14px; border:none; border-radius:var(--radius-md); background:none;
@@ -57,6 +56,18 @@
             border-top:1px solid var(--line);
         }
         .nav-group.is-open .nav-group-items{ display:flex; }
+        /* 하위 메뉴 아이콘은 펼친 사이드바에서는 숨긴다(트리 안내선이 그 자리를 대신한다 — 관리 그룹과 같은 모양). */
+        .nav-group-items a .ico{ display:none; }
+
+        /* 사이드바를 접으면(아이콘만) 그룹 제목 버튼으로는 하위 메뉴를 펼쳐 볼 수 없다. 매일 쓰는 기능 그룹은
+           제목 대신 하위 메뉴 아이콘을 1뎁스처럼 바로 보여주고, 그룹 사이는 선으로 나눈다. 관리 그룹은 지금처럼 숨긴다. */
+        .is-sidebar-collapsed .nav-group--feature .nav-group-toggle{ display:none; }
+        .is-sidebar-collapsed .nav-group--feature{ border-top:1px solid var(--line); padding-top:6px; }
+        .is-sidebar-collapsed .nav-group--feature .nav-group-items{ display:flex; margin:0; padding:0; gap:6px; }
+        .is-sidebar-collapsed .nav-group--feature .nav-group-items a{ padding:11px 14px; font-size:12.5px; }
+        .is-sidebar-collapsed .nav-group--feature .nav-group-items a .ico{ display:inline; }
+        .is-sidebar-collapsed .nav-group--feature .nav-group-items a::before,
+        .is-sidebar-collapsed .nav-group--feature .nav-group-items a::after{ display:none; }
 
         @media (max-width:760px){
             .nav{ flex-direction:row; flex-wrap:wrap; }
@@ -72,11 +83,29 @@
     -->
     <nav class="nav">
         <a th:href="@{/}" class="home-link" th:classappend="${activeMenu == 'home'} ? 'is-active'"><span class="ico">▤</span><span class="nav-label">홈</span></a>
-        <a th:href="@{/program/vulnerability-mng}" data-menu="vulnerability-mng" data-title="취약점 관리" th:classappend="${activeMenu == 'vulnerability-mng'} ? 'is-active'"><span class="ico">⚠</span><span class="nav-label">취약점 관리</span></a>
-        <a th:href="@{/program/vulnerability-search}" data-menu="vulnerability-search" data-title="취약점 조회" th:classappend="${activeMenu == 'vulnerability-search'} ? 'is-active'"><span class="ico">⌕</span><span class="nav-label">취약점 조회</span></a>
-        <a th:href="@{/program/scan-history}" data-menu="scan-history" data-title="스캔 이력" th:classappend="${activeMenu == 'scan-history'} ? 'is-active'"><span class="ico">⟲</span><span class="nav-label">스캔 이력</span></a>
-        <a th:href="@{/program/fix-plan}" data-menu="fix-plan" data-title="조치안" th:classappend="${activeMenu == 'fix-plan'} ? 'is-active'"><span class="ico">🛠</span><span class="nav-label">조치안</span></a>
-        <a th:href="@{/program/report}" data-menu="report" data-title="리포트" th:classappend="${activeMenu == 'report'} ? 'is-active'"><span class="ico">📄</span><span class="nav-label">리포트</span></a>
+        <!-- 기능 그룹: 라이브러리 취약점(CVE) / 시큐어코딩. 둘이 같은 급으로 보이도록 같은 모양의 2뎁스 그룹으로 둔다.
+             매일 쓰는 메뉴라 처음엔 펼쳐 둔다(data-default-open). 하위 링크의 아이콘은 사이드바를 접었을 때만 보인다. -->
+        <div class="nav-group nav-group--feature" id="navGroupLib" data-default-open="Y">
+            <button type="button" class="nav-group-toggle" aria-expanded="true" aria-controls="navGroupLibItems">
+                <span class="ico">📦</span><span class="nav-label">라이브러리 취약점</span><span class="caret">›</span>
+            </button>
+            <div class="nav-group-items" id="navGroupLibItems">
+                <a th:href="@{/program/vulnerability-mng}" data-menu="vulnerability-mng" data-title="취약점 관리" th:classappend="${activeMenu == 'vulnerability-mng'} ? 'is-active'"><span class="ico">⚠</span><span class="nav-label">취약점 관리</span></a>
+                <a th:href="@{/program/vulnerability-search}" data-menu="vulnerability-search" data-title="취약점 조회" th:classappend="${activeMenu == 'vulnerability-search'} ? 'is-active'"><span class="ico">⌕</span><span class="nav-label">취약점 조회</span></a>
+                <a th:href="@{/program/scan-history}" data-menu="scan-history" data-title="스캔 이력" th:classappend="${activeMenu == 'scan-history'} ? 'is-active'"><span class="ico">⟲</span><span class="nav-label">스캔 이력</span></a>
+                <a th:href="@{/program/fix-plan}" data-menu="fix-plan" data-title="조치안" th:classappend="${activeMenu == 'fix-plan'} ? 'is-active'"><span class="ico">🛠</span><span class="nav-label">조치안</span></a>
+                <a th:href="@{/program/report}" data-menu="report" data-title="리포트" th:classappend="${activeMenu == 'report'} ? 'is-active'"><span class="ico">📄</span><span class="nav-label">리포트</span></a>
+            </div>
+        </div>
+        <div class="nav-group nav-group--feature" id="navGroupSecure" data-default-open="Y">
+            <button type="button" class="nav-group-toggle" aria-expanded="true" aria-controls="navGroupSecureItems">
+                <span class="ico">⛨</span><span class="nav-label">시큐어코딩</span><span class="caret">›</span>
+            </button>
+            <div class="nav-group-items" id="navGroupSecureItems">
+                <a th:href="@{/program/secure-code-scan}" data-menu="secure-code-scan" data-title="코드 점검" th:classappend="${activeMenu == 'secure-code-scan'} ? 'is-active'"><span class="ico">⛨</span><span class="nav-label">코드 점검</span></a>
+                <a th:href="@{/program/secure-code-mng}" data-menu="secure-code-mng" data-title="코드 점검 결과" th:classappend="${activeMenu == 'secure-code-mng'} ? 'is-active'"><span class="ico">☑</span><span class="nav-label">코드 점검 결과</span></a>
+            </div>
+        </div>
         <!-- 권한이 있는 추가 프로그램이 하나도 없으면 그룹 자체를 그리지 않는다. -->
         <div class="nav-group" id="navGroupMng" th:if="${!#lists.isEmpty(extraPrograms)}">
             <button type="button" class="nav-group-toggle" aria-expanded="false" aria-controls="navGroupMngItems">
@@ -92,30 +121,29 @@
 
     <script>
         (function () {
-            const group = document.getElementById('navGroupMng');
-            if (!group) {
-                return;
-            }
-            const toggle = group.querySelector('.nav-group-toggle');
-            // 접힘/펼침은 이 브라우저에만 기억하는 편의 기능이다. 저장소를 못 쓰는 환경(사생활 보호 모드 등)이면
-            // 기억만 못 할 뿐 동작은 그대로여야 하므로 읽기/쓰기를 모두 감싼다.
-            const STORAGE_KEY = 'sidebar.navGroupMng.open';
+            // 2뎁스 그룹마다 접힘/펼침을 이 브라우저에만 기억한다(키: sidebar.<그룹 id>.open — 관리 그룹은 예전 키 그대로).
+            // 저장소를 못 쓰는 환경(사생활 보호 모드 등)이면 기억만 못 할 뿐 동작은 그대로여야 하므로 읽기/쓰기를 모두 감싼다.
+            document.querySelectorAll('.nav-group').forEach(function (group) {
+                const toggle = group.querySelector('.nav-group-toggle');
+                const storageKey = 'sidebar.' + group.id + '.open';
 
-            function setOpen(open, remember) {
-                group.classList.toggle('is-open', open);
-                toggle.setAttribute('aria-expanded', String(open));
-                if (remember) {
-                    try { localStorage.setItem(STORAGE_KEY, open ? 'Y' : 'N'); } catch (e) { /* 기억만 못 한다 */ }
+                function setOpen(open, remember) {
+                    group.classList.toggle('is-open', open);
+                    toggle.setAttribute('aria-expanded', String(open));
+                    if (remember) {
+                        try { localStorage.setItem(storageKey, open ? 'Y' : 'N'); } catch (e) { /* 기억만 못 한다 */ }
+                    }
                 }
-            }
 
-            let saved = null;
-            try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) { /* 기억만 못 한다 */ }
-            // 지금 연 화면이 그룹 안에 있으면 저장된 상태와 상관없이 펼친다.
-            setOpen(saved === 'Y' || !!group.querySelector('a.is-active'), false);
+                let saved = null;
+                try { saved = localStorage.getItem(storageKey); } catch (e) { /* 기억만 못 한다 */ }
+                // 기억된 값이 없으면 그룹의 기본값(기능 그룹은 펼침, 관리는 접힘). 지금 연 화면이 그룹 안에 있으면 무조건 펼친다.
+                const opened = saved === null ? group.dataset.defaultOpen === 'Y' : saved === 'Y';
+                setOpen(opened || !!group.querySelector('a.is-active'), false);
 
-            toggle.addEventListener('click', function () {
-                setOpen(!group.classList.contains('is-open'), true);
+                toggle.addEventListener('click', function () {
+                    setOpen(!group.classList.contains('is-open'), true);
+                });
             });
         })();
     </script>

@@ -1,0 +1,92 @@
+# 행안부 SW 보안약점 진단가이드 — 입력데이터 검증 및 표현 / LDAP 삽입(CWE-90), XML 삽입(CWE-643), 코드 삽입(CWE-94), HTTP 응답분할(CWE-113)
+#
+# 요청값이 같은 메서드 안에서 각 해석기(LDAP 필터·XPath·스크립트/SpEL·응답 헤더)로 그대로 들어가는 경우.
+# 출처는 HttpServletRequest 값과 Spring 요청 파라미터. 무료판 Semgrep은 메서드 밖 흐름을 못 본다.
+rules:
+  - id: kisa-ldap-injection-request
+    languages: [java]
+    mode: taint
+    pattern-sources: &request-sources
+      - pattern: (HttpServletRequest $REQ).$GET(...)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $RET $M(..., @RequestParam $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @RequestParam(...) $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @PathVariable $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @PathVariable(...) $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @RequestHeader(...) $T $P, ...) { ... }
+              # @RequestBody Map·DTO도 클라이언트 값이다(param.get("x")·dto.getX()로 꺼내도 오염이 따라간다).
+              - pattern-inside: |
+                  $RET $M(..., @RequestBody $T $P, ...) { ... }
+          - pattern: $P
+    pattern-sanitizers:
+      - pattern: LdapEncoder.filterEncode(...)
+      - pattern: Encode.forLdap(...)
+    pattern-sinks:
+      - pattern: (DirContext $CTX).search($NAME, $FILTER, ...)
+      - pattern: (InitialDirContext $CTX).search($NAME, $FILTER, ...)
+      - pattern: (LdapTemplate $T).search(...)
+      - pattern: (LdapTemplate $T).authenticate(...)
+    message: "요청값이 LDAP 검색 필터에 그대로 들어갑니다(*)(uid=*) 등으로 인증 우회·전체 조회). LdapEncoder.filterEncode로 이스케이프하거나 필터 인자 바인딩(search(name, \"(uid={0})\", new Object[]{값}, ...))을 쓰세요."
+    severity: ERROR
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: LDAP 삽입
+      cwe: CWE-90
+
+  - id: kisa-xpath-injection-request
+    languages: [java]
+    mode: taint
+    pattern-sources: *request-sources
+    pattern-sinks:
+      - pattern: (XPath $X).compile(...)
+      - pattern: (XPath $X).evaluate($EXPR, ...)
+    message: "요청값으로 XPath 식을 만듭니다(' or '1'='1 로 조건 우회). XPathVariableResolver로 값을 변수로 넘기세요."
+    severity: ERROR
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: XML 삽입
+      cwe: CWE-643
+
+  # 스크립트 엔진·SpEL·리플렉션으로 요청값을 실행한다 — 서버에서 임의 코드 실행으로 이어진다.
+  - id: kisa-code-injection-request
+    languages: [java]
+    mode: taint
+    pattern-sources: *request-sources
+    pattern-sinks:
+      - pattern: (ScriptEngine $E).eval(...)
+      - pattern: (ExpressionParser $P).parseExpression(...)
+      - pattern: (SpelExpressionParser $P).parseExpression(...)
+      - pattern: Class.forName(...)
+      - pattern: (GroovyShell $G).evaluate(...)
+    message: "요청값을 코드로 실행합니다(스크립트 엔진·SpEL·Class.forName). 사용자 입력은 실행하지 말고, 꼭 필요하면 허용된 값 목록에서 고르게 하세요(SpEL은 SimpleEvaluationContext로 제한)."
+    severity: ERROR
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: 코드 삽입
+      cwe: CWE-94
+
+  # 요청값을 응답 헤더·쿠키에 넣는다. 요즘 서블릿 컨테이너는 헤더의 줄바꿈을 막지만, 컨테이너·버전에 기대지 말고 검증한다(WARNING).
+  - id: kisa-http-response-splitting
+    languages: [java]
+    mode: taint
+    pattern-sources: *request-sources
+    pattern-sanitizers:
+      - pattern: URLEncoder.encode(...)
+      - pattern: $S.replaceAll("[\\r\\n]", ...)
+      - pattern: $S.replaceAll("\\r|\\n", ...)
+    pattern-sinks:
+      - pattern: (HttpServletResponse $R).setHeader($NAME, $VALUE)
+      - pattern: (HttpServletResponse $R).addHeader($NAME, $VALUE)
+      - pattern: new Cookie($NAME, $VALUE)
+    message: "요청값을 응답 헤더·쿠키에 그대로 넣습니다(줄바꿈 문자로 헤더 추가·응답 분할). \\r\\n을 제거하거나 URL 인코딩하세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: HTTP 응답분할
+      cwe: CWE-113

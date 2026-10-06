@@ -1,0 +1,14 @@
+<div>
+  <!-- ruleid: kisa-xss-thymeleaf-utext -->
+  <p th:utext="${comment}"></p>
+  <!-- ok: kisa-xss-thymeleaf-utext -->
+  <p th:text="${comment}"></p>
+  <script>
+    // ruleid: kisa-xss-innerhtml
+    el.innerHTML = row.description;
+    // ok: kisa-xss-innerhtml
+    el.innerHTML = '';
+    // ok: kisa-xss-innerhtml
+    el.textContent = row.description;
+  </script>
+</div>

@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>코드 점검 · 보안취약점 모니터링 대시보드</title>
+    <link rel="stylesheet" href="/css/common-ui.css">
+    <link rel="stylesheet" href="/css/grid.css">
+    <style>
+        /* 화면 공통 뼈대·뱃지는 common-ui.css, .grid는 grid.css. 여기는 이 화면에서만 다른 값만. */
+        .scan-note{ font-size:12px; line-height:1.6; color:var(--text-sub); margin:4px 0 8px; }
+        .history-head{ margin-top:22px; }
+
+        /* 추적 규칙 초안 모달 — YAML·표가 길어 기본 모달 폭(560px)보다 넓게, 높이는 화면 안에서 스크롤. */
+        .draft-modal{ max-width:1100px; max-height:90vh; overflow-y:auto; }
+        .draft-modal h4{ margin:16px 0 6px; font-size:13px; }
+        .draft-modal .grid td{ white-space:normal; word-break:break-all; }
+        .draft-evidence{ margin:0; padding-left:18px; font-size:12px; line-height:1.6; color:var(--text-sub); }
+        .draft-notes{ margin:0; padding-left:18px; font-size:12px; line-height:1.7; }
+    </style>
+</head>
+<body>
+<div class="app-shell" th:classappend="${param.embed} ? 'app-shell--embedded'">
+    <div th:replace="~{fragments/sidebar :: sidebar}"></div>
+    <div th:replace="~{fragments/topbar :: topbar}"></div>
+    <div th:replace="~{fragments/loading-overlay :: overlay}"></div>
+
+    <main class="area-main">
+        <section th:replace="~{fragments/page-toolbar :: toolbar}"></section>
+
+        <section class="search-row" id="searchArea"></section>
+
+        <section class="panel-head">
+            <div class="panel-title">앱 목록</div>
+        </section>
+        <div class="scan-note">
+            저장소를 받아 시큐어코딩 규칙(행안부 SW 보안약점 기준)으로 소스를 점검합니다. AI는 쓰지 않으며 코드는 외부로 나가지 않습니다.
+            점검은 한 번에 하나만 실행됩니다. 결과는 <b>코드 점검 결과</b> 화면에서 봅니다.
+        </div>
+
+        <section>
+            <table class="grid">
+                <thead id="appGridHead"></thead>
+                <tbody id="appGridBody"></tbody>
+            </table>
+        </section>
+
+        <section class="panel-head history-head">
+            <div class="panel-title">점검 이력 (최근 500건)</div>
+        </section>
+
+        <section>
+            <table class="grid">
+                <thead id="historyGridHead"></thead>
+                <tbody id="historyGridBody"></tbody>
+            </table>
+        </section>
+    </main>
+</div>
+
+<div class="modal-backdrop" id="draftModalBackdrop">
+    <div class="modal draft-modal">
+        <h3 id="draftModalTitle">추적 규칙 초안</h3>
+        <div class="scan-note">
+            저장소의 AOP·세션 코드를 읽어 만든 <b>securecode/trace-rules.yml</b> 초안입니다. 서버는 설정 파일을 바꾸지 않습니다 —
+            근거를 확인한 뒤 직접 반영·커밋하세요. 반영 후 다음 점검부터 적용됩니다.
+        </div>
+        <h4>항목</h4>
+        <table class="grid">
+            <thead id="draftItemGridHead"></thead>
+            <tbody id="draftItemGridBody"></tbody>
+        </table>
+        <h4>반영하면 바뀌는 판정 <span id="draftChangeSummary" class="scan-note"></span></h4>
+        <table class="grid">
+            <thead id="draftChangeGridHead"></thead>
+            <tbody id="draftChangeGridBody"></tbody>
+        </table>
+        <h4 id="draftNotesTitle">직접 확인할 것</h4>
+        <ul class="draft-notes" id="draftNotes"></ul>
+        <h4>초안 (trace-rules.yml)</h4>
+        <pre class="code-block" id="draftYaml"></pre>
+        <div class="modal-actions">
+            <button type="button" class="btn" id="draftCopy">초안 복사</button>
+            <button type="button" class="btn" id="draftClose">닫기</button>
+        </div>
+    </div>
+</div>
+
+<script src="/js/grid.js"></script>
+<script src="/js/search-form.js"></script>
+<script th:inline="javascript">
+    (function () {
+        const APPS_URL = '/api/apps';
+        const SCAN_URL = '/api/secure-code/scan';
+        const HISTORY_URL = '/api/secure-code/scans';
+        const appGridBody = document.getElementById('appGridBody');
+        const historyGridBody = document.getElementById('historyGridBody');
+
+        const STATUS_LABELS = { RUNNING: '진행 중', SUCCESS: '성공', FAILED: '실패' };
+
+        let apps = [];
+
+        function badge(text, cssClass) {
+            const span = document.createElement('span');
+            span.className = 'badge ' + cssClass;
+            span.textContent = text;
+            return span;
+        }
+
+        function statusBadge(value) {
+            return value ? badge(STATUS_LABELS[value] || value, value.toLowerCase()) : '';
+        }
+
+        /** 서버의 LocalDateTime(ISO)을 "2026-09-30 09:52:51"로. */
+        function formatDateTime(value) {
+            return value ? String(value).replace('T', ' ').substring(0, 19) : '';
+        }
+
+        function formatDuration(startedAt, finishedAt) {
+            if (!startedAt || !finishedAt) return '';
+            const seconds = Math.round((new Date(finishedAt) - new Date(startedAt)) / 1000);
+            if (isNaN(seconds) || seconds < 0) return '';
+            return seconds >= 60 ? Math.floor(seconds / 60) + '분 ' + (seconds % 60) + '초' : seconds + '초';
+        }
+
+        const APP_COLUMNS = [
+            { id: 'systemName', label: '시스템명', width: 140 },
+            { id: 'description', label: '디스크립션' },
+            { id: 'branch', label: 'Branch', width: 100 },
+            { id: 'lastScanAt', label: '마지막 점검', width: 150, align: 'center', render: formatDateTime },
+            { id: 'lastScanStatus', label: '결과', width: 80, align: 'center', render: statusBadge },
+            {
+                label: '점검', width: 100, align: 'center',
+                render: function (value, app) {
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'btn grid-btn';
+                    btn.textContent = '점검';
+                    btn.addEventListener('click', function () { scanApp(app, btn); });
+                    return btn;
+                }
+            },
+            {
+                label: '추적 규칙', width: 100, align: 'center',
+                render: function (value, app) {
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'btn grid-btn';
+                    btn.textContent = '초안';
+                    btn.title = 'MyBatis ${} 연계 추적에 쓸 이 시스템의 프레임워크 규칙 초안을 만듭니다(설정 파일은 바꾸지 않음)';
+                    btn.addEventListener('click', function () { draftTraceRules(app, btn); });
+                    return btn;
+                }
+            }
+        ];
+
+        const HISTORY_COLUMNS = [
+            { id: 'startedAt', label: '시작 일시', width: 150, align: 'center', render: formatDateTime },
+            { id: 'systemName', label: '시스템명', width: 120 },
+            { id: 'branch', label: 'Branch', width: 90 },
+            { id: 'status', label: '결과', width: 80, align: 'center', render: statusBadge },
+            {
+                id: 'duration', label: '소요', width: 80, align: 'right',
+                render: function (value, row) { return formatDuration(row.startedAt, row.finishedAt); }
+            },
+            { id: 'fileCount', label: '파일', width: 70, align: 'right' },
+            { id: 'findingCount', label: '탐지', width: 60, align: 'right' },
+            { id: 'newCount', label: '신규', width: 60, align: 'right' },
+            { id: 'resolvedCount', label: '해결', width: 60, align: 'right' },
+            // 0이 아니면 그 파일들은 "약점 없음"이 아니라 "못 봄"이다 — 그 파일의 기존 탐지는 해결 처리되지 않는다.
+            { id: 'failedFileCount', label: '분석실패', width: 70, align: 'right' },
+            { id: 'rulesetVersion', label: '규칙셋', width: 110, align: 'center' },
+            { id: 'requestedBy', label: '실행자', width: 90 },
+            { id: 'errorMessage', label: '오류', title: function (value) { return value || ''; } }
+        ];
+
+        Grid.renderHeader(document.getElementById('appGridHead'), APP_COLUMNS);
+        Grid.renderHeader(document.getElementById('historyGridHead'), HISTORY_COLUMNS);
+
+        const search = SearchForm.render(document.getElementById('searchArea'), [
+            {
+                id: 'appId', label: '시스템명', type: 'select', withAll: true,
+                options: function () {
+                    return loadApps().then(function (list) {
+                        return list.map(function (app) { return { value: app.id, label: app.systemName }; });
+                    });
+                },
+                onChange: searchAll
+            }
+        ], { onSearch: searchAll });
+
+        function loadApps() {
+            return fetch(APPS_URL)
+                .then(function (res) {
+                    if (!res.ok) throw new Error('앱 목록 조회에 실패했습니다.');
+                    return res.json();
+                })
+                .then(function (list) {
+                    apps = list || [];
+                    return apps;
+                });
+        }
+
+        /** 앱 목록에 마지막 점검(이력의 최신 1건)을 붙인다. 이력은 최신순이라 처음 만나는 게 마지막 점검이다. */
+        function renderApps(histories) {
+            const appId = search.values().appId;
+            const latest = {};
+            histories.forEach(function (h) { if (!latest[h.appId]) latest[h.appId] = h; });
+            const rows = apps
+                .filter(function (app) { return !appId || String(app.id) === String(appId); })
+                .map(function (app) {
+                    const last = latest[app.id] || {};
+                    return Object.assign({}, app, { lastScanAt: last.startedAt, lastScanStatus: last.status });
+                });
+            Grid.render(appGridBody, APP_COLUMNS, rows, { emptyMessage: '등록된 앱이 없습니다.' });
+        }
+
+        function searchAll() {
+            // 앱별 마지막 점검을 구하려고 이력은 항상 전체로 받고, 시스템명 조건은 화면에서 거른다.
+            const appId = search.values().appId;
+            fetch(HISTORY_URL)
+                .then(function (res) {
+                    if (!res.ok) throw new Error('점검 이력 조회에 실패했습니다.');
+                    return res.json();
+                })
+                .then(function (histories) {
+                    renderApps(histories || []);
+                    const filtered = (histories || []).filter(function (h) { return !appId || String(h.appId) === String(appId); });
+                    Grid.render(historyGridBody, HISTORY_COLUMNS, filtered, { emptyMessage: '점검 이력이 없습니다.' });
+                })
+                .catch(function (err) {
+                    Grid.renderMessage(historyGridBody, HISTORY_COLUMNS.length, err.message);
+                });
+        }
+
+        /** 행의 "점검" 버튼. clone·Semgrep이 끝날 때까지 기다린다(저장소 크기에 따라 수 분). */
+        function scanApp(app, button) {
+            if (!confirm(app.systemName + ' 저장소를 점검하시겠습니까?\n저장소 크기에 따라 수 분 걸릴 수 있습니다.')) {
+                return;
+            }
+            button.disabled = true;
+            button.textContent = '점검 중...';
+
+            fetch(SCAN_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ appId: app.id })
+            })
+                .then(function (res) {
+                    if (!res.ok) {
+                        return res.text().then(function (text) { throw new Error(text || '점검에 실패했습니다.'); });
+                    }
+                    return res.json();
+                })
+                .then(function (result) {
+                    // 못 본 파일이 있으면 반드시 같이 알린다 — "탐지 0건"과 "못 봄"을 구분할 수 있어야 한다.
+                    const failedNote = result.failedFileCount > 0
+                        ? '\n\n※ ' + result.failedFileCount + '개 파일은 분석하지 못했습니다(구문 해석 실패·시간 초과).\n' +
+                          '   그 파일의 기존 탐지는 해결 처리하지 않았습니다. 서버 로그에 파일 목록이 있습니다.'
+                        : '';
+                    // MyBatis ${} 연계 추적을 못 했거나 일부만 했으면 함께 알린다 — 그 탐지는 Semgrep 등급 그대로다.
+                    const traceNote = result.traceNote ? '\n\n※ ' + result.traceNote.split('\n').join('\n   ') : '';
+                    alert(
+                        result.systemName + ' 점검 완료\n' +
+                        '점검 파일: ' + result.fileCount + '개\n' +
+                        '탐지: ' + result.findingCount + '건 (신규 ' + result.newCount + ', 해결 ' + result.resolvedCount + ')' +
+                        failedNote + traceNote
+                    );
+                })
+                .catch(function (err) {
+                    alert(err.message);
+                })
+                .finally(function () {
+                    button.disabled = false;
+                    button.textContent = '점검';
+                    searchAll();
+                });
+        }
+
+        // ---------------------------------------------------------------- 추적 규칙 초안
+
+        const DRAFT_URL = '/api/secure-code/trace-rule-draft';
+        const draftBackdrop = document.getElementById('draftModalBackdrop');
+        const draftItemBody = document.getElementById('draftItemGridBody');
+        const draftChangeBody = document.getElementById('draftChangeGridBody');
+        // 지금 설정과 다르거나(다름) 그대로 못 쓰는(직접 확인) 항목이 먼저 눈에 띄게.
+        const DRAFT_STATUS_BADGE = { NEW: 'medium', DIFFERENT: 'high', UNUSABLE: 'high', SAME: 'low' };
+
+        function evidenceList(lines) {
+            const ul = document.createElement('ul');
+            ul.className = 'draft-evidence';
+            (lines || []).forEach(function (line) {
+                const li = document.createElement('li');
+                li.textContent = line;
+                ul.appendChild(li);
+            });
+            return ul;
+        }
+
+        const DRAFT_ITEM_COLUMNS = [
+            { id: 'kind', label: '종류', width: 120 },
+            { id: 'value', label: '값', width: 200 },
+            {
+                id: 'statusLabel', label: '지금 설정', width: 90, align: 'center',
+                render: function (value, row) { return badge(value, DRAFT_STATUS_BADGE[row.status] || 'low'); }
+            },
+            { id: 'detail', label: '내용', width: 220 },
+            { id: 'evidence', label: '근거', render: function (value) { return evidenceList(value); } }
+        ];
+        const DRAFT_CHANGE_COLUMNS = [
+            { id: 'location', label: '위치', width: 360 },
+            { id: 'expr', label: '${}', width: 160 },
+            { id: 'before', label: '지금 판정', width: 150, align: 'center' },
+            { id: 'after', label: '반영 후', width: 150, align: 'center' }
+        ];
+        Grid.renderHeader(document.getElementById('draftItemGridHead'), DRAFT_ITEM_COLUMNS);
+        Grid.renderHeader(document.getElementById('draftChangeGridHead'), DRAFT_CHANGE_COLUMNS);
+
+        function openDraftModal(draft) {
+            document.getElementById('draftModalTitle').textContent = '추적 규칙 초안 · ' + draft.systemName;
+            Grid.render(draftItemBody, DRAFT_ITEM_COLUMNS, draft.items || [],
+                { emptyMessage: '찾은 항목이 없습니다.' });
+            Grid.render(draftChangeBody, DRAFT_CHANGE_COLUMNS, draft.changes || [],
+                { emptyMessage: '반영해도 바뀌는 판정이 없습니다(이미 설정에 있거나 이 앱에 ${}가 없음).' });
+            document.getElementById('draftChangeSummary').textContent = (draft.changeSummary || []).join(' · ');
+
+            const notes = (draft.notes || []).slice();
+            if (draft.failedFiles > 0) {
+                notes.unshift('Java 파일 ' + draft.failedFiles + '개를 구문 분석하지 못했습니다 — 그 파일 안의 장치는 초안에서 빠졌을 수 있습니다.');
+            }
+            const ul = document.getElementById('draftNotes');
+            ul.replaceChildren();
+            notes.forEach(function (note) {
+                const li = document.createElement('li');
+                li.textContent = note;
+                ul.appendChild(li);
+            });
+            document.getElementById('draftNotesTitle').style.display = notes.length ? '' : 'none';
+
+            document.getElementById('draftYaml').textContent = draft.yaml || '';
+            draftBackdrop.classList.add('open');
+        }
+
+        /** 행의 "초안" 버튼. 저장소 clone + 구문 분석 + 판정 두 번이라 점검처럼 수십 초 걸릴 수 있다. */
+        function draftTraceRules(app, button) {
+            button.disabled = true;
+            button.textContent = '분석 중...';
+            fetch(DRAFT_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ appId: app.id })
+            })
+                .then(function (res) {
+                    if (!res.ok) {
+                        return res.text().then(function (text) { throw new Error(text || '초안을 만들지 못했습니다.'); });
+                    }
+                    return res.json();
+                })
+                .then(openDraftModal)
+                .catch(function (err) { alert(err.message); })
+                .finally(function () {
+                    button.disabled = false;
+                    button.textContent = '초안';
+                });
+        }
+
+        document.getElementById('draftClose').addEventListener('click', function () {
+            draftBackdrop.classList.remove('open');
+        });
+        draftBackdrop.addEventListener('click', function (e) {
+            if (e.target === draftBackdrop) draftBackdrop.classList.remove('open');
+        });
+        document.getElementById('draftCopy').addEventListener('click', function () {
+            Grid.copyText(document.getElementById('draftYaml').textContent);
+        });
+
+        PageButtons.bind({
+            btnSearch: searchAll,
+            btnReset: function () {
+                search.reset();
+                searchAll();
+            }
+        });
+
+        search.ready
+            .catch(function (err) { alert(err.message); })
+            .then(searchAll);
+    })();
+</script>
+</body>
+</html>

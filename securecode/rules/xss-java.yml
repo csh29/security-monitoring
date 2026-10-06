@@ -1,0 +1,41 @@
+# 행안부 SW 보안약점 진단가이드 — 입력데이터 검증 및 표현 / 크로스사이트 스크립트 (CWE-79) — 서버(Java)에서 직접 출력하는 경우
+# 화면 템플릿 쪽 규칙(xss.yml, generic)과 파일을 나눈 이유: semgrep --test가 같은 이름의 예제를 파일 안 모든 언어로 파싱한다.
+rules:
+  # 요청값을 이스케이프 없이 응답 본문에 직접 쓰는 경우(같은 메서드 안). 반사형 XSS의 전형.
+  - id: kisa-xss-servlet-write
+    languages: [java]
+    mode: taint
+    pattern-sources:
+      - pattern: (HttpServletRequest $REQ).$GET(...)
+      # Spring 요청 파라미터도 클라이언트 값이다(@RequestBody Map이면 param.get("x")로 꺼내도 오염이 따라간다).
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $RET $M(..., @RequestParam $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @RequestParam(...) $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @PathVariable $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @PathVariable(...) $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @RequestHeader(...) $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @RequestBody $T $P, ...) { ... }
+          - pattern: $P
+    pattern-sanitizers:
+      - pattern: HtmlUtils.htmlEscape(...)
+      - pattern: StringEscapeUtils.escapeHtml4(...)
+      - pattern: StringEscapeUtils.escapeHtml(...)
+      - pattern: Encode.forHtml(...)
+      - pattern: ESAPI.encoder().encodeForHTML(...)
+    pattern-sinks:
+      - pattern: (PrintWriter $W).$PRINT(...)
+      - pattern: ($RESP).getWriter().$PRINT(...)
+      - pattern: (ServletOutputStream $OS).$PRINT(...)
+    message: "요청값을 이스케이프 없이 응답에 직접 씁니다. HtmlUtils.htmlEscape 등으로 이스케이프하거나 템플릿(th:text)으로 출력하세요."
+    severity: ERROR
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: 크로스사이트 스크립트
+      cwe: CWE-79

@@ -1,0 +1,35 @@
+# 행안부 SW 보안약점 진단가이드 — 보안기능 / 부적절한 인증서 유효성 검증 (CWE-295)
+#
+# 사내 테스트 서버의 사설 인증서 때문에 "일단 다 믿게" 해 둔 코드가 운영에 그대로 남는 경우가 많다.
+# 그러면 중간자가 HTTPS를 그대로 가로챈다. 모양이 분명해 오탐이 거의 없어 ERROR.
+rules:
+  - id: kisa-tls-trust-all
+    languages: [java]
+    pattern-either:
+      # 서버 인증서를 검사하지 않는 TrustManager(본문이 비었다).
+      - pattern: |
+          public void checkServerTrusted($T1 $CHAIN, $T2 $AUTH) {}
+      - pattern: |
+          public void checkServerTrusted($T1 $CHAIN, $T2 $AUTH) throws $E {}
+      # 호스트 이름을 검사하지 않는다. 람다는 검증기를 설정하는 자리에서만 본다 — (a, b) -> true는 다른 용도(필터)에도 흔하다.
+      - pattern: |
+          public boolean verify(String $HOST, SSLSession $SESSION) { return true; }
+      - pattern: $X.setDefaultHostnameVerifier(($HOST, $SESSION) -> true)
+      - pattern: $X.setHostnameVerifier(($HOST, $SESSION) -> true)
+      - pattern: $X.hostnameVerifier(($HOST, $SESSION) -> true)
+      - pattern: $X.loadTrustMaterial($STORE, ($CHAIN, $AUTH) -> true)
+      - pattern: NoopHostnameVerifier.INSTANCE
+      - pattern: new NoopHostnameVerifier()
+      - pattern: SSLConnectionSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER
+      - pattern: new AllowAllHostnameVerifier()
+      # 모든 인증서를 믿는다(Apache HttpClient·OkHttp).
+      - pattern: new TrustAllStrategy()
+      - pattern: TrustAllStrategy.INSTANCE
+      - pattern: new TrustSelfSignedStrategy()
+      - pattern: InsecureTrustManagerFactory.INSTANCE
+    message: "HTTPS 인증서·호스트 이름 검증을 끕니다. 중간자가 통신을 가로챌 수 있습니다. 사설 인증서라면 그 인증서만 트러스트스토어에 넣고 기본 검증을 쓰세요."
+    severity: ERROR
+    metadata:
+      kisa_category: 보안기능
+      kisa_name: 부적절한 인증서 유효성 검증
+      cwe: CWE-295

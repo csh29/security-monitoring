@@ -1,0 +1,45 @@
+# 행안부 SW 보안약점 진단가이드 — 입력데이터 검증 및 표현 / 위험한 형식 파일 업로드 (CWE-434), 경로 조작 및 자원 삽입 (CWE-22)
+rules:
+  # 사용자가 보낸 원래 파일명을 저장 경로에 그대로 쓰는 경우. "../../webapp/shell.jsp" 같은 이름으로 원하는 위치에 원하는 확장자로 저장된다.
+  # 파일명은 서버가 만들고(UUID 등), 원래 이름은 DB에만 두는 게 원칙이다. 경로 부분을 떼는 FilenameUtils.getName·getExtension을 거치면 뺀다.
+  - id: kisa-file-upload-original-filename-path
+    languages: [java]
+    mode: taint
+    pattern-sources:
+      - pattern: (MultipartFile $F).getOriginalFilename()
+      - pattern: (Part $P).getSubmittedFileName()
+    pattern-sanitizers:
+      - pattern: FilenameUtils.getName(...)
+      - pattern: FilenameUtils.getExtension(...)
+      - pattern: org.apache.commons.io.FilenameUtils.getName(...)
+      - pattern: org.apache.commons.io.FilenameUtils.getExtension(...)
+    pattern-sinks:
+      - pattern: new File(...)
+      - pattern: new java.io.File(...)
+      - pattern: new FileOutputStream(...)
+      - pattern: Paths.get(...)
+      - pattern: Path.of(...)
+      - pattern: ($PATH).resolve(...)
+    message: "업로드한 파일의 원래 이름을 저장 경로에 그대로 씁니다(경로 조작·실행 파일 업로드). 저장 이름은 서버가 만들고(UUID 등), 원래 이름은 DB에만 저장하세요."
+    severity: ERROR
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: 위험한 형식 파일 업로드
+      cwe: CWE-434
+
+  # 업로드 파일을 디스크에 저장하는 지점. 확장자 허용 목록·크기 제한·웹 루트 밖 저장 여부는 코드 모양만으로 판단할 수 없어
+  # 저장 지점마다 사람이 확인하도록 목록으로 남긴다(WARNING). 업로드 기능은 앱마다 몇 곳뿐이라 건수가 많지 않다.
+  - id: kisa-file-upload-save
+    languages: [java]
+    pattern-either:
+      - pattern: (MultipartFile $F).transferTo(...)
+      - pattern: Files.copy((MultipartFile $F).getInputStream(), ...)
+      - pattern: FileCopyUtils.copy((MultipartFile $F).getBytes(), ...)
+      - pattern: FileCopyUtils.copy((MultipartFile $F).getInputStream(), ...)
+      - pattern: (Part $P).write(...)
+    message: "업로드 파일을 저장합니다. 확장자 허용 목록(jsp·jspx·exe 등 차단), 크기 제한, 웹 루트 밖 저장, 서버가 만든 파일명을 쓰는지 확인하세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: 위험한 형식 파일 업로드
+      cwe: CWE-434

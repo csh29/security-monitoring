@@ -1,0 +1,48 @@
+# 행안부 SW 보안약점 진단가이드 — 입력데이터 검증 및 표현 / 신뢰되지 않는 URL 주소로 자동접속 연결 (CWE-601)
+#
+# 로그인 후 돌아갈 주소(?returnUrl=)를 그대로 리다이렉트하면 피싱 사이트로 보낼 수 있다.
+rules:
+  - id: kisa-open-redirect-request
+    languages: [java]
+    mode: taint
+    pattern-sources:
+      - pattern: (HttpServletRequest $REQ).$GET(...)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $RET $M(..., @RequestParam $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @RequestParam(...) $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @PathVariable $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @PathVariable(...) $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @RequestHeader(...) $T $P, ...) { ... }
+              # @RequestBody Map·DTO도 클라이언트 값이다(param.get("x")·dto.getX()로 꺼내도 오염이 따라간다).
+              - pattern-inside: |
+                  $RET $M(..., @RequestBody $T $P, ...) { ... }
+          - pattern: $P
+    pattern-sanitizers:
+      # 앞부분이 고정 호스트·경로인 연결은 요청값이 쿼리 문자열에만 들어가 다른 사이트로 보낼 수 없다
+      # (ext-api의 KAKAO_APP_GATEWAY + "/kakao/...?data=" + data가 5건 오탐이었다). 단 "/" + 값(→ //evil.com),
+      # 상수 + 값(→ https://gw.com@evil.com)은 호스트를 바꿀 수 있어 그대로 잡는다.
+      - patterns:
+          - pattern: $PREFIX + $REST
+          - metavariable-regex:
+              metavariable: $PREFIX
+              regex: '^("https?://[^"/]+/|"/[^/\\"]|[A-Z][A-Z0-9_.]*\s*\+\s*"/)'
+    pattern-sinks:
+      - pattern: (HttpServletResponse $RESP).sendRedirect(...)
+      - pattern: new RedirectView(...)
+      - pattern: new ModelAndView("redirect:" + $X, ...)
+      - pattern: new ModelAndView("redirect:" + $X)
+      - patterns:
+          - pattern-inside: return "redirect:" + $X;
+          - pattern: $X
+    message: "요청값으로 받은 주소로 리다이렉트합니다(외부 피싱 사이트로 이동 가능). 이동할 주소는 허용 목록으로 검증하거나, 같은 사이트 안의 경로(/로 시작, //·\\ 제외)만 허용하세요."
+    severity: ERROR
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: 신뢰되지 않는 URL 주소로 자동접속 연결
+      cwe: CWE-601

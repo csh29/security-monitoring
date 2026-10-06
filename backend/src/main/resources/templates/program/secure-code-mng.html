@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>코드 점검 결과 · 보안취약점 모니터링 대시보드</title>
+    <link rel="stylesheet" href="/css/common-ui.css">
+    <link rel="stylesheet" href="/css/grid.css">
+    <style>
+        /* 화면 공통 뼈대·뱃지·모달·상세 표·코드 블록은 common-ui.css, .grid는 grid.css. 여기는 이 화면에서만 다른 값만.
+           그리드가 남는 높이를 채우는 배치는 취약점 관리 화면과 같다. */
+        .area-main{ overflow:hidden; }
+        .grid-section{ flex:1; min-height:0; display:flex; flex-direction:column; gap:8px; }
+        .grid-wrap{ flex:1; min-height:0; overflow-y:auto; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-box); }
+        .grid{ table-layout:fixed; border:none; border-radius:0; overflow:visible; }
+        .grid td{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .grid .empty{ white-space:normal; }
+
+        /* 항목별 건수 요약 — 제목보다 작고 옅게. */
+        .summary-line{ font-size:12px; line-height:1.6; color:var(--text-sub); }
+        .summary-line b{ color:var(--text); }
+
+        /* 코드 조각은 길어서 기본 모달 폭(560px)으로는 줄이 다 꺾인다. */
+        .finding-modal{ max-width:960px; }
+        .finding-modal .detail-list{ grid-template-columns:110px 1fr; margin-bottom:12px; }
+        /* 연계 추적 근거 — 값이 지나온 길을 위에서 아래로. 한 걸음이 길어 줄을 꺾는다. */
+        .trace-steps{ margin:6px 0 0; padding-left:20px; font-size:12px; line-height:1.6; color:var(--text-sub); white-space:normal; }
+        .trace-steps li{ word-break:break-all; }
+    </style>
+</head>
+<body>
+<div class="app-shell" th:classappend="${param.embed} ? 'app-shell--embedded'">
+    <div th:replace="~{fragments/sidebar :: sidebar}"></div>
+    <div th:replace="~{fragments/topbar :: topbar}"></div>
+    <div th:replace="~{fragments/loading-overlay :: overlay}"></div>
+
+    <main class="area-main">
+        <section th:replace="~{fragments/page-toolbar :: toolbar}"></section>
+
+        <section class="search-row" id="searchArea"></section>
+
+        <section class="grid-section">
+            <div class="panel-title">탐지 목록</div>
+            <div class="summary-line" id="summaryLine"></div>
+            <div class="grid-wrap">
+                <table class="grid">
+                    <thead id="findingGridHead"></thead>
+                    <tbody id="findingGridBody"></tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+</div>
+
+<div class="modal-backdrop" id="findingModalBackdrop">
+    <div class="modal finding-modal">
+        <h3 id="findingModalTitle">상세보기</h3>
+        <dl class="detail-list">
+            <dt>항목</dt><dd id="findingModalKisa"></dd>
+            <dt>CWE</dt><dd><a id="findingModalCwe" target="_blank" rel="noopener noreferrer"></a></dd>
+            <dt>규칙</dt><dd id="findingModalRule"></dd>
+            <dt>위치</dt><dd id="findingModalLocation"></dd>
+            <dt>설명·조치</dt><dd id="findingModalMessage"></dd>
+            <dt id="findingModalTraceTerm">연계 추적</dt><dd id="findingModalTrace"></dd>
+            <dt>탐지 일시</dt><dd id="findingModalDetected"></dd>
+        </dl>
+        <pre class="code-block" id="findingModalCode"></pre>
+        <div class="modal-actions">
+            <button type="button" class="btn" id="findingModalCopy">위치 복사</button>
+            <button type="button" class="btn" id="findingModalClose">닫기</button>
+        </div>
+    </div>
+</div>
+
+<script src="/js/grid.js"></script>
+<script src="/js/com-cd.js"></script>
+<script src="/js/search-form.js"></script>
+<script src="/js/code-highlight.js"></script>
+<script th:inline="javascript">
+    (function () {
+        const API_URL = '/api/secure-code/findings';
+        const STATUS_URL = '/api/secure-code/findings/status';
+        const APPS_URL = '/api/apps';
+        const CWE_URL = 'https://cwe.mitre.org/data/definitions/';
+        const gridBody = document.getElementById('findingGridBody');
+        const modalBackdrop = document.getElementById('findingModalBackdrop');
+
+        // 조회해 온 시점의 처리여부·비고(id -> { status, remark }). 저장할 때 바뀐 행만 골라 보내는 기준이다
+        // — 행 데이터는 입력 셀의 현재 값으로 덮인다(Grid.getRows). 취약점 관리 화면과 같은 방식.
+        let loaded = {};
+        let currentRow = null;
+
+        function badge(text, cssClass) {
+            const span = document.createElement('span');
+            span.className = 'badge ' + cssClass;
+            span.textContent = text;
+            return span;
+        }
+
+        function formatDateTime(value) {
+            return value ? String(value).replace('T', ' ').substring(0, 19) : '';
+        }
+
+        function location(row) {
+            return row.filePath + ':' + row.startLine;
+        }
+
+        /**
+         * 코드 조각을 줄 번호와 함께 그린다. 걸린 줄은 강조하고, 파일 종류(확장자)에 맞춰 구문 색을 넣는다(code-highlight.js).
+         * 코드는 토큰마다 textContent로 넣는다 — 조각 안의 HTML·스크립트가 실행되지 않게 innerHTML을 쓰지 않는다.
+         */
+        function renderCode(pre, row) {
+            pre.replaceChildren();
+            if (!row.snippet) {
+                pre.textContent = '(코드 조각 없음)';
+                return;
+            }
+            CodeHighlight.lines(row.snippet, CodeHighlight.languageOf(row.filePath)).forEach(function (tokens, i) {
+                const no = (row.snippetStartLine || 1) + i;
+                const line = document.createElement('span');
+                line.className = 'code-line' + (no >= row.startLine && no <= row.endLine ? ' hit' : '');
+                const num = document.createElement('span');
+                num.className = 'code-no';
+                num.textContent = no;
+                const code = document.createElement('span');
+                code.className = 'code-text';
+                tokens.forEach(function (token) {
+                    if (!token.type) {
+                        code.appendChild(document.createTextNode(token.text));
+                        return;
+                    }
+                    const span = document.createElement('span');
+                    span.className = 'tok-' + token.type;
+                    span.textContent = token.text;
+                    code.appendChild(span);
+                });
+                // 빈 줄도 높이를 갖도록(줄 강조가 끊기지 않게) 비었으면 공백 하나를 넣는다.
+                if (!tokens.length) code.textContent = ' ';
+                line.appendChild(num);
+                line.appendChild(code);
+                pre.appendChild(line);
+            });
+        }
+
+        /**
+         * MyBatis ${} 연계 추적 판정 → 뱃지 색. 클라이언트 값·공통 경로 우회는 실제로 공격 가능해 high,
+         * 판정 불가는 사람 검토라 medium, 나머지(세션 덮어쓰기·서버 세팅·XML 결정)는 low. 등급 매김(DollarTraceMerger)과 같은 기준.
+         */
+        const TRACE_BADGE = { CLIENT: 'high', BYPASSABLE: 'high', UNKNOWN: 'medium' };
+
+        function traceBadge(row) {
+            return row.traceSafety ? badge(row.traceLabel || row.traceSafety, TRACE_BADGE[row.traceSafety] || 'low') : '';
+        }
+
+        /** 연계 추적이 없는 탐지(${} 규칙이 아니거나 추적 못 함)는 그 줄을 숨긴다. 근거는 한 걸음씩 textContent로. */
+        function renderTrace(row) {
+            const term = document.getElementById('findingModalTraceTerm');
+            const dd = document.getElementById('findingModalTrace');
+            dd.replaceChildren();
+            const has = !!row.traceSafety;
+            term.style.display = has ? '' : 'none';
+            dd.style.display = has ? '' : 'none';
+            if (!has) return;
+            dd.appendChild(traceBadge(row));
+            const steps = document.createElement('ol');
+            steps.className = 'trace-steps';
+            (row.traceEvidence || []).forEach(function (step) {
+                const li = document.createElement('li');
+                li.textContent = step;
+                steps.appendChild(li);
+            });
+            dd.appendChild(steps);
+        }
+
+        function openModal(row) {
+            currentRow = row;
+            document.getElementById('findingModalTitle').textContent = '상세보기 · ' + row.systemName;
+            document.getElementById('findingModalKisa').textContent =
+                (row.kisaCategory ? row.kisaCategory + ' / ' : '') + (row.kisaName || '-');
+            const cwe = document.getElementById('findingModalCwe');
+            const cweNo = (row.cwe || '').replace(/^CWE-/, '');
+            // 링크는 숫자 CWE일 때만 만든다(규칙 메타데이터 값을 그대로 URL에 넣지 않는다).
+            if (/^\d+$/.test(cweNo)) {
+                cwe.href = CWE_URL + cweNo + '.html';
+                cwe.textContent = row.cwe;
+            } else {
+                cwe.removeAttribute('href');
+                cwe.textContent = row.cwe || '-';
+            }
+            document.getElementById('findingModalRule').textContent = row.ruleId;
+            document.getElementById('findingModalLocation').textContent =
+                row.filePath + ' (' + row.startLine + (row.endLine !== row.startLine ? '~' + row.endLine : '') + '줄)';
+            document.getElementById('findingModalMessage').textContent = row.message || '-';
+            renderTrace(row);
+            document.getElementById('findingModalDetected').textContent =
+                '최초 ' + formatDateTime(row.firstDetectedAt) + ' / 최근 ' + formatDateTime(row.lastDetectedAt);
+            renderCode(document.getElementById('findingModalCode'), row);
+            modalBackdrop.classList.add('open');
+        }
+
+        function closeModal() {
+            modalBackdrop.classList.remove('open');
+        }
+
+        document.getElementById('findingModalClose').addEventListener('click', closeModal);
+        document.getElementById('findingModalCopy').addEventListener('click', function () {
+            if (currentRow) Grid.copyText(location(currentRow));
+        });
+        modalBackdrop.addEventListener('click', function (e) {
+            if (e.target === modalBackdrop) closeModal();
+        });
+
+        const COLUMNS = [
+            { id: 'systemName', label: '시스템명', width: 110, title: true },
+            { id: 'kisaName', label: '항목', width: 150, title: true },
+            {
+                id: 'severity', label: '심각도', width: 90, align: 'center',
+                render: function (value) { return value ? badge(value, value.toLowerCase()) : ''; }
+            },
+            // MyBatis ${}만 값이 어디서 오는지 Java 소스를 따라가 판정한다. 심각도는 이 판정으로 다시 매긴 값이다.
+            {
+                id: 'traceLabel', label: '연계 판정', width: 150, align: 'center',
+                render: function (value, row) { return traceBadge(row); },
+                title: function (value, row) { return (row.traceEvidence || []).join('\n'); }
+            },
+            // 오탐·위험수용·조치완료로 저장한 건은 같은 코드가 다시 탐지돼도 유지된다(코드가 바뀌면 새 건이 된다).
+            {
+                id: 'status', label: '처리여부', width: 110, align: 'center', type: 'select', optionsQuery: 'SC_STATUS',
+                display: function (value, label) { return badge(label || value || '', (value || '').toLowerCase()); }
+            },
+            { id: 'statusChangedBy', label: '처리자', width: 80, align: 'center' },
+            { id: 'remark', label: '비고', width: 200, type: 'text' },
+            {
+                id: 'location', label: '위치', width: 360,
+                render: function (value, row) { return location(row); },
+                title: function (value, row) { return location(row); }
+            },
+            { id: 'cwe', label: 'CWE', width: 80, align: 'center' },
+            { id: 'ruleId', label: '규칙', width: 230, title: true },
+            { id: 'firstDetectedAt', label: '최초 탐지', width: 140, align: 'center', render: formatDateTime },
+            {
+                label: '상세보기', width: 90, align: 'center',
+                render: function (value, row) {
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'btn grid-btn';
+                    btn.textContent = '상세보기';
+                    btn.addEventListener('click', function () { openModal(row); });
+                    return btn;
+                }
+            }
+        ];
+
+        Grid.renderHeader(document.getElementById('findingGridHead'), COLUMNS);
+
+        function loadAppOptions() {
+            return fetch(APPS_URL)
+                .then(function (res) {
+                    if (!res.ok) throw new Error('APP 목록 조회에 실패했습니다.');
+                    return res.json();
+                })
+                .then(function (apps) {
+                    return (apps || []).map(function (app) { return { value: app.id, label: app.systemName }; });
+                })
+                .catch(function (err) {
+                    alert(err.message);
+                    return [];
+                });
+        }
+
+        // APP·처리여부는 서버에서, 심각도·항목·파일은 받은 목록을 화면에서 거른다(text 필드는 search.matches).
+        const search = SearchForm.render(document.getElementById('searchArea'), [
+            { id: 'appId', label: 'APP', type: 'select', withAll: true, options: loadAppOptions },
+            { id: 'status', label: '처리여부', type: 'select', withAll: true, optionsQuery: 'SC_STATUS', defaultValue: 'OPEN' },
+            { id: 'severity', label: '심각도', type: 'select', withAll: true, optionsQuery: 'SEVERITY' },
+            { id: 'kisaName', label: '항목', type: 'text', width: 140 },
+            { id: 'filePath', label: '파일', type: 'text', width: 180 }
+        ], { onSearch: searchFindings });
+
+        /** "총 12건 · SQL 삽입 5 · 크로스사이트 스크립트 4 …" — 화면에 보이는 행 기준. */
+        function renderSummary(rows) {
+            const counts = {};
+            rows.forEach(function (row) {
+                const key = row.kisaName || '(항목 없음)';
+                counts[key] = (counts[key] || 0) + 1;
+            });
+            const line = document.getElementById('summaryLine');
+            line.replaceChildren();
+            const total = document.createElement('b');
+            total.textContent = '총 ' + rows.length + '건';
+            line.appendChild(total);
+            Object.keys(counts)
+                .sort(function (a, b) { return counts[b] - counts[a]; })
+                .forEach(function (key) {
+                    line.appendChild(document.createTextNode(' · ' + key + ' ' + counts[key]));
+                });
+        }
+
+        function renderRows(findings) {
+            const severity = search.values().severity;
+            const rows = (findings || [])
+                .filter(search.matches)
+                .filter(function (row) { return !severity || row.severity === severity; });
+            loaded = {};
+            rows.forEach(function (f) { loaded[f.id] = { status: f.status, remark: f.remark || '' }; });
+            renderSummary(rows);
+            Grid.render(gridBody, COLUMNS, rows, { emptyMessage: '탐지된 항목이 없습니다.' });
+        }
+
+        function searchFindings() {
+            const params = new URLSearchParams();
+            const cond = search.values();
+            if (cond.appId) params.set('appId', cond.appId);
+            // "전체"(빈 값)도 명시적으로 보내야 서버 기본값(OPEN)이 적용되지 않는다.
+            params.set('status', cond.status);
+
+            fetch(API_URL + '?' + params.toString())
+                .then(function (res) {
+                    if (!res.ok) throw new Error('탐지 목록 조회에 실패했습니다.');
+                    return res.json();
+                })
+                .then(renderRows)
+                .catch(function (err) {
+                    Grid.renderMessage(gridBody, COLUMNS.length, err.message);
+                });
+        }
+
+        /** 처리여부나 비고를 바꾼 행만 저장한다(서버도 실제로 달라진 항목만 반영한다). */
+        function saveStatuses() {
+            const changed = Grid.getRows(gridBody)
+                .filter(function (row) {
+                    const before = loaded[row.id] || {};
+                    return row.status !== before.status || (row.remark || '') !== before.remark;
+                })
+                .map(function (row) { return { id: row.id, status: row.status, remark: row.remark }; });
+
+            if (changed.length === 0) {
+                alert('변경된 처리여부·비고가 없습니다.');
+                return;
+            }
+            if (!confirm(changed.length + '건을 저장하시겠습니까?\n' +
+                    '오탐·위험수용·조치완료로 저장한 건은 같은 코드가 다시 탐지돼도 유지됩니다(코드가 바뀌면 새 건으로 다시 잡힙니다).')) {
+                return;
+            }
+
+            fetch(STATUS_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(changed)
+            })
+                .then(function (res) {
+                    if (!res.ok) {
+                        return res.text().then(function (text) { throw new Error(text || '저장에 실패했습니다.'); });
+                    }
+                    searchFindings();
+                })
+                .catch(function (err) {
+                    alert(err.message);
+                });
+        }
+
+        PageButtons.bind({
+            btnSearch: searchFindings,
+            btnSave: saveStatuses
+        });
+
+        search.ready
+            .catch(function (err) { alert(err.message); })
+            .then(searchFindings);
+    })();
+</script>
+</body>
+</html>

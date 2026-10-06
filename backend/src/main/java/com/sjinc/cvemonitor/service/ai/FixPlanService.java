@@ -89,10 +89,17 @@ public class FixPlanService {
                 .map(v -> toCveFinding(v, chains))
                 .toList();
 
+        // pom.xml은 AI(Claude API)로 나가는 유일한 저장소 원문이다 — 비밀번호·토큰·계정 든 URL은 가려서 보낸다.
+        // 돌아온 pom은 saveFixPlan에서 되돌린다(SecretMasker).
+        SecretMasker.Masked maskedPom = SecretMasker.mask(snapshot.getPomXml());
+        if (!maskedPom.secrets().isEmpty()) {
+            log.info("[{}] fix-plan pom.xml 비밀값 {}개를 가려서 보냄", snapshot.getApp().getSystemName(), maskedPom.secrets().size());
+        }
+
         return new AppFixPlanTarget(
                 appId,
                 snapshot.getApp().getSystemName(),
-                snapshot.getPomXml(),
+                maskedPom.text(),
                 prunedDependencyTree,
                 findings
         );
@@ -122,7 +129,7 @@ public class FixPlanService {
         FixPlan plan = fixPlanRepository.findByAppId(appId)
                 .orElseGet(() -> FixPlan.builder().app(appRepository.getReferenceById(appId)).build());
 
-        plan.applyPlan(request.strategy(), request.pomXml(), request.unresolvedCves(), request.reasoning());
+        plan.applyPlan(request.strategy(), restoreSecrets(appId, request.pomXml()), request.unresolvedCves(), request.reasoning());
         plan.replaceChanges(toChanges(plan, request.changes()));
         plan.attachLowSeverityNote(buildLowSeverityNote(appId));
         fixPlanRepository.save(plan);
@@ -138,6 +145,21 @@ public class FixPlanService {
      * 전체(pom.xml)는 멀쩡한데 변경 목록 한 줄 때문에 저장을 거절하면, 비싼 fix-plan 생성을 통째로 다시 돌려야 한다.
      * 버린 건수는 로그로 남긴다.
      */
+    /**
+     * AI가 돌려준 pom의 자리표시자를 지금 스냅샷 pom의 비밀값으로 되돌린다. 보낸 뒤 재스캔으로 pom이 바뀌었거나 AI가
+     * 자리표시자를 바꿨으면 되돌리지 못한 것이 남는다 — 엉뚱한 값을 넣지 않고 그대로 두며, 화면에서 사람이 알아보게 로그를 남긴다.
+     */
+    private String restoreSecrets(Long appId, String pomXml) {
+        if (pomXml == null) return null;
+        String original = scanSnapshotRepository.findByAppId(appId).map(ScanSnapshot::getPomXml).orElse(null);
+        SecretMasker.Unmasked restored = SecretMasker.unmask(pomXml, SecretMasker.mask(original).secrets());
+        if (restored.remainingPlaceholders() > 0) {
+            log.warn("appId={} fix-plan pom.xml의 가린 값 {}개를 되돌리지 못함(보낸 뒤 pom이 바뀌었거나 AI가 자리표시자를 바꿈) — 자리표시자 그대로 저장",
+                    appId, restored.remainingPlaceholders());
+        }
+        return restored.text();
+    }
+
     private List<FixPlanChange> toChanges(FixPlan plan, List<FixPlanRequest.Change> requested) {
         List<FixPlanRequest.Change> valid = validChanges(requested);
         int dropped = (requested == null ? 0 : requested.size()) - valid.size();

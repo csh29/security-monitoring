@@ -13,11 +13,6 @@
         .summary .empty{ padding:14px; color:var(--text-sub); font-size:13px; }
         /* pom.xml 전문·판단 근거는 길어서 기본 모달 폭(560px)으로는 줄이 다 꺾인다. */
         .text-modal{ max-width:960px; }
-        .text-modal pre{
-            font-family:Consolas,"D2Coding",monospace; font-size:12px; line-height:1.6;
-            white-space:pre-wrap; word-break:break-word; margin:0;
-            padding:12px; background:var(--bg); border:1px solid var(--line); border-radius:var(--radius-box);
-        }
         .impact-modal{ max-width:760px; }
         .impact-modal .detail-list{ grid-template-columns:130px 1fr; } /* "호환성 위험 (AI)" 라벨이 한 줄에 들어가게 */
         /* AI 판단 값 안내. 표·그리드와 같은 줄에 놓이므로 제목(panel-title)보다 작고 옅게. */
@@ -68,7 +63,7 @@
 <div class="modal-backdrop" id="textModalBackdrop">
     <div class="modal text-modal">
         <h3 id="textModalTitle"></h3>
-        <pre id="textModalBody"></pre>
+        <pre id="textModalBody" class="code-block"></pre>
         <div class="modal-actions">
             <button type="button" class="btn" id="textModalCopy">복사</button>
             <button type="button" class="btn" id="textModalClose">닫기</button>

@@ -1,0 +1,18 @@
+# 행안부 SW 보안약점 진단가이드 — 보안기능 / 적절하지 않은 난수 값 사용 (CWE-330)
+rules:
+  # java.util.Random·Math.random은 예측 가능하다. 화면용 무작위(색상·샘플 데이터)까지 잡히므로 오탐이 섞인다 — 1단계에서 비율을 본다.
+  - id: kisa-insecure-random
+    languages: [java]
+    pattern-either:
+      - pattern: new java.util.Random(...)
+      - pattern: Math.random()
+      - pattern: java.util.concurrent.ThreadLocalRandom.current()
+      - pattern: org.apache.commons.lang3.RandomStringUtils.$M(...)
+    paths:
+      exclude: ["**/test/**", "**/*Test.java"]
+    message: "예측 가능한 난수입니다. 토큰·비밀번호·인증번호·세션 값이면 java.security.SecureRandom을 쓰세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 보안기능
+      kisa_name: 적절하지 않은 난수 값 사용
+      cwe: CWE-330

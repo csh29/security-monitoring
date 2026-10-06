@@ -5,6 +5,7 @@ import com.sjinc.cvemonitor.dto.program.PageButtonView;
 import com.sjinc.cvemonitor.repository.ProgramRepository;
 import com.sjinc.cvemonitor.security.ProgramAccessGuard;
 import com.sjinc.cvemonitor.service.program.ProgramService;
+import com.sjinc.cvemonitor.service.securecode.SecureCodeFindingService;
 import com.sjinc.cvemonitor.service.vulnerability.VulnerabilityService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
@@ -30,6 +31,7 @@ public class ViewController {
     private final ProgramRepository programRepository;
     private final ProgramAccessGuard programAccess;
     private final ProgramService programService;
+    private final SecureCodeFindingService secureCodeFindingService;
 
     /** 대시보드 막대그래프에 보여줄 프로젝트 수. */
     private static final int DASHBOARD_TOP_APPS = 5;
@@ -56,6 +58,8 @@ public class ViewController {
         model.addAttribute("openCriticalRate", vulnerabilityService.getOpenCriticalRate());
         model.addAttribute("appVulnerabilityCounts",
                 vulnerabilityService.getTopOpenVulnerabilityCountsByApp(DASHBOARD_TOP_APPS));
+        // 시큐어코딩 점검은 라이브러리 취약점과 분리된 기능이라 홈에서도 구역을 나눠 같은 모양으로 보인다.
+        model.addAttribute("secureCode", secureCodeFindingService.getDashboard(DASHBOARD_TOP_APPS));
         return "home";
     }
 

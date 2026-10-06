@@ -1,0 +1,52 @@
+# 행안부 SW 보안약점 진단가이드 — 보안기능 / 충분하지 않은 키 길이 사용(CWE-326), 솔트 없이 일방향 해쉬 함수 사용(CWE-759)
+# 취약한 알고리즘(DES·MD5 등) 자체는 weak-crypto.yml이 본다. 여기는 알고리즘은 괜찮은데 쓰는 방법이 약한 경우다.
+rules:
+  # RSA·DSA·DH 키가 2048비트 미만. 행안부 가이드 기준 RSA는 2048비트 이상.
+  - id: kisa-weak-key-length
+    languages: [java]
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              $G = KeyPairGenerator.getInstance("$ALG", ...);
+              ...
+          - pattern-inside: |
+              $T $G = KeyPairGenerator.getInstance("$ALG", ...);
+              ...
+      - metavariable-regex:
+          metavariable: $ALG
+          regex: (?i)^(RSA|DSA|DH|DiffieHellman)$
+      - pattern-either:
+          - pattern: $G.initialize($BITS)
+          - pattern: $G.initialize($BITS, ...)
+      - metavariable-comparison:
+          metavariable: $BITS
+          comparison: $BITS < 2048
+    message: "RSA·DSA·DH 키 길이가 2048비트 미만입니다. 짧은 키는 계산으로 풀 수 있습니다. 2048비트 이상(가능하면 3072)을 쓰세요."
+    severity: ERROR
+    metadata:
+      kisa_category: 보안기능
+      kisa_name: 충분하지 않은 키 길이 사용
+      cwe: CWE-326
+
+  # 비밀번호처럼 보이는 값을 솔트 없이 해시한다. 같은 비밀번호는 같은 해시가 되어 레인보우 테이블로 풀린다.
+  # 이름으로 비밀번호를 가리므로 다른 값의 해시(파일 체크섬 등)는 잡지 않는다.
+  - id: kisa-hash-without-salt
+    languages: [java]
+    patterns:
+      - pattern-either:
+          - pattern: (MessageDigest $MD).digest($P.getBytes(...))
+          - pattern: (MessageDigest $MD).digest($P.getBytes())
+          - pattern: (MessageDigest $MD).update($P.getBytes(...))
+          - pattern: (MessageDigest $MD).update($P.getBytes())
+          - pattern: DigestUtils.$F($P)
+          - pattern: org.apache.commons.codec.digest.DigestUtils.$F($P)
+          - pattern: Hashing.sha256().hashString($P, ...)
+      - metavariable-regex:
+          metavariable: $P
+          regex: (?i).*(password|passwd|pwd|passcode|비밀번호).*
+    message: "비밀번호를 솔트 없이 해시합니다. 같은 비밀번호는 같은 값이 되어 사전·레인보우 테이블로 풀립니다. BCrypt·PBKDF2·Argon2(Spring Security PasswordEncoder)를 쓰세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 보안기능
+      kisa_name: 솔트 없이 일방향 해쉬 함수 사용
+      cwe: CWE-759

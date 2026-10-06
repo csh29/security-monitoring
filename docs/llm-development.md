@@ -42,6 +42,40 @@ py -m pip install -r ../ai/requirements.txt
 py -m unittest test_release_notes
 ```
 
+시큐어코딩 점검 규칙(`securecode/rules/*.yml`)을 고쳤으면 규칙 옆 예제 파일로 회귀 테스트를 돌린다. 규칙 파일과 같은 이름의
+예제(`sql-injection.java` 등)에 걸려야 할 줄은 `ruleid: <규칙id>`, 걸리면 안 되는 줄은 `ok: <규칙id>` 주석을 바로 윗줄에 단다.
+`semgrep --test .`로 한꺼번에 돌리면 Windows에서 `~/.semgrep/settings.yml` 잠금(PermissionError)으로 전체가 죽거나 일부가 조용히 빠진다
+(`SEMGREP_SETTINGS_FILE`·`-j 1`로도 안 된다). 그래서 규칙 파일·예제 파일마다 하나씩 순서대로 돌리는 `test_rules.py`를 쓴다
+(semgrep이 PATH에 없으면 파이썬 Scripts 폴더에서 찾는다). 결과 끝의 "N/N 규칙 파일 통과"를 본다.
+
+```bash
+cd ../securecode
+py test_rules.py
+```
+
+- 테스트 주석(`ruleid:`·`ok:`)은 **`//`·`<!-- -->`·`#` 한 줄 주석**으로 단다. 블록 주석 안의 ` * ruleid:`나 JSX의 `{/* ruleid: */}`는
+  semgrep --test가 인식하지 못해 "incorrect lines"로 실패한다(탐지는 정상인데 테스트만 깨진다).
+- taint 규칙의 출처에는 `HttpServletRequest` 값과 Spring 요청 파라미터(`@RequestParam`·`@PathVariable`·`@RequestHeader`·`@RequestBody`)를 함께 둔다.
+  사내 시스템은 `@RequestBody Map`으로 받아 `param.get("x")`로 꺼내는 경우가 대부분이라, request만 보면 거의 걸리지 않는다.
+  한 파일 안 여러 규칙은 YAML 앵커(`pattern-sources: &request-sources` / `*request-sources`)로 같은 출처를 쓴다(`injection.yml`).
+
+Semgrep은 `securecode/requirements.txt`로 버전을 고정한다. 올릴 때는 그 파일을 바꾸고, 규칙 테스트와 실제 앱 점검 건수가 그대로인지 확인한다
+(엔진 버전이 바뀌면 같은 규칙이라도 탐지가 달라질 수 있다 — 점검 이력에 엔진 버전이 남는다).
+
+```bash
+py -m pip install -r ../securecode/requirements.txt
+```
+
+- 규칙 하나에 언어가 다른 규칙(java + generic)을 섞지 않는다 — `--test`가 같은 이름의 예제를 그 파일의 모든 언어로 파싱해서
+  구문 오류가 난다(그래서 `hardcoded-secret.yml`과 `hardcoded-secret-config.yml`을 나눴다).
+- `metavariable-regex`는 값의 **처음부터** 맞춘다(re.match). 중간 문자열을 찾으려면 `.*`로 시작한다.
+- 규칙 id에 점(.)을 넣지 않는다 — 결과의 `check_id`에서 마지막 점 뒤를 규칙 id로 쓴다(SemgrepReportParser).
+- MyBatis `${}` 연계 추적(`MybatisDollarTracer`)에 **특정 시스템의 어노테이션·키·클래스 이름을 넣지 않는다.** 시스템마다 다른 장치(세션 값을 요청 맵에
+  덮어쓰는 AOP, 로그인 정보 객체 이름)는 `securecode/trace-rules.yml`에 항목으로 추가한다. 새 시스템을 점검 대상에 넣으면 그 시스템이 로그인 정보를
+  요청 값에 어떻게 넣는지 확인하고 항목을 추가한다 — 없으면 그 값이 클라이언트 값으로 판정된다(위험한 쪽이라 놓치지는 않지만 오탐이 된다).
+  이 파일은 `rules/` 밖에 둔다(안에 두면 Semgrep이 규칙으로 읽는다).
+- 비밀값 규칙의 id는 `hardcoded-secret`을 포함해야 코드 조각·지문에서 값이 가려진다(SecureCodeSnippetBuilder.isSecretRule).
+
 ---
 
 ## 2. 개발 원칙 — 주먹구구식으로 개발하지 않는다
@@ -154,6 +188,7 @@ DB 스키마 변경, 대량 삭제, 외부로 나가는 호출(Git push, 외부 
 | `/api/ai/**`는 `X-Internal-Token` 헤더로 자체 인증 | 세션 없는 파이썬 배치 전용 경로 |
 | 초기 관리자 비밀번호는 기동 시 무작위 생성 후 로그로만 노출 | 소스에 평문 비밀번호를 두지 않기 위함 |
 | 화면(`/program/{*path}`)도 Program 권한을 검사 | API만 막으면 "메뉴엔 없는데 주소로는 열린다"가 되어 접근 제어 기준이 화면과 API에서 갈린다 |
+| AI로 저장소 원문을 보낼 때는 `SecretMasker`로 가린다 | 지금은 fix-plan의 pom.xml 하나. 비밀번호·토큰·계정 든 URL이 Claude API로 나가고, 돌아온 pom이 DB·화면에 다시 저장된다. **새로 원문을 AI 입력에 넣으면 같은 방식으로 가리고 되돌린다.** 소스 코드는 AI로 보내지 않는다(사내 정책) |
 | 역할(`role`)은 공통코드 `ROLE` 그룹 값만 허용 | 임의 문자열이 저장되면 `User.roles(...)`에서 터져 **그 계정의 로그인만 나중에 깨진다** |
 
 ### 시크릿
@@ -173,4 +208,4 @@ DB 스키마 변경, 대량 삭제, 외부로 나가는 호출(Git push, 외부 
 - [ ] 판단 로직을 넣었다면 Spring 없이 테스트 가능한 순수 클래스로 분리하고 테스트를 붙였는가?
 - [ ] 비자명한 선택에 "왜"를 설명하는 한국어 주석을 남겼는가?
 - [ ] 구조를 바꿨다면 관련 주석 / `backend/README.md` / `docs/llm-analysis.md`를 같이 고쳤는가?
-- [ ] `./mvnw test`가 통과하는가? (`ai/release_notes.py`를 고쳤으면 `py -m unittest test_release_notes`도)
+- [ ] `./mvnw test`가 통과하는가? (`ai/release_notes.py`를 고쳤으면 `py -m unittest test_release_notes`도, 코드 점검 규칙을 고쳤으면 `py test_rules.py`(securecode 폴더)도)

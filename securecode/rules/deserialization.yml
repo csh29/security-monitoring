@@ -1,0 +1,46 @@
+# 행안부 SW 보안약점 진단가이드 — 코드오류 / 신뢰할 수 없는 데이터의 역직렬화 (CWE-502)
+#
+# Java 직렬화·XMLDecoder·다형성 역직렬화는 데이터를 읽는 것만으로 클래스를 만들고 코드를 실행할 수 있다(가젯 체인).
+rules:
+  # 자바 직렬화 객체를 읽는다. 읽는 데이터가 외부(요청·업로드·외부 연동)에서 오는지는 패턴으로 모른다 — 지점마다 확인한다.
+  # ObjectInputFilter(setObjectInputFilter)로 허용 클래스를 제한하면 뺀다.
+  - id: kisa-deserialization-object-input
+    languages: [java]
+    patterns:
+      - pattern-either:
+          - pattern: (ObjectInputStream $IN).readObject()
+          - pattern: (ObjectInputStream $IN).readUnshared()
+      - pattern-not-inside: |
+          $RET $M(...) { ... $IN.setObjectInputFilter(...); ... }
+    message: "자바 직렬화 객체를 읽습니다. 외부에서 온 데이터면 읽는 순간 임의 코드가 실행될 수 있습니다. JSON 등 데이터 형식으로 바꾸거나 ObjectInputFilter로 허용 클래스를 제한하세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 코드오류
+      kisa_name: 신뢰할 수 없는 데이터의 역직렬화
+      cwe: CWE-502
+
+  # 데이터 안의 타입 정보로 아무 클래스나 만든다 — 입력이 외부면 거의 확실한 원격 코드 실행이라 ERROR.
+  - id: kisa-deserialization-polymorphic
+    languages: [java]
+    pattern-either:
+      - pattern: new XMLDecoder(...)
+      - pattern: (ObjectMapper $M).enableDefaultTyping(...)
+      - pattern: (ObjectMapper $M).activateDefaultTyping(...)
+      - pattern: |
+          @JsonTypeInfo(use = JsonTypeInfo.Id.CLASS, ...)
+          class $C { ... }
+      - pattern: |
+          @JsonTypeInfo(use = Id.CLASS, ...)
+          class $C { ... }
+      - patterns:
+          - pattern: (XStream $X).fromXML(...)
+          - pattern-not-inside: |
+              $RET $M(...) { ... $X.allowTypes(...); ... }
+          - pattern-not-inside: |
+              $RET $M(...) { ... $X.addPermission(...); ... }
+    message: "데이터 안의 클래스 이름으로 객체를 만드는 역직렬화입니다(XMLDecoder·Jackson 기본 타이핑·@JsonTypeInfo(Id.CLASS)·제한 없는 XStream). 허용 타입 목록을 두거나 구체 타입으로 읽으세요."
+    severity: ERROR
+    metadata:
+      kisa_category: 코드오류
+      kisa_name: 신뢰할 수 없는 데이터의 역직렬화
+      cwe: CWE-502
