@@ -14,6 +14,9 @@ public interface SecureCodeFindingRepository extends JpaRepository<SecureCodeFin
     /** 재점검 비교용 — 처리여부와 무관하게 그 앱의 전부(사람이 오탐 처리한 건도 지문으로 찾아야 한다). */
     List<SecureCodeFinding> findByAppId(Long appId);
 
+    /** AI 판별 대기열(SecureCodeAiReviewService) — OPEN만 본다. 등급·연계 추적 조건은 서비스에서 거른다. */
+    List<SecureCodeFinding> findByStatus(String status);
+
     /** 화면 조회. appId·status가 null이면 그 조건 없이. */
     @Query("select f from SecureCodeFinding f where (:appId is null or f.appId = :appId) "
             + "and (:status is null or f.status = :status) "

@@ -9,6 +9,8 @@ import com.sjinc.securitymonitor.dto.securecode.SecureCodeScanResult;
 import com.sjinc.securitymonitor.dto.securecode.SemgrepReport;
 import com.sjinc.securitymonitor.repository.AppRepository;
 import com.sjinc.securitymonitor.repository.SecureCodeScanRepository;
+import com.sjinc.securitymonitor.service.ai.AiAssessmentTriggerService;
+import com.sjinc.securitymonitor.service.ai.SecureCodeAiReviewService;
 import com.sjinc.securitymonitor.service.git.GitCloneService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,7 +33,8 @@ import java.util.stream.Collectors;
  * 시큐어코딩 점검 1회를 처음부터 끝까지 잇는다: 등록 확인 → clone → Semgrep → 코드 조각·지문 → 기존 탐지와 비교·저장 → 이력.
  *
  * <p>라이브러리 스캔(ScanOrchestrationService)과 서로 부르지 않는다. 공유하는 것은 앱 등록과 clone뿐이다 — 한쪽이 실패하거나
- * 바뀌어도 다른 쪽에 영향이 없게 하기 위함이다. AI는 쓰지 않는다(1단계).
+ * 바뀌어도 다른 쪽에 영향이 없게 하기 위함이다. 판정은 결정론(Semgrep + 연계 추적)으로 끝내고, 그래도 못 정한 높은 등급만
+ * 점검 뒤 AI 배치가 판별한다(SecureCodeAiReviewService — 여기서는 보낼 코드 문맥을 만들고 배치를 띄우기만 한다).
  */
 @Slf4j
 @Service
@@ -46,6 +49,8 @@ public class SecureCodeScanService {
     private final GitCloneService gitCloneService;
     private final SemgrepRunner semgrepRunner;
     private final ObjectMapper objectMapper;
+    private final SecureCodeAiReviewService aiReviewService;
+    private final AiAssessmentTriggerService aiAssessmentTriggerService;
 
     /**
      * 한 번에 하나만 돈다. Semgrep은 메모리를 많이 쓰고, 여러 개가 동시에 돌면 사용자 홈의 Semgrep 설정 파일
@@ -106,9 +111,10 @@ public class SecureCodeScanService {
         try {
             SemgrepReport report = new SemgrepReportParser(objectMapper)
                     .parse(semgrepRunner.run(projectDir.toPath(), rules));
-            List<DetectedFinding> detected = new SecureCodeSnippetBuilder(projectDir.toPath()).build(report.matches());
+            SecureCodeSnippetBuilder snippetBuilder = new SecureCodeSnippetBuilder(projectDir.toPath());
+            List<DetectedFinding> detected = snippetBuilder.build(report.matches());
             TraceOutcome trace = traceFindings(app, projectDir.toPath(), detected, traceRules);
-            detected = trace.findings();
+            detected = attachAiContext(app, snippetBuilder, trace.findings());
 
             SecureCodeApplyResult applied = findingService.applyScan(
                     app.getId(), detected, report.failedFiles(), ruleSet.ruleIds());
@@ -121,6 +127,7 @@ public class SecureCodeScanService {
             }
 
             succeedHistory(history, report, detected.size(), applied, ruleSet.version());
+            triggerAiReviewIfNeeded(app);
             return new SecureCodeScanResult(app.getSystemName(), report.scannedFileCount(), detected.size(),
                     applied.newCount(), applied.resolvedCount(), report.failedFiles().size(), trace.note());
         } finally {
@@ -200,6 +207,55 @@ public class SecureCodeScanService {
             }
         }
         return new TraceOutcome(findings, notes.isEmpty() ? null : String.join("\n", notes));
+    }
+
+    /**
+     * AI 판별 대상(결정론으로 못 정한 높은 등급)에 보낼 코드 문맥을 붙인다. 등급은 연계 추적이 다시 매긴 뒤라야 정해져서 추적 뒤에 한다.
+     * clone이 지워지기 전에만 만들 수 있다. 부가 기능이라 실패해도 점검을 실패시키지 않는다 — 문맥이 없으면 화면용 조각을 보낸다.
+     */
+    private List<DetectedFinding> attachAiContext(App app, SecureCodeSnippetBuilder snippetBuilder, List<DetectedFinding> findings) {
+        List<DetectedFinding> result = new ArrayList<>(findings.size());
+        int attached = 0;
+        for (DetectedFinding f : findings) {
+            if (!aiReviewService.isTarget(f.severity(), f.traceSafety())) {
+                result.add(f);
+                continue;
+            }
+            try {
+                result.add(snippetBuilder.withAiContext(f));
+                attached++;
+            } catch (Exception e) {
+                log.warn("[{}] AI 판별용 코드 문맥을 만들지 못했습니다({}:{}) — 화면용 조각을 보냅니다: {}",
+                        app.getSystemName(), f.filePath(), f.startLine(), e.toString());
+                result.add(f);
+            }
+        }
+        if (attached > 0) {
+            log.info("[{}] AI 판별 대상 {}건에 코드 문맥을 붙임", app.getSystemName(), attached);
+        }
+        return result;
+    }
+
+    /**
+     * 판별 대기가 있으면 AI 배치를 띄운다. 라이브러리 스캔과 같은 자동 실행 스위치(공통코드 AI_CONFIG/AUTO_TRIGGER)를 따른다 — 배치는
+     * Claude API를 호출해 과금된다. 이미 떠 있으면 triggerAsync가 건너뛰고, 남은 대기는 다음 배치가 가져간다.
+     * 실패해도 점검 결과는 이미 저장됐으니 로그만 남긴다.
+     */
+    private void triggerAiReviewIfNeeded(App app) {
+        try {
+            if (!aiAssessmentTriggerService.isAutoTriggerEnabled()) {
+                log.info("[{}] 공통코드 {}/{}가 꺼져 있어 코드 점검 후 AI 판별 배치를 띄우지 않습니다.", app.getSystemName(),
+                        AiAssessmentTriggerService.CONFIG_GROUP, AiAssessmentTriggerService.AUTO_TRIGGER_CODE);
+                return;
+            }
+            int pending = aiReviewService.getPendingTargets().size();
+            if (pending > 0) {
+                log.info("[{}] AI 판별 대기 {}건(전체 앱) — AI 배치를 띄웁니다.", app.getSystemName(), pending);
+                aiAssessmentTriggerService.triggerAsync();
+            }
+        } catch (Exception e) {
+            log.warn("[{}] AI 판별 배치 실행 판단/시작 실패(점검 결과는 저장됨): {}", app.getSystemName(), e.toString());
+        }
     }
 
     /**

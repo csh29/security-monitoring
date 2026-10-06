@@ -1,5 +1,10 @@
 package com.sjinc.securitymonitor.service.securecode;
 
+import com.github.javaparser.JavaParser;
+import com.github.javaparser.ParseResult;
+import com.github.javaparser.ParserConfiguration;
+import com.github.javaparser.ast.CompilationUnit;
+import com.github.javaparser.ast.body.CallableDeclaration;
 import com.sjinc.securitymonitor.dto.securecode.DetectedFinding;
 import com.sjinc.securitymonitor.dto.securecode.SemgrepMatch;
 
@@ -18,6 +23,7 @@ import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 /**
@@ -32,6 +38,15 @@ public class SecureCodeSnippetBuilder {
     /** 한 줄이 이보다 길면 자른다 — 압축된 JS 한 줄이 수십 KB라 화면·DB를 채운다. */
     static final int MAX_LINE_LENGTH = 300;
 
+    /**
+     * AI 판별 문맥의 최대 줄 수. 걸린 줄을 감싼 메서드를 통째로 보내는 게 기본인데(입력이 어디서 와서 어떻게 검증되는지가 대개
+     * 그 메서드 안에 있다), 수백 줄짜리 서비스 메서드는 이 길이만큼 걸린 줄 주변만 보낸다 — 보내는 코드를 판별에 필요한 만큼으로 줄인다.
+     */
+    static final int AI_CONTEXT_MAX_LINES = 80;
+
+    /** 감싼 메서드가 없을 때(자바가 아닌 파일, 구문 오류, 필드 초기화식) 걸린 줄 앞뒤로 보낼 줄 수. */
+    static final int AI_CONTEXT_LINES = 15;
+
     /** 사내 레거시 소스는 EUC-KR(MS949)로 저장된 경우가 많다. UTF-8로 읽다 깨지면 이걸로 다시 읽는다. */
     private static final Charset MS949 = Charset.forName("MS949");
 
@@ -45,6 +60,7 @@ public class SecureCodeSnippetBuilder {
 
     private final Path projectDir;
     private final Map<String, List<String>> linesByPath = new HashMap<>();
+    private final Map<String, Optional<CompilationUnit>> unitsByPath = new HashMap<>();
 
     public SecureCodeSnippetBuilder(Path projectDir) {
         this.projectDir = projectDir.toAbsolutePath().normalize();
@@ -73,9 +89,56 @@ public class SecureCodeSnippetBuilder {
                     fingerprint(key + "\n" + occurrence),
                     match.ruleId(), match.kisaCategory(), match.kisaName(), match.cwe(), match.severity(),
                     match.filePath(), match.startLine(), match.endLine(), match.message(),
-                    snippet, snippetStart, null, null));
+                    snippet, snippetStart, null, null, null, null));
         }
         return detected;
+    }
+
+    /**
+     * AI 판별에 보낼 코드 문맥을 붙인다. clone이 지워지기 전에, AI 판별 대상인 탐지에만 부른다(SecureCodeScanService).
+     * 화면용 조각(앞뒤 5줄)으로는 입력이 어디서 오는지·어디서 검증하는지가 잘려서 AI가 판단할 근거가 없다.
+     * 비밀값 규칙은 조각과 같은 기준으로 가린다. 그 밖의 비밀값은 AI로 보내기 직전에 한 번 더 가린다(SecureCodeAiReviewService).
+     */
+    public DetectedFinding withAiContext(DetectedFinding finding) throws IOException {
+        List<String> lines = readLines(finding.filePath());
+        if (lines.isEmpty()) return finding;
+        int start = finding.startLine(), end = Math.max(finding.startLine(), finding.endLine());
+
+        int[] method = enclosingCallable(finding.filePath(), lines, start, end);
+        int from = method != null ? method[0] : start - AI_CONTEXT_LINES;
+        int to = method != null ? method[1] : end + AI_CONTEXT_LINES;
+        if (to - from + 1 > AI_CONTEXT_MAX_LINES) {
+            // 걸린 줄이 가운데 오게 자른다. 메서드 끝에 닿으면 그만큼 앞으로 당긴다.
+            int before = Math.max(0, (AI_CONTEXT_MAX_LINES - (end - start + 1)) / 2);
+            int newFrom = Math.max(from, start - before);
+            int newTo = Math.min(to, newFrom + AI_CONTEXT_MAX_LINES - 1);
+            from = Math.max(from, Math.min(newFrom, newTo - AI_CONTEXT_MAX_LINES + 1));
+            to = newTo;
+        }
+        from = Math.max(1, from);
+        to = Math.min(lines.size(), to);
+        String context = String.join("\n", mask(slice(lines, from, to), isSecretRule(finding.ruleId())));
+        return finding.withAiContext(context, from);
+    }
+
+    /** 걸린 줄을 감싼 가장 안쪽 메서드·생성자의 줄 범위. 자바가 아니거나 구문 분석에 실패하면 null. */
+    private int[] enclosingCallable(String path, List<String> lines, int start, int end) {
+        if (!path.endsWith(".java")) return null;
+        Optional<CompilationUnit> unit = unitsByPath.computeIfAbsent(path, k -> {
+            ParseResult<CompilationUnit> result = new JavaParser(new ParserConfiguration()
+                    .setLanguageLevel(ParserConfiguration.LanguageLevel.JAVA_17)
+                    .setAttributeComments(false)).parse(String.join("\n", lines));
+            return result.getResult();
+        });
+        int[] best = null;
+        for (CallableDeclaration<?> callable : unit.map(u -> u.findAll(CallableDeclaration.class)).orElse(List.of())) {
+            if (callable.getRange().isEmpty()) continue;
+            int from = callable.getRange().get().begin.line, to = callable.getRange().get().end.line;
+            if (from <= start && to >= end && (best == null || to - from < best[1] - best[0])) {
+                best = new int[]{from, to};
+            }
+        }
+        return best;
     }
 
     /** 하드코드된 비밀값 규칙(kisa-hardcoded-secret-*)은 조각·지문 모두 값을 가린 뒤 쓴다. */

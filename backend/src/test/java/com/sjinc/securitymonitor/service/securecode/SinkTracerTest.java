@@ -116,6 +116,6 @@ class SinkTracerTest {
 
     private static DetectedFinding finding(String ruleId, int line) {
         return new DetectedFinding("fp" + line, ruleId, "분류", "항목", "CWE-1", "MEDIUM", "src/main/java/p/S.java",
-                line, line, "메시지", "code", line, null, null);
+                line, line, "메시지", "code", line, null, null, null, null);
     }
 }

@@ -6,12 +6,15 @@ import com.sjinc.securitymonitor.dto.ai.AppFixPlanTarget;
 import com.sjinc.securitymonitor.dto.ai.CveSummaryRequest;
 import com.sjinc.securitymonitor.dto.ai.CveSummaryTarget;
 import com.sjinc.securitymonitor.dto.ai.FixPlanRequest;
+import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewRequest;
+import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewTarget;
 import com.sjinc.securitymonitor.dto.ai.UpgradeImpactRequest;
 import com.sjinc.securitymonitor.dto.ai.UpgradeImpactTarget;
 import com.sjinc.securitymonitor.dto.vulnerability.VulnerabilityInfo;
 import com.sjinc.securitymonitor.service.ai.AiAssessmentTriggerService;
 import com.sjinc.securitymonitor.service.ai.CveSummaryService;
 import com.sjinc.securitymonitor.service.ai.FixPlanService;
+import com.sjinc.securitymonitor.service.ai.SecureCodeAiReviewService;
 import com.sjinc.securitymonitor.service.ai.UpgradeImpactService;
 import com.sjinc.securitymonitor.service.vulnerability.VulnerabilityService;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +48,7 @@ public class AiAssessmentController {
     private final FixPlanService fixPlanService;
     private final CveSummaryService cveSummaryService;
     private final UpgradeImpactService upgradeImpactService;
+    private final SecureCodeAiReviewService secureCodeAiReviewService;
     private final AiAssessmentTriggerService aiAssessmentTriggerService;
 
     @Value("${ai.internal.token}")
@@ -102,6 +106,20 @@ public class AiAssessmentController {
                              @RequestBody UpgradeImpactRequest request) {
         verifyToken(token);
         upgradeImpactService.saveImpact(request);
+    }
+
+    @GetMapping("/secure-code/pending")
+    public List<SecureCodeReviewTarget> getPendingSecureCodeReviews(@RequestHeader("X-Internal-Token") String token) {
+        verifyToken(token);
+        return secureCodeAiReviewService.getPendingTargets();
+    }
+
+    @PostMapping("/secure-code/{id}/review")
+    public void submitSecureCodeReview(@PathVariable Long id,
+                                       @RequestHeader("X-Internal-Token") String token,
+                                       @RequestBody SecureCodeReviewRequest request) {
+        verifyToken(token);
+        secureCodeAiReviewService.saveReview(id, request);
     }
 
     @GetMapping("/status")

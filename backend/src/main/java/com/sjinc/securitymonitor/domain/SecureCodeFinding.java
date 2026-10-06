@@ -109,6 +109,37 @@ public class SecureCodeFinding {
     @Column(name = "trace_evidence", columnDefinition = "CLOB")
     private String traceEvidence;
 
+    /**
+     * AI 판별에 보낸(보낼) 코드 문맥 — 걸린 줄을 감싼 메서드(SecureCodeSnippetBuilder.withAiContext). clone은 점검이 끝나면 지워지므로
+     * 점검 때 만들어 둔다. AI 판별 대상(결정론으로 못 정한 높은 등급)일 때만 채운다.
+     */
+    @Lob
+    @Column(name = "ai_context", columnDefinition = "CLOB")
+    private String aiContext;
+
+    @Column(name = "ai_context_start_line")
+    private Integer aiContextStartLine;
+
+    /**
+     * AI 판별 결과(VULNERABLE/NOT_VULNERABLE/UNCERTAIN). 화면에 참고로만 보여주고 처리여부는 바꾸지 않는다 — 오탐 처리는 사람이 한다.
+     * 판별에 쓴 입력(코드 문맥·연계 추적 근거)의 해시를 aiInputHash에 같이 둔다. 재점검으로 입력이 바뀌면 해시가 달라져
+     * 그 판별은 화면에서 숨기고 다시 대기가 된다(SecureCodeAiReviewService).
+     */
+    @Column(name = "ai_verdict", length = 20)
+    private String aiVerdict;
+
+    @Column(name = "ai_confidence", length = 10)
+    private String aiConfidence;
+
+    @Column(name = "ai_reasoning", length = 2000)
+    private String aiReasoning;
+
+    @Column(name = "ai_input_hash", length = 64)
+    private String aiInputHash;
+
+    @Column(name = "ai_reviewed_at")
+    private LocalDateTime aiReviewedAt;
+
     @Column(nullable = false, length = 20)
     private String status;
 
@@ -184,6 +215,15 @@ public class SecureCodeFinding {
         statusChangedBy = changedBy;
     }
 
+    /** AI 판별 결과를 저장한다. 값 검증은 SecureCodeAiReviewService가 한다. */
+    public void applyAiReview(String verdict, String confidence, String reasoning, String inputHash, LocalDateTime now) {
+        aiVerdict = verdict;
+        aiConfidence = confidence;
+        aiReasoning = reasoning;
+        aiInputHash = inputHash;
+        aiReviewedAt = now;
+    }
+
     private void applyDetected(DetectedFinding detected, LocalDateTime now) {
         ruleId = detected.ruleId();
         kisaCategory = detected.kisaCategory();
@@ -199,6 +239,9 @@ public class SecureCodeFinding {
         // 재점검마다 최신 판정으로 바꾼다 — 우회 경로를 막는 등 연계 코드가 바뀌면 ${} 줄이 그대로여도 판정이 달라진다.
         traceSafety = detected.traceSafety();
         traceEvidence = detected.traceEvidence();
+        // AI 판별 결과는 지우지 않는다 — 입력이 그대로면 다시 보낼 필요가 없고, 바뀌었으면 해시가 달라 숨겨지고 다시 대기가 된다.
+        aiContext = detected.aiContext();
+        aiContextStartLine = detected.aiContextStartLine();
         lastDetectedAt = now;
     }
 }

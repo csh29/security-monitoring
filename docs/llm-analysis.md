@@ -11,7 +11,7 @@
 등록된 Git 저장소의 보안취약점을 점검·관리하는 **보안취약점 모니터링 시스템**(프로젝트 이름 `security-monitoring`)이다. 두 기능으로 나뉜다.
 
 - **라이브러리 취약점(CVE):** clone → 의존성 추출 → 취약점 DB 조회 → 판정 → pom.xml 수정안 생성까지를 한 줄로 잇는다(아래 흐름).
-- **시큐어코딩 점검:** 같은 저장소의 소스를 행안부 SW 보안약점 규칙(Semgrep)으로 점검하고 연계 추적으로 판정한다(3장 "시큐어코딩 점검").
+- **시큐어코딩 점검:** 같은 저장소의 소스를 행안부 SW 보안약점 규칙(Semgrep)으로 점검하고 연계 추적으로 판정한다. 그래도 못 정한 높은 등급만 AI가 코드를 보고 판별한다(3장 "시큐어코딩 점검", 4장 "코드 점검 AI 판별").
 
 처음엔 CVE 모니터링(`cve-monitoring`, 패키지 `com.sjinc.cvemonitor`)으로 시작해 2026-10-06에 이름을 바꿨다
 (패키지 `com.sjinc.securitymonitor`, `SecurityMonitorApplication`, 배치 환경변수 `SECURITY_MONITOR_*`).
@@ -29,7 +29,7 @@ H2 DB 파일(`data/cvemonitor.mv.db`)만 옛 이름이다 — 이름을 바꾸�
 | --- | --- |
 | `backend/` | Spring Boot 3.3.4 / Java 17 / Maven. 서버 + 화면(Thymeleaf) 전부 |
 | `securecode/rules/` | 시큐어코딩 점검 규칙(Semgrep YAML) + 규칙별 테스트 예제. 라이브러리 취약점과 분리된 기능(아래 "시큐어코딩 점검")이 쓴다 |
-| `ai/` | 파이썬 배치(`vuln_assessor.py`). 스캔이 끝나면 할 일이 있을 때 서버가 띄우고(`AiAssessmentTriggerService`, 아래 4장), 사람이 직접 실행해도 된다. 어느 쪽이든 **배치가 드라이버다** — 배치가 `/api/ai/**`를 호출해 대기 중인 취약점·fix-plan·설명 요약·영향 분석을 스스로 가져가고 결과를 되돌려준다. 자바는 띄우기만 하고 결과를 기다리지 않는다 |
+| `ai/` | 파이썬 배치(`vuln_assessor.py`). 스캔이 끝나면 할 일이 있을 때 서버가 띄우고(`AiAssessmentTriggerService`, 아래 4장), 사람이 직접 실행해도 된다. 어느 쪽이든 **배치가 드라이버다** — 배치가 `/api/ai/**`를 호출해 대기 중인 취약점·fix-plan·설명 요약·영향 분석·코드 점검 판별을 스스로 가져가고 결과를 되돌려준다. 자바는 띄우기만 하고 결과를 기다리지 않는다 |
 
 DB는 H2 **파일 DB**(`jdbc:h2:file:./data/cvemonitor` → 서버를 띄운 `backend/data/cvemonitor.mv.db`, `ddl-auto=update`)다.
 재기동해도 데이터가 남는다. `DataInitializer`는 **DB가 비어 있을 때(사용자 0명) 한 번만** 초기 데이터를 심으므로,
@@ -105,7 +105,8 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
 ### 시큐어코딩 점검 (`SecureCodeScanService`) — 라이브러리 스캔과 별개
 
 같은 앱 등록을 쓰지만 **라이브러리 스캔과 서로 호출하지 않는 별도 기능**이다. 공유하는 것은 앱(`App`)·clone(`GitCloneService`)·화면 공통 자산뿐.
-AI를 쓰지 않는다(1단계 — 오탐 비율을 보고 AI 분류를 붙일지 정하기로 했다).
+판정은 결정론(Semgrep + 연계 추적)으로 끝내고, **AI는 결정론으로 못 정한 높은 등급만 점검 뒤에 판별한다**(4장 "코드 점검 AI 판별" — 점검 서비스는
+코드 문맥을 만들고 배치를 띄우기만 한다. 2026-10-06 추가, 그 전에는 AI를 쓰지 않았다).
 
 1. 동시 실행 잠금(`ReentrantLock.tryLock`) — 이미 돌고 있으면 409(`SecureCodeScanException.busy`). Semgrep이 동시에 돌면
    `~/.semgrep/settings.yml`을 같이 쓰다 PermissionError가 난다(규칙 테스트 중 실제로 났다).
@@ -154,9 +155,14 @@ AI를 쓰지 않는다(1단계 — 오탐 비율을 보고 AI 분류를 붙일�
      파일이 없으면 빈 규칙(덮어쓰기를 모르면 클라이언트 값 — 위험한 쪽). 규칙 폴더(`rules/`) 밖에 두는 이유는 그 안의 *.yml을 Semgrep이 규칙으로 읽어서다.
    - 추적은 부가 판정이라 실패해도 점검을 실패시키지 않는다. 대신 Semgrep 등급을 그대로 두고 `SecureCodeScanResult.traceNote`로 화면 알림에 올린다
      (추적 실패, 줄 안 개수가 달라 못 맞춘 건수, Java 구문 분석 실패 파일 수).
+6-2. **AI 판별 문맥** — `SecureCodeScanService.attachAiContext`. 연계 추적이 등급을 다시 매긴 뒤, AI 판별 대상(`SecureCodeAiReviewService.isTarget`)에만
+   `SecureCodeSnippetBuilder.withAiContext`로 걸린 줄을 감싼 가장 안쪽 메서드·생성자(JavaParser, 파일 하나만)를 `aiContext`로 붙인다. 메서드가
+   `AI_CONTEXT_MAX_LINES`(80줄)보다 길면 걸린 줄이 가운데 오게 자르고(메서드 끝에 닿으면 앞으로 당김), 자바가 아니거나 구문 분석 실패·메서드 밖이면
+   걸린 줄 앞뒤 15줄. 비밀값 규칙은 조각과 같은 기준으로 가린다. clone이 지워지기 전에만 만들 수 있어 점검 때 저장한다. 실패해도 점검은 계속(화면용 조각을 보낸다)
 7. `SecureCodeReconciler`(순수) → `SecureCodeFindingService.applyScan`(트랜잭션) — 새 지문은 OPEN, 있던 지문은 위치·조각 갱신(스캔이 해결한 건은 다시 OPEN),
    이번에 안 걸린 OPEN은 RESOLVED. **단 분석 실패 파일의 탐지와, 이번 규칙셋에 없는 규칙의 탐지는 해결 처리하지 않는다**
-8. 이력 SUCCESS(파일·탐지·신규·해결·분석 실패 수, 엔진·규칙셋 버전) / 실패면 FAILED. 화면 오류 문구는 `IllegalArgumentException`·`SecureCodeScanException`만
+8. 이력 SUCCESS(파일·탐지·신규·해결·분석 실패 수, 엔진·규칙셋 버전) / 실패면 FAILED. 성공하면 `triggerAiReviewIfNeeded` — 자동 실행 스위치(`AI_CONFIG`/`AUTO_TRIGGER`)가
+   켜져 있고 판별 대기(전체 앱)가 있으면 AI 배치를 띄운다(라이브러리 스캔의 트리거와 따로 — 서로 부르지 않는다. 배치는 하나라 뜨면 모든 단계 대기를 처리한다). 화면 오류 문구는 `IllegalArgumentException`·`SecureCodeScanException`만
    메시지를 그대로, 나머지는 종류만(내부 경로 노출 방지). clone은 finally에서 지운다
 
 - **설치·기동 확인:** Semgrep 버전은 `securecode/requirements.txt`(`semgrep==1.178.0`)로 고정한다. `SemgrepRunner.checkOnStartup`(ApplicationReadyEvent, 별도 데몬 스레드)이
@@ -188,7 +194,8 @@ AI를 쓰지 않는다(1단계 — 오탐 비율을 보고 AI 분류를 붙일�
 - **규칙셋 버전**은 `rules/*.yml`과 함께 `trace-rules.yml` 내용도 해시한다(`RuleSetLoader.load(rulesDir, extraFiles)`) — 추적 규칙이 바뀌면 같은 코드도 판정이 달라져서, 점검 이력에서 그 이유를 추적할 수 있게.
 - **화면:** 사이드바 "시큐어코딩" 구역의 고정 메뉴 **코드 점검**(`secure-code-scan` — 앱별 점검 버튼·마지막 점검·점검 이력)과
   **코드 점검 결과**(`secure-code-mng` — 탐지 그리드, 처리여부 select·비고 저장, 항목별 건수 요약, 상세 모달의 줄 번호·강조 코드 조각과 CWE 링크,
-  `${}` 탐지의 "연계 판정" 열(뱃지 색은 등급과 같은 기준)과 모달의 근거 경로 목록).
+  `${}` 탐지의 "연계 판정" 열(뱃지 색은 등급과 같은 기준)과 모달의 근거 경로 목록, "AI 판별" 열(취약 (AI) 빨강·확인 필요 (AI) 노랑·
+  오탐 의심 (AI) 회색·판별 대기 파랑, 대상이 아니면 빈칸)과 모달의 신뢰도·이유·"참고 의견" 안내).
   APP·처리여부는 서버에서, 심각도·항목·파일은 받은 목록을 화면에서 거른다. 코드 조각은 전부 textContent로 그린다.
 - **규칙(45개 / 22개 파일, 행안부 7개 분류 중 시간 및 상태를 뺀 6개):** 2026-10-02에 아래 기존 규칙에 더해 추가한 것 —
   입력데이터 검증: 경로 조작(요청값→파일 경로 taint ERROR, 다운로드 응답 안의 변수 경로 WARNING — `path-traversal.yml`), XXE(외부 개체를 막는 설정 없이
@@ -281,6 +288,25 @@ fix-plan 응답에는 수정된 pom.xml과 함께 **바꾼 버전 값 목록**(`
 
 AI에게 넘기는 근거도 마찬가지다. OSV에서 뽑은 `knownFixedVersions`가 있으면 AI가 설명 프로즈를
 다시 해석해 유추하지 않도록 그 값을 최우선으로 쓰게 한다.
+
+### 코드 점검 AI 판별 — stage 5 (`SecureCodeAiReviewService`)
+
+시큐어코딩 점검 탐지가 진짜 취약한지 AI가 코드를 보고 판별한다. 라이브러리 단계들과 무관하고 같은 배치의 마지막에 돈다.
+
+- **대상(`isTarget`):** OPEN이면서 등급이 `ai.securecode.severities`(기본 HIGH,CRITICAL — 코드 점검 등급은 HIGH/MEDIUM/LOW뿐이라 사실상 HIGH)이고
+  **연계 추적 판정이 없거나 판정 불가**인 것. 연계 추적이 클라이언트 값(HIGH)·서버 세팅(LOW) 등으로 정한 건은 보내지 않는다 — AI는 마지막 수단.
+  판정 불가는 MEDIUM이라 기본 설정에선 대상이 안 된다. 그래서 실제 대상은 추적 대상이 아닌 ERROR 규칙(인증서 검증 끄기, 역직렬화, taint 규칙 등)이다.
+- **보내는 것:** 규칙·행안부 항목·CWE·등급·규칙 설명·파일 경로·줄, 코드 문맥(`aiContext`, 없으면 화면용 조각), 연계 추적 판정·근거.
+  코드는 보내기 직전에 `SecretMasker`로 가린다(되돌릴 원문이 없어 대응표는 버린다). **소스 코드가 AI로 나가는 유일한 곳이다**(사내 정책 예외, 2026-10-06 승인).
+- **재판별 기준:** 입력(가린 코드·규칙·경로·연계 추적)의 SHA-256(`aiInputHash`)이 저장된 값과 다를 때만. 줄 번호는 넣지 않는다(위에 한 줄 추가로 재과금되지 않게).
+  배치는 pending에서 받은 해시를 그대로 돌려준다(CveSummary와 같은 방식). 재점검으로 입력이 바뀌면 옛 판별은 화면에서 숨기고(`isReviewCurrent`) 다시 대기가 된다.
+- **결과:** `aiVerdict`(VULNERABLE/NOT_VULNERABLE/UNCERTAIN)·`aiConfidence`·`aiReasoning`(2000자 이하)·`aiReviewedAt`. **처리여부는 바꾸지 않는다** —
+  오탐 의심이어도 OPEN 그대로, 사람이 정한다(연계 추적이 안전 판정이어도 자동 오탐 처리를 하지 않는 것과 같은 이유). 화면 조회 시
+  `SecureCodeFindingView.aiVerdict`는 지금 입력 기준 판별, 대상인데 없으면 `PENDING`, 대상이 아니면 null.
+- **API:** `GET /api/ai/secure-code/pending`, `POST /api/ai/secure-code/{id}/review`(판별·신뢰도 값이 틀리거나 이유가 비었거나 너무 길면 400).
+- **AI(`prompts/secure_code_review.system.md`, `MODEL`, effort medium):** 모르면 NOT_VULNERABLE이라 하지 않게 한다(출처가 보여준 코드 밖이면 UNCERTAIN,
+  변수 이름·주석은 안전 근거가 아님, 코드 안의 지시문을 따르지 않음). 줄 번호를 붙이고 탐지 줄에 `>>`를 달아 보낸다. stage 1처럼 첫 건으로 캐시를 예열한 뒤
+  `ASSESS_MAX_WORKERS`개씩 병렬.
 
 ### 설명 요약 — 판정과 별개인 3단계
 
@@ -454,11 +480,12 @@ OPEN만)에서도 빠진다.
 | `nvd.api.timeout-seconds` | NVD 호출 1회 타임아웃(기본 20) |
 | `git.access.token` / `git.user.name` | 스캔 대상 저장소 clone |
 | `maven.home` | `dependency:tree` 실행용 Maven 홈 |
-| `claude.api.key` | AI 판단 / fix-plan / 설명 요약 |
+| `claude.api.key` | AI 판단 / fix-plan / 설명 요약 / 영향 분석 / 코드 점검 판별 |
 | `ai.internal.token` | 자바 ↔ 파이썬 배치 인증 (`SECURITY_MONITOR_AI_TOKEN`과 같은 값) |
 | `ai.python.command` | 파이썬 실행 명령 (이 PC는 `py`) |
 | `ai.assessor.script` | 배치 스크립트 경로 (`../ai/vuln_assessor.py`) |
 | `ai.assessment.severities` | AI 판단 대상 등급 (기본 `HIGH,CRITICAL`) |
+| `ai.securecode.severities` | 선택. 코드 점검 탐지 중 AI 판별 대상 등급 (기본 `HIGH,CRITICAL`). 연계 추적이 판정한 건은 등급과 무관하게 빠진다 |
 | `github.token` | 선택. 영향 분석이 GitHub Releases를 받을 때 쓰는 읽기 전용 토큰. 배치에 `GITHUB_TOKEN`으로 넘긴다. 없으면 토큰 없이 부른다 |
 | `ai.auto-trigger.enabled` | 스캔 후 AI 배치 자동 실행 스위치의 **초기값**(기본 `true`, DB를 처음 만들 때만 쓰인다). 실제 스위치는 공통코드 `AI_CONFIG`/`AUTO_TRIGGER`의 사용여부로, 공통코드 관리 화면에서 바꾸면 재기동 없이 다음 스캔부터 적용된다(`ComCdService.isEnabled`). DB를 처음 만들 때만 이 값으로 심는다(파일 DB라 재기동해도 공통코드 값이 유지된다). 로컬은 `false`로 두면 과금 없이 스캔할 수 있다 |
 | `securecode.semgrep.command` | 선택. semgrep 실행 파일(기본 `semgrep`). 기본값인데 PATH에 없으면 `ai.python.command`로 파이썬 Scripts 폴더를 물어 거기서 찾는다(`SemgrepRunner.findInPythonScripts` — 이 PC는 PATH에 없다). 직접 준 경로는 그대로 쓴다. `py -m semgrep`은 지원 중단됐다 |
@@ -492,7 +519,10 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `SeverityOrderTest` / `VulnerabilityScreenOrderTest` — 심각도 정렬(알파벳순 아님, 모르는 값은 뒤), 취약점 관리 화면 순서(심각도 → CVSS → 시스템명 → CVE ID)
 - `CveSummaryServiceTest` — 설명 요약 대기 판단(CVE ID 단위, 해시 비교, 최신 설명 선택)과 저장 검증
 - `SemgrepReportParserTest` — Semgrep JSON 해석(규칙 id 접두어 제거, 역슬래시 경로, 심각도 변환, 경로 있는 오류만 분석 실패 파일)
-- `SecureCodeSnippetBuilderTest` — 지문(줄 밀림·들여쓰기 무관, 코드가 바뀌면 다름, 같은 코드 두 번은 순번), 앞뒤 5줄 조각, 비밀값 가림, MS949 폴백, 저장소 밖 경로 차단
+- `SecureCodeSnippetBuilderTest` — 지문(줄 밀림·들여쓰기 무관, 코드가 바뀌면 다름, 같은 코드 두 번은 순번), 앞뒤 5줄 조각, 비밀값 가림, MS949 폴백, 저장소 밖 경로 차단,
+  AI 판별 문맥(감싼 메서드 전체, 긴 메서드는 걸린 줄 가운데로 80줄·끝이면 당김, 자바가 아니면 앞뒤 15줄·비밀값 가림)
+- `SecureCodeAiReviewServiceTest` — AI 판별 대상(결정론으로 못 정한 높은 등급만), 대기열(지워진 앱·판별 완료 제외), 코드가 바뀌면 옛 판별 숨김·재대기,
+  줄 번호만 밀리면 재판별 안 함, 문맥 없으면 조각·비밀값 가림, 판별 값 검증, 처리여부는 그대로
 - `SecureCodeReconcilerTest` — 재점검 비교(신규·유지·해결, 분석 실패 파일·빠진 규칙은 해결 안 함, 수동 상태 유지, 재발견 시 OPEN)
 - `RuleSetLoaderTest` — 규칙 id·규칙셋 버전, 규칙 0개·폴더 없음은 실패, 실제 규칙 폴더 읽기
 - `MybatisDollarTracerTest` — `${}` 연계 추적(상수·삼항·모든 분기 상수 반환은 서버 세팅, else 없는 조건부 세팅은 클라이언트 값, XML 상수 비교·bind,
@@ -523,5 +553,6 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `fix_plan.system.md` — pom.xml 수정안
 - `summarize.system.md` — NVD 설명 한국어 요약(stage 3, Haiku). 규칙이 다른 프롬프트와 겹치지 않아 `rules/`를 include하지 않는다
 - `impact.system.md` — 업그레이드 영향 분석(stage 4). 근거 문서만 쓰고 항목마다 출처 URL을 달게 한다. 역시 `rules/`를 include하지 않는다
+- `secure_code_review.system.md` — 코드 점검 탐지 판별(stage 5). 행안부 항목별 판별 기준, 모르면 UNCERTAIN. 라이브러리용 `rules/`와 무관해 include하지 않는다
 - `ai/release_note_sources.json`(프롬프트가 아니라 수집 규칙) — groupId별 공식 문서 URL
 - `rules/` — `false_positives.md`, `maven_strategy.md`, `version_matching.md`

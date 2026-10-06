@@ -12,6 +12,9 @@
   stage 4) fix-plan이 제안한 마이너·메이저 업그레이드마다 릴리스 노트를 모아(release_notes.py, AI 없음) 그 근거만으로
            breaking change·필요 조치·테스트 영역을 정리해 저장한다. (좌표, from, to) 단위라 여러 앱이 같은 업그레이드를
            하면 한 번만 분석한다. 근거를 못 찾으면 AI를 부르지 않는다.
+  stage 5) 코드 점검(Semgrep 행안부 규칙) 탐지 중 결정론(연계 추적)으로 못 정한 높은 등급만, 걸린 줄을 감싼 메서드를 보고
+           진짜 취약한지(VULNERABLE/NOT_VULNERABLE/UNCERTAIN) 판별해 저장한다. 라이브러리 취약점과 무관한 단계다.
+           판별은 화면 참고용이고 처리여부는 사람이 정한다. 코드는 자바가 비밀값을 가린 뒤 넘겨준다.
 """
 
 from __future__ import annotations
@@ -31,7 +34,8 @@ from typing import Optional
 import anthropic
 import requests
 
-from prompt_rules import ASSESS_SYSTEM, FIX_PLAN_SYSTEM, IMPACT_SYSTEM, SUMMARIZE_SYSTEM, load_prompt
+from prompt_rules import (ASSESS_SYSTEM, FIX_PLAN_SYSTEM, IMPACT_SYSTEM, SECURE_CODE_REVIEW_SYSTEM, SUMMARIZE_SYSTEM,
+                          load_prompt)
 from release_notes import CollectionResult, ReleaseDocument, collect as collect_release_notes
 
 MODEL = "claude-sonnet-5"
@@ -156,6 +160,24 @@ IMPACT_SCHEMA = {
     "required": ["risk", "confidence", "breaking_changes", "required_actions", "test_focus", "note"],
     "additionalProperties": False,
 }
+
+SECURE_CODE_REVIEW_SCHEMA = {
+    "type": "object",
+    "properties": {
+        # 값은 자바 SecureCodeAiReviewService.VERDICTS와 같아야 한다.
+        "verdict": {"type": "string", "enum": ["VULNERABLE", "NOT_VULNERABLE", "UNCERTAIN"]},
+        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+        "reasoning": {"type": "string"},
+    },
+    "required": ["verdict", "confidence", "reasoning"],
+    "additionalProperties": False,
+}
+
+# 코드 최대 80줄을 읽고 몇 문장을 내는 일이지만, 값의 흐름을 따라가느라 adaptive thinking이 길어질 수 있어
+# CVE 판단(4096)보다 넉넉히 잡는다. 잘리면 저장하지 않으므로(_reject_if_truncated) 다음 배치에서 다시 대기가 된다.
+SECURE_CODE_REVIEW_MAX_TOKENS = 8192
+# 정해진 세 값 중 하나를 고르는 분류라 CVE 판단과 같은 이유로 medium.
+SECURE_CODE_REVIEW_EFFORT = "medium"
 
 # 근거(최대 약 3~4만 토큰)를 읽고 목록 몇 개를 내는 일이라 출력 자체는 짧지만, adaptive thinking이 같은 한도를 쓴다.
 IMPACT_MAX_TOKENS = 32000
@@ -373,6 +395,55 @@ class CveSummaryTarget:
         )
 
 
+@dataclass
+class SecureCodeReviewTarget:
+    """판별할 코드 점검 탐지 하나(자바 SecureCodeReviewTarget). input_hash는 자바가 준 값을 그대로 되돌려준다
+    (어느 입력으로 판별했는지의 기준 — 그사이 재점검으로 코드가 바뀌면 다음 배치에서 다시 대기가 된다)."""
+
+    id: int
+    rule_id: str
+    kisa_category: str
+    kisa_name: str
+    cwe: str
+    severity: str
+    message: str
+    file_path: str
+    start_line: int
+    end_line: int
+    code: str
+    code_start_line: int
+    trace_label: Optional[str]
+    trace_evidence: list[str]
+    input_hash: str
+
+    @staticmethod
+    def from_json(data: dict) -> "SecureCodeReviewTarget":
+        return SecureCodeReviewTarget(
+            id=data["id"],
+            rule_id=data.get("ruleId") or "",
+            kisa_category=data.get("kisaCategory") or "",
+            kisa_name=data.get("kisaName") or "",
+            cwe=data.get("cwe") or "",
+            severity=data.get("severity") or "",
+            message=data.get("message") or "",
+            file_path=data.get("filePath") or "",
+            start_line=data.get("startLine") or 0,
+            end_line=data.get("endLine") or 0,
+            code=data.get("code") or "",
+            code_start_line=data.get("codeStartLine") or 1,
+            trace_label=data.get("traceLabel"),
+            trace_evidence=data.get("traceEvidence") or [],
+            input_hash=data["inputHash"],
+        )
+
+
+@dataclass
+class SecureCodeReview:
+    verdict: str  # "VULNERABLE" | "NOT_VULNERABLE" | "UNCERTAIN"
+    confidence: str  # "high" | "medium" | "low"
+    reasoning: str
+
+
 class SecurityMonitorClient:
     """자바 백엔드의 /api/ai/** 와 통신하는 클라이언트."""
 
@@ -489,6 +560,29 @@ class SecurityMonitorClient:
                 "cveId": target.cve_id,
                 "summary": summary,
                 "descriptionHash": target.description_hash,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+
+    def fetch_pending_secure_code_reviews(self) -> list[SecureCodeReviewTarget]:
+        response = requests.get(
+            f"{self._base_url}/api/ai/secure-code/pending",
+            headers=self._headers,
+            timeout=30,
+        )
+        response.raise_for_status()
+        return [SecureCodeReviewTarget.from_json(item) for item in response.json()]
+
+    def submit_secure_code_review(self, target: SecureCodeReviewTarget, review: SecureCodeReview) -> None:
+        response = requests.post(
+            f"{self._base_url}/api/ai/secure-code/{target.id}/review",
+            headers=self._headers,
+            json={
+                "verdict": review.verdict,
+                "confidence": review.confidence,
+                "reasoning": review.reasoning,
+                "inputHash": target.input_hash,
             },
             timeout=30,
         )
@@ -795,6 +889,78 @@ class DescriptionSummarizerClient:
         return "\n\n".join(f"### {t.cve_id}\n{t.description}" for t in targets)
 
 
+class SecureCodeReviewerClient:
+    """stage 5: 코드 점검 탐지 하나를 코드 문맥과 함께 보고 진짜 취약한지 판별한다."""
+
+    def __init__(self, api_key: Optional[str] = None, model: str = MODEL, use_cache: bool = False):
+        self._client = anthropic.Anthropic(api_key=api_key or os.environ["ANTHROPIC_API_KEY"])
+        self._model = model
+        self._use_cache = use_cache
+        self.usage = TokenUsageTracker()
+
+    def review(self, target: SecureCodeReviewTarget) -> SecureCodeReview:
+        response = self._client.messages.create(
+            model=self._model,
+            max_tokens=SECURE_CODE_REVIEW_MAX_TOKENS,
+            # 판별 기준은 탐지마다 같은 내용이라 2건 이상이면 캐시를 붙인다(stage 1과 같은 방식).
+            system=_system_prompt(load_prompt(SECURE_CODE_REVIEW_SYSTEM), self._use_cache),
+            output_config={
+                "format": {"type": "json_schema", "schema": SECURE_CODE_REVIEW_SCHEMA},
+                "effort": SECURE_CODE_REVIEW_EFFORT,
+            },
+            messages=[{"role": "user", "content": self._build_prompt(target)}],
+        )
+        self.usage.record(f"{target.file_path}:{target.start_line}", response.usage)
+        _reject_if_truncated(response, SECURE_CODE_REVIEW_MAX_TOKENS)
+        data = json.loads(_strip_code_fence(_extract_text(response)))
+        return SecureCodeReview(
+            verdict=data["verdict"],
+            confidence=data["confidence"],
+            reasoning=data.get("reasoning", "").strip(),
+        )
+
+    @staticmethod
+    def _build_prompt(target: SecureCodeReviewTarget) -> str:
+        # 줄 번호를 붙이고 탐지된 줄에 >> 를 단다 — 모델이 reasoning에서 줄 번호로 근거를 대게 하고,
+        # 메서드 안 어느 호출이 걸렸는지 헷갈리지 않게 한다.
+        lines = []
+        for offset, line in enumerate(target.code.split("\n")):
+            no = target.code_start_line + offset
+            mark = ">>" if target.start_line <= no <= max(target.start_line, target.end_line) else "  "
+            lines.append(f"{mark} {no:5d} | {line}")
+        code = "\n".join(lines)
+
+        if target.trace_label:
+            evidence = "\n".join(f"  - {step}" for step in target.trace_evidence) or "  - (근거 없음)"
+            trace = f"\n[연계 추적]\n- 판정: {target.trace_label}\n- 따라간 경로:\n{evidence}\n"
+        else:
+            trace = ""
+
+        return f"""[탐지]
+- 규칙: {target.rule_id}
+- 행안부 분류/항목: {target.kisa_category} / {target.kisa_name}
+- CWE: {target.cwe}
+- 등급: {target.severity}
+- 규칙 설명: {target.message}
+- 파일: {target.file_path} ({target.start_line}줄)
+{trace}
+[코드]
+{code}
+"""
+
+
+def _review_one(reviewer: SecureCodeReviewerClient, backend: "SecurityMonitorClient",
+                target: SecureCodeReviewTarget) -> tuple[SecureCodeReviewTarget, Optional[SecureCodeReview], Optional[Exception]]:
+    """탐지 하나를 판별하고 저장한다. _assess_one과 같은 이유로 예외를 잡아서 돌려준다 — 한 건 실패가 나머지를 막지 않도록.
+    실패한 건은 판별이 저장되지 않았으니 다음 배치에서 다시 대기로 잡힌다."""
+    try:
+        review = reviewer.review(target)
+        backend.submit_secure_code_review(target, review)
+        return target, review, None
+    except Exception as e:
+        return target, None, e
+
+
 def _summarize_group(summarizer: "DescriptionSummarizerClient", backend: "SecurityMonitorClient",
                      group: list[CveSummaryTarget]) -> list[tuple[CveSummaryTarget, Optional[Exception]]]:
     """묶음 하나를 요약하고 CVE별로 저장한다. _assess_one과 같은 이유로 예외를 잡아서 돌려준다.
@@ -913,6 +1079,31 @@ def main() -> None:
             skipped_impacts.append((label, str(e)))
             print(f"[{label}] 영향 분석 실패, 건너뜀: {e}")
 
+    # stage 5: 코드 점검 탐지 판별. 라이브러리 단계들과 무관하다. stage 1처럼 첫 건으로 캐시를 예열한 뒤 나머지를 병렬로 돈다.
+    review_targets = backend.fetch_pending_secure_code_reviews()
+    reviewer = SecureCodeReviewerClient(use_cache=len(review_targets) > 1)
+    print(f"코드 점검 판별할 탐지 {len(review_targets)}건")
+
+    skipped_reviews: list[tuple[str, str]] = []
+    review_counts: dict[str, int] = {}
+
+    def handle_review(target: SecureCodeReviewTarget, review: Optional[SecureCodeReview], err: Optional[Exception]) -> None:
+        label = f"{target.file_path}:{target.start_line} {target.rule_id}"
+        if err is not None:
+            skipped_reviews.append((label, str(err)))
+            print(f"[{label}] 판별 실패, 건너뜀: {err}")
+        else:
+            review_counts[review.verdict] = review_counts.get(review.verdict, 0) + 1
+            print(f"[{label}] verdict={review.verdict} confidence={review.confidence}")
+
+    if review_targets:
+        handle_review(*_review_one(reviewer, backend, review_targets[0]))
+        if len(review_targets) > 1:
+            with ThreadPoolExecutor(max_workers=ASSESS_MAX_WORKERS) as executor:
+                futures = [executor.submit(_review_one, reviewer, backend, t) for t in review_targets[1:]]
+                for future in as_completed(futures):
+                    handle_review(*future.result())
+
     # 한 화면 가득 스크롤한 로그 사이에서 실패 건만 놓치지 않도록 끝에 다시 요약해서 보여준다.
     print()
     print("=== 요약 ===")
@@ -929,6 +1120,9 @@ def main() -> None:
     print(f"영향 분석: {impact_counts or '없음'} / 건너뜀 {len(skipped_impacts)}건")
     for label, reason in skipped_impacts:
         print(f"  - {label}: {reason}")
+    print(f"코드 점검 판별: {review_counts or '없음'} / 건너뜀 {len(skipped_reviews)}건")
+    for label, reason in skipped_reviews:
+        print(f"  - {label}: {reason}")
 
     print()
     print("=== 토큰 사용량 ===")
@@ -937,7 +1131,8 @@ def main() -> None:
     # 설명 요약은 모델(Haiku)이 달라 단가가 다르므로 합계에 섞지 않고 따로 본다.
     print(f"설명 요약({SUMMARY_MODEL}): {summarizer.usage.summary()}")
     print(f"영향 분석: {impact_client.usage.summary()}")
-    same_model = [ai_client.usage, fix_plan_client.usage, impact_client.usage]
+    print(f"코드 점검 판별: {reviewer.usage.summary()}")
+    same_model = [ai_client.usage, fix_plan_client.usage, impact_client.usage, reviewer.usage]
     total_input = sum(u.input_tokens for u in same_model)
     total_output = sum(u.output_tokens for u in same_model)
     total_cache_read = sum(u.cache_read_tokens for u in same_model)

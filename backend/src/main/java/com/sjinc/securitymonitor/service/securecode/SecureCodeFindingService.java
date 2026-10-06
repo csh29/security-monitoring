@@ -12,6 +12,7 @@ import com.sjinc.securitymonitor.dto.securecode.SecureCodeFindingView;
 import com.sjinc.securitymonitor.dto.securecode.SecureCodeStatusRequest;
 import com.sjinc.securitymonitor.repository.AppRepository;
 import com.sjinc.securitymonitor.repository.SecureCodeFindingRepository;
+import com.sjinc.securitymonitor.service.ai.SecureCodeAiReviewService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -33,6 +34,7 @@ public class SecureCodeFindingService {
 
     private final SecureCodeFindingRepository findingRepository;
     private final AppRepository appRepository;
+    private final SecureCodeAiReviewService aiReviewService;
 
     /** 이번 점검 결과를 기존 탐지와 맞춰 저장한다. 순수 DB 작업만 하므로 트랜잭션 하나로 묶는다(일부만 반영되지 않게). */
     @Transactional
@@ -78,7 +80,10 @@ public class SecureCodeFindingService {
         return findingRepository.search(appId, status).stream()
                 .filter(finding -> systemNames.containsKey(finding.getAppId()))
                 .sorted(Comparator.comparing(SecureCodeFinding::getSeverity, SeverityOrder.HIGH_FIRST))
-                .map(finding -> SecureCodeFindingView.of(finding, systemNames.get(finding.getAppId())))
+                .map(finding -> SecureCodeFindingView.of(finding, systemNames.get(finding.getAppId()),
+                        SecureCodeAiReviewService.isReviewCurrent(finding),
+                        SecureCodeFinding.OPEN.equals(finding.getStatus())
+                                && aiReviewService.isTarget(finding.getSeverity(), finding.getTraceSafety())))
                 .toList();
     }
 

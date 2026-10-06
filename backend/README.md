@@ -3,7 +3,7 @@
 
 Git 저장소(Maven 프로젝트)를 clone 해서 의존성을 뽑고, OSV/NVD로 취약점을 조회한 뒤,
 버전 범위로 판단할 수 없는 건만 AI로 판단해 pom.xml 수정안(fix-plan)까지 만들어 준다.
-이와 별개 기능으로, 같은 저장소의 소스를 시큐어코딩 규칙(행안부 SW 보안약점 기준, Semgrep)으로 점검한다.
+이와 별개 기능으로, 같은 저장소의 소스를 시큐어코딩 규칙(행안부 SW 보안약점 기준, Semgrep)으로 점검하고, 연계 추적으로도 판정하지 못한 높은 등급 탐지만 AI가 코드를 보고 진짜 취약한지 판별한다(참고용 — 처리여부는 사람이 정한다).
 
 ## 시스템 구성
 
@@ -12,7 +12,7 @@ Git 저장소(Maven 프로젝트)를 clone 해서 의존성을 뽑고, OSV/NVD�
 | `backend/` | Spring Boot 서버 + 화면(Thymeleaf). 스캔·판정·조회 전부 |
 | `securecode/rules/` | 시큐어코딩 점검 규칙(Semgrep YAML)과 규칙별 테스트 예제. AI 없이 서버가 Semgrep으로 돌린다 |
 | `securecode/trace-rules.yml` | MyBatis `${}` 연계 추적이 쓰는 시스템별 프레임워크 규칙(세션 값을 요청 맵에 덮어쓰는 어노테이션 등). 새 시스템을 점검할 때 항목을 추가한다 |
-| `ai/` | 파이썬 AI 판단 배치(`vuln_assessor.py`). 판정·fix-plan·업그레이드 영향 분석(`claude-sonnet-5`)과 CVE 설명 한국어 요약(`claude-haiku-4-5`)을 한다. 영향 분석의 근거(릴리스 노트)는 `release_notes.py`가 AI 없이 모은다. 스캔 직후 AI 판단·fix-plan·설명 요약·영향 분석 대기 건이 있으면 서버가 띄우고, 배치는 `/api/ai/**`를 직접 호출해 대기 중인 취약점을 가져가 결과를 되돌려준다 |
+| `ai/` | 파이썬 AI 판단 배치(`vuln_assessor.py`). 판정·fix-plan·업그레이드 영향 분석·코드 점검 탐지 판별(`claude-sonnet-5`)과 CVE 설명 한국어 요약(`claude-haiku-4-5`)을 한다. 영향 분석의 근거(릴리스 노트)는 `release_notes.py`가 AI 없이 모은다. 스캔 직후 AI 판단·fix-plan·설명 요약·영향 분석 대기 건이 있으면(코드 점검 직후에는 판별 대기 건이 있으면) 서버가 띄우고, 배치는 `/api/ai/**`를 직접 호출해 대기 중인 취약점을 가져가 결과를 되돌려준다 |
 
 ## 개발 환경
 
@@ -24,7 +24,7 @@ Git 저장소(Maven 프로젝트)를 clone 해서 의존성을 뽑고, OSV/NVD�
 | Group / Artifact | `org.example` / `security-monitoring` |
 | 기본 패키지 | `com.sjinc.securitymonitor` |
 | View | Thymeleaf (서버 렌더링) |
-| DB | H2 파일 DB (`backend/data/cvemonitor.mv.db`, `ddl-auto=update`) |
+| DB | H2 파일 DB (`backend/data/securityMonitor.mv.db`, `ddl-auto=update`) |
 | 인증 | Spring Security 폼 로그인 + 프로그램별 권한 |
 | AI 배치 | Python (`py` 런처) + `anthropic`, `requests` |
 | 코드 점검 | Semgrep 1.178.0 — 버전 고정 파일 `securecode/requirements.txt` |
@@ -74,12 +74,13 @@ Windows에서는 `mvnw.cmd`를 쓴다.
 | `nvd.api.key` | NVD CVE API |
 | `git.access.token` / `git.user.name` | 스캔 대상 저장소 clone |
 | `maven.home` | `dependency:tree` 실행용 Maven 홈 |
-| `claude.api.key` | AI 판단 / fix-plan / 설명 요약 / 영향 분석 |
+| `claude.api.key` | AI 판단 / fix-plan / 설명 요약 / 영향 분석 / 코드 점검 판별 |
 | `github.token` *(선택)* | 영향 분석이 GitHub Releases를 받을 때 쓰는 읽기 전용 토큰. 없으면 토큰 없이 부른다(IP당 시간당 60회) |
 | `ai.internal.token` | 서버 ↔ 파이썬 배치 인증 토큰 |
 | `ai.python.command` | 파이썬 실행 명령 (이 PC는 `py`) |
 | `ai.assessor.script` | 배치 스크립트 경로 (`../ai/vuln_assessor.py`) |
 | `ai.assessment.severities` | AI 판단 대상 등급 (기본 `HIGH,CRITICAL`) |
+| `ai.securecode.severities` *(선택)* | 코드 점검 탐지 중 AI 판별 대상 등급 (기본 `HIGH,CRITICAL`). 연계 추적이 판정한 건은 등급과 무관하게 빠진다 |
 | `securecode.semgrep.command` *(선택)* | semgrep 실행 파일(기본 `semgrep`). PATH에 없으면 `ai.python.command` 파이썬의 Scripts 폴더에서 자동으로 찾는다 |
 | `securecode.rules-dir` *(선택)* | 코드 점검 규칙 폴더(기본 `../securecode/rules`, backend/에서 띄우는 기준) |
 | `securecode.timeout-seconds` *(선택)* | 코드 점검 1회 제한시간(기본 600초) |
@@ -158,7 +159,7 @@ com.sjinc.securitymonitor
 │   └── vulnerability       # 취약점 조회 API 응답 DTO
 ├── repository              # JPA Repository
 └── service
-    ├── ai                  # AI 배치 기동, fix-plan 저장/조회(AI로 보내는 pom.xml 비밀값 가림·되돌림)
+    ├── ai                  # AI 배치 기동, fix-plan 저장/조회(AI로 보내는 pom.xml 비밀값 가림·되돌림), 코드 점검 탐지 AI 판별 대기열·저장
     ├── app                 # 앱 관리
     ├── comcd          # 공통코드 그룹/코드
     ├── git                 # Git 저장소 clone

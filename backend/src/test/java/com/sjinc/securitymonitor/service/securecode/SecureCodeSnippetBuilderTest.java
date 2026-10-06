@@ -126,4 +126,67 @@ class SecureCodeSnippetBuilderTest {
 
         assertThat(detected).allSatisfy(d -> assertThat(d.snippet()).isEmpty());
     }
+
+    private DetectedFinding withAiContext(String content, SemgrepMatch m) throws Exception {
+        Path file = dir.resolve(m.filePath());
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, content, StandardCharsets.UTF_8);
+        SecureCodeSnippetBuilder builder = new SecureCodeSnippetBuilder(dir);
+        return builder.withAiContext(builder.build(List.of(m)).get(0));
+    }
+
+    /** class A { void f() { (줄 1~2) 아래로 int v0 .. v199 (줄 3~202) } (줄 203) } */
+    private static String longMethod() {
+        StringBuilder content = new StringBuilder("class A {\n  void f() {\n");
+        for (int i = 0; i < 200; i++) content.append("    int v").append(i).append(" = ").append(i).append(";\n");
+        return content.append("  }\n}\n").toString();
+    }
+
+    @Test
+    void AI_문맥은_걸린_줄을_감싼_메서드_전체다() throws Exception {
+        String content = "class A {\n"
+                + "  void other() { int x = 1; }\n"
+                + "  void f(String cmd) {\n"
+                + "    String c = cmd.trim();\n"
+                + "    Runtime.getRuntime().exec(c);\n"
+                + "  }\n"
+                + "}\n";
+
+        DetectedFinding f = withAiContext(content, match("kisa-os-command-exec", "src/A.java", 5, 5));
+
+        assertThat(f.aiContextStartLine()).isEqualTo(3);
+        assertThat(f.aiContext()).startsWith("  void f(String cmd) {").endsWith("  }")
+                .contains("cmd.trim()").doesNotContain("other()");
+    }
+
+    @Test
+    void 메서드가_길면_걸린_줄이_가운데_오게_최대_줄_수만큼_자른다() throws Exception {
+        DetectedFinding f = withAiContext(longMethod(), match("r", "A.java", 103, 103)); // 줄 103 = v100
+
+        String[] lines = f.aiContext().split("\n");
+        int hitIndex = 103 - f.aiContextStartLine();
+        assertThat(lines).hasSize(SecureCodeSnippetBuilder.AI_CONTEXT_MAX_LINES);
+        assertThat(lines[hitIndex]).contains("v100 ");
+        assertThat(hitIndex).isBetween(35, 45);
+    }
+
+    @Test
+    void 메서드_끝_근처면_메서드_범위_안에서_앞으로_당긴다() throws Exception {
+        DetectedFinding f = withAiContext(longMethod(), match("r", "A.java", 200, 200));
+
+        assertThat(f.aiContext().split("\n")).hasSize(SecureCodeSnippetBuilder.AI_CONTEXT_MAX_LINES);
+        assertThat(f.aiContextStartLine() + SecureCodeSnippetBuilder.AI_CONTEXT_MAX_LINES - 1).isEqualTo(203);
+    }
+
+    @Test
+    void 자바가_아니면_걸린_줄_앞뒤만_보내고_비밀값_규칙은_가린다() throws Exception {
+        StringBuilder content = new StringBuilder();
+        for (int i = 1; i <= 50; i++) content.append(i == 25 ? "db.password=secret123" : "key" + i + "=v").append("\n");
+
+        DetectedFinding f = withAiContext(content.toString(), match("kisa-hardcoded-secret-config", "app.properties", 25, 25));
+
+        assertThat(f.aiContextStartLine()).isEqualTo(25 - SecureCodeSnippetBuilder.AI_CONTEXT_LINES);
+        assertThat(f.aiContext().split("\n")).hasSize(SecureCodeSnippetBuilder.AI_CONTEXT_LINES * 2 + 1);
+        assertThat(f.aiContext()).contains("db.password=****").doesNotContain("secret123");
+    }
 }

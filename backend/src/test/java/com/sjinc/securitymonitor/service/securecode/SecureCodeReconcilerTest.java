@@ -19,7 +19,7 @@ class SecureCodeReconcilerTest {
     private static final Set<String> RULES = Set.of("rule-a", "rule-b");
 
     private static DetectedFinding detected(String fingerprint, String ruleId, String path, int line) {
-        return new DetectedFinding(fingerprint, ruleId, "분류", "항목", "CWE-1", "HIGH", path, line, line, "메시지", "code", line, null, null);
+        return new DetectedFinding(fingerprint, ruleId, "분류", "항목", "CWE-1", "HIGH", path, line, line, "메시지", "code", line, null, null, null, null);
     }
 
     private static SecureCodeFinding existing(String fingerprint, String ruleId, String path) {

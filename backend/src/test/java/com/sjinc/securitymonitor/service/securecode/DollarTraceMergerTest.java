@@ -68,7 +68,7 @@ class DollarTraceMergerTest {
 
     private static DetectedFinding finding(String fingerprint, String ruleId, String path, int line) {
         return new DetectedFinding(fingerprint, ruleId, "분류", "SQL 삽입", "CWE-89", "HIGH", path, line, line,
-                "메시지", "code", line, null, null);
+                "메시지", "code", line, null, null, null, null);
     }
 
     private static DollarVerdict verdict(String path, int line, TraceSafety safety) {

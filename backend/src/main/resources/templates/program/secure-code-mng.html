@@ -26,6 +26,9 @@
         /* 연계 추적 근거 — 값이 지나온 길을 위에서 아래로. 한 걸음이 길어 줄을 꺾는다. */
         .trace-steps{ margin:6px 0 0; padding-left:20px; font-size:12px; line-height:1.6; color:var(--text-sub); white-space:normal; }
         .trace-steps li{ word-break:break-all; }
+        /* AI 판별 이유 — 몇 문장짜리 설명이라 줄을 꺾는다. */
+        .ai-reasoning{ margin:6px 0 0; font-size:12px; line-height:1.6; white-space:pre-wrap; word-break:break-all; }
+        .ai-note{ margin-top:4px; font-size:11px; color:var(--text-sub); }
     </style>
 </head>
 <body>
@@ -62,6 +65,7 @@
             <dt>위치</dt><dd id="findingModalLocation"></dd>
             <dt>설명·조치</dt><dd id="findingModalMessage"></dd>
             <dt id="findingModalTraceTerm">연계 추적</dt><dd id="findingModalTrace"></dd>
+            <dt id="findingModalAiTerm">AI 판별</dt><dd id="findingModalAi"></dd>
             <dt>탐지 일시</dt><dd id="findingModalDetected"></dd>
         </dl>
         <pre class="code-block" id="findingModalCode"></pre>
@@ -103,6 +107,10 @@
 
         function location(row) {
             return row.filePath + ':' + row.startLine;
+        }
+
+        function fileName(path) {
+            return (path || '').split('/').pop();
         }
 
         /**
@@ -172,6 +180,50 @@
             dd.appendChild(steps);
         }
 
+        /**
+         * AI 판별(코드 점검 stage 5) → 표시. 결정론으로 못 정한 높은 등급만 대상이라, 대상이 아니면 빈칸이다.
+         * 색은 조치안 화면과 같은 기준 — 빨강/노랑은 사람이 봐야 함, 파랑은 배치가 알아서 처리함. 오탐 의심은 회색(처리여부 "오탐"과 같은 색)이지만
+         * 처리여부를 바꾸지는 않는다 — 사람이 코드를 보고 정한다.
+         */
+        const AI_VERDICTS = {
+            VULNERABLE: { label: '취약 (AI)', css: 'high' },
+            UNCERTAIN: { label: '확인 필요 (AI)', css: 'needs_check' },
+            NOT_VULNERABLE: { label: '오탐 의심 (AI)', css: 'false_positive' },
+            PENDING: { label: '판별 대기', css: 'pending' }
+        };
+        const CONFIDENCE_LABELS = { high: '높음', medium: '보통', low: '낮음' };
+
+        function aiBadge(row) {
+            const v = AI_VERDICTS[row.aiVerdict];
+            return v ? badge(v.label, v.css) : '';
+        }
+
+        /** AI 판별이 없는 탐지(대상 아님)는 그 줄을 숨긴다. 이유는 AI가 쓴 문장이라 textContent로만 넣는다. */
+        function renderAi(row) {
+            const term = document.getElementById('findingModalAiTerm');
+            const dd = document.getElementById('findingModalAi');
+            dd.replaceChildren();
+            const has = !!AI_VERDICTS[row.aiVerdict];
+            term.style.display = has ? '' : 'none';
+            dd.style.display = has ? '' : 'none';
+            if (!has) return;
+            dd.appendChild(aiBadge(row));
+            if (row.aiVerdict === 'PENDING') {
+                dd.appendChild(document.createTextNode(' 다음 AI 배치에서 판별합니다.'));
+                return;
+            }
+            dd.appendChild(document.createTextNode(' 신뢰도 ' + (CONFIDENCE_LABELS[row.aiConfidence] || row.aiConfidence || '-')
+                + ' · ' + formatDateTime(row.aiReviewedAt)));
+            const reasoning = document.createElement('div');
+            reasoning.className = 'ai-reasoning';
+            reasoning.textContent = row.aiReasoning || '';
+            dd.appendChild(reasoning);
+            const note = document.createElement('div');
+            note.className = 'ai-note';
+            note.textContent = '탐지 줄을 감싼 메서드만 보고 낸 참고 의견입니다. 처리여부는 코드를 확인한 뒤 직접 정하세요.';
+            dd.appendChild(note);
+        }
+
         function openModal(row) {
             currentRow = row;
             document.getElementById('findingModalTitle').textContent = '상세보기 · ' + row.systemName;
@@ -192,6 +244,7 @@
                 row.filePath + ' (' + row.startLine + (row.endLine !== row.startLine ? '~' + row.endLine : '') + '줄)';
             document.getElementById('findingModalMessage').textContent = row.message || '-';
             renderTrace(row);
+            renderAi(row);
             document.getElementById('findingModalDetected').textContent =
                 '최초 ' + formatDateTime(row.firstDetectedAt) + ' / 최근 ' + formatDateTime(row.lastDetectedAt);
             renderCode(document.getElementById('findingModalCode'), row);
@@ -223,6 +276,12 @@
                 render: function (value, row) { return traceBadge(row); },
                 title: function (value, row) { return (row.traceEvidence || []).join('\n'); }
             },
+            // 결정론(연계 추적)으로 못 정한 높은 등급만 AI가 코드를 보고 판별한다. 참고용 — 처리여부는 바꾸지 않는다.
+            {
+                id: 'aiVerdict', label: 'AI 판별', width: 120, align: 'center',
+                render: function (value, row) { return aiBadge(row); },
+                title: function (value, row) { return row.aiReasoning || ''; }
+            },
             // 오탐·위험수용·조치완료로 저장한 건은 같은 코드가 다시 탐지돼도 유지된다(코드가 바뀌면 새 건이 된다).
             {
                 id: 'status', label: '처리여부', width: 110, align: 'center', type: 'select', optionsQuery: 'SC_STATUS',
@@ -230,9 +289,10 @@
             },
             { id: 'statusChangedBy', label: '처리자', width: 80, align: 'center' },
             { id: 'remark', label: '비고', width: 200, type: 'text' },
+            // 경로까지 보이면 열이 너무 넓어져 파일명만 보인다. 전체 경로·줄은 마우스를 올리거나 상세보기에서 본다.
             {
-                id: 'location', label: '위치', width: 360,
-                render: function (value, row) { return location(row); },
+                id: 'location', label: '파일', width: 180,
+                render: function (value, row) { return fileName(row.filePath); },
                 title: function (value, row) { return location(row); }
             },
             { id: 'cwe', label: 'CWE', width: 80, align: 'center' },
