@@ -12,6 +12,11 @@
         /* 홈은 두 기능(라이브러리 취약점 / 시큐어코딩)을 좌우 카드로 나란히 둔다. 예전엔 같은 KPI 3칸 묶음을 위아래로
            두 번 쌓아서 복사해 붙인 것처럼 보였고, 두 기능을 비교하려면 위아래를 오가야 했다. */
         #homePanel{ display:flex; flex-direction:column; gap:20px; }
+
+        /* 자동 새로고침 — 카드 위 오른쪽에 작게. 갱신 실패는 경고색으로 시각과 함께 남긴다. */
+        .refresh-bar{ display:flex; align-items:center; justify-content:flex-end; gap:12px; margin-bottom:-8px; font-size:12px; color:var(--text-sub); }
+        .refresh-bar label{ display:flex; align-items:center; gap:4px; cursor:pointer; }
+        .refresh-bar .is-error{ color:var(--accent); font-weight:700; }
         .overview{ display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:20px; }
         .domain-card{
             background:var(--card); border:1px solid var(--line); border-radius:var(--radius-md);
@@ -87,6 +92,11 @@
 
     <main class="area-main">
         <div id="homePanel">
+            <div class="refresh-bar">
+                <span id="homeRefreshedAt"></span>
+                <label><input type="checkbox" id="homeAutoRefresh"> 자동 새로고침(1분)</label>
+                <button type="button" class="btn" id="homeRefreshNow">새로고침</button>
+            </div>
             <!-- 사이드바의 두 기능 그룹과 같은 이름·순서. 카드마다 "조치할 건수" 하나를 크게, 비율 둘을 작게 보여준다.
                  링크는 사이드바 메뉴를 대신 눌러 탭으로 연다(tabs.js — 홈이 탭 셸이라 일반 링크로 가면 탭 화면을 벗어난다). -->
             <div class="overview">
@@ -151,12 +161,93 @@
 <script src="/js/tabs.js"></script>
 <script>
     // 카드의 "… ›" 버튼 — 같은 화면의 사이드바 메뉴를 대신 눌러 탭 동작(tabs.js)을 그대로 쓴다.
-    document.querySelectorAll('[data-open-menu]').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-            const link = document.querySelector('.nav a[data-menu="' + btn.dataset.openMenu + '"]');
-            if (link) link.click();
-        });
+    // 자동 새로고침이 카드를 통째로 바꿔 끼우므로 버튼마다 걸지 않고 #homePanel에 한 번 건다.
+    document.getElementById('homePanel').addEventListener('click', function (e) {
+        const btn = e.target.closest('[data-open-menu]');
+        if (!btn) return;
+        const link = document.querySelector('.nav a[data-menu="' + btn.dataset.openMenu + '"]');
+        if (link) link.click();
     });
+
+    /**
+     * 자동 새로고침. 홈은 탭 셸이라(열린 메뉴가 이 안의 iframe 탭) 페이지를 다시 읽으면 열린 탭이 전부 닫힌다 — 그래서 서버가 그린
+     * 홈을 받아 카드 영역(.overview)만 바꿔 끼운다. 수치를 JS로 다시 그리지 않으므로 화면 모양은 Thymeleaf 한 곳에만 있다.
+     * 홈이 보일 때만 돈다(다른 탭을 보거나 브라우저 탭이 가려져 있으면 쉬고, 다시 보일 때 주기가 지났으면 바로 갱신).
+     * 켜고 끈 상태는 이 브라우저에만 기억한다.
+     */
+    (function () {
+        const INTERVAL_MS = 60 * 1000;
+        const STORAGE_KEY = 'home.autoRefresh';
+        const panel = document.getElementById('homePanel');
+        const toggle = document.getElementById('homeAutoRefresh');
+        const stamp = document.getElementById('homeRefreshedAt');
+        let lastRefreshed = Date.now();
+        let inFlight = false;
+
+        function timeText(date) {
+            return date.toTimeString().substring(0, 8);
+        }
+
+        function showStamp(text, isError) {
+            stamp.textContent = text;
+            stamp.classList.toggle('is-error', isError);
+        }
+
+        function homeVisible() {
+            return document.visibilityState === 'visible' && !panel.classList.contains('hidden');
+        }
+
+        function refresh() {
+            if (inFlight) return;
+            inFlight = true;
+            fetch('/', { silent: true, headers: { Accept: 'text/html' } })
+                .then(function (res) {
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    // 화면 요청은 세션이 끝나면 401이 아니라 로그인 페이지로 302된다 — 창 전체를 로그인으로 보낸다.
+                    if (res.redirected && new URL(res.url).pathname === '/login') {
+                        window.top.location.href = '/login';
+                        return null;
+                    }
+                    return res.text();
+                })
+                .then(function (html) {
+                    if (html === null) return;
+                    // DOMParser로 만든 문서의 스크립트는 실행되지 않는다. 같은 서버가 그린 템플릿의 카드 영역만 가져온다.
+                    const next = new DOMParser().parseFromString(html, 'text/html').querySelector('#homePanel .overview');
+                    if (!next) throw new Error('카드 영역 없음');
+                    panel.querySelector('.overview').replaceWith(document.importNode(next, true));
+                    lastRefreshed = Date.now();
+                    showStamp('마지막 갱신 ' + timeText(new Date()), false);
+                })
+                .catch(function () {
+                    // 실패해도 이전 수치는 그대로 두고, 오래된 값이라는 걸 알 수 있게 표시만 바꾼다.
+                    showStamp('갱신 실패 ' + timeText(new Date()) + ' · 이전 수치 표시 중', true);
+                })
+                .finally(function () {
+                    inFlight = false;
+                });
+        }
+
+        function refreshIfStale() {
+            if (toggle.checked && homeVisible() && Date.now() - lastRefreshed >= INTERVAL_MS) refresh();
+        }
+
+        let saved = null;
+        try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) { /* 저장소를 못 쓰면 기본값 */ }
+        toggle.checked = saved !== 'off';
+        showStamp('마지막 갱신 ' + timeText(new Date()), false);
+
+        toggle.addEventListener('change', function () {
+            try { localStorage.setItem(STORAGE_KEY, toggle.checked ? 'on' : 'off'); } catch (e) { /* 기억만 못 할 뿐 */ }
+            refreshIfStale();
+        });
+        document.getElementById('homeRefreshNow').addEventListener('click', refresh);
+
+        setInterval(refreshIfStale, 5 * 1000);
+        document.addEventListener('visibilitychange', refreshIfStale);
+        // 탭을 닫거나 홈으로 돌아오면 tabs.js가 #homePanel의 hidden을 뺀다 — 그때 주기가 지났으면 바로 갱신.
+        new MutationObserver(refreshIfStale).observe(panel, { attributes: true, attributeFilter: ['class'] });
+    })();
 </script>
 </body>
 </html>

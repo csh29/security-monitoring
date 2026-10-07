@@ -7,6 +7,7 @@ application*.properties
 
 # 스캔 후 자동 실행되는 파이썬 AI 판단 배치의 실행 로그
 ai-assessor.log
+ai-securecode.log
 
 # H2 파일 DB(spring.datasource.url=jdbc:h2:file:./data/...). 로컬 데이터라 올리지 않는다
 data/

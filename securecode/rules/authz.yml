@@ -1,9 +1,10 @@
 # 행안부 SW 보안약점 진단가이드 — 보안기능 / 인증·인가 (CWE-306, CWE-285, CWE-352, CWE-807)
 #
 # 인증·인가 약점은 대부분 "있어야 할 검사가 없는" 것이라 패턴으로 확정하기 어렵다. 그래서 확실한 것(클라이언트 값으로 권한 판단)만 ERROR,
-# 나머지는 사람이 확인할 후보 목록(WARNING)으로 둔다. 규칙은 CRM_BACK 구조를 보고 만들었다:
-#   Spring Security는 전부 허용(permitAll)·CSRF 끔 → 인증은 HandlerInterceptor(JWT 쿠키)가, 사용자 범위(브랜드·회사·사용자)는
-#   @AddUserInfo AOP가 세션 값을 요청 파라미터에 덮어써서 맞춘다.
+# 나머지는 사람이 확인할 후보 목록(WARNING)으로 둔다. 규칙에 특정 시스템의 어노테이션·클래스 이름을 넣지 않는다.
+# 사용자 범위(회사·브랜드·사용자로 데이터를 가르는 조건)의 값을 클라이언트가 정할 수 있는지는 패턴이 아니라 연계 추적이 판정한다
+# (kisa-authz-client-user-scope — trace-rules.yml userScopeKeys, UserScopeFindings). 예전의 kisa-authz-missing-user-scope는
+# 특정 시스템의 장치(@AddUserInfo)가 없는 메서드를 찾는 규칙이라 다른 시스템에서 전부 오탐이 되어 폐기했다(2026-10-07).
 rules:
   # 권한·역할을 요청 값으로 판단한다 — 클라이언트가 isAdmin=Y를 보내면 관리자 흐름을 탄다. 확실한 위험이라 ERROR.
   # 권한은 서버가 로그인 정보(세션·토큰)에서 꺼내야 한다.
@@ -70,65 +71,6 @@ rules:
           metavariable: $X
           regex: (?i).*(user|login|account|id|name|emp).*
     message: "특정 계정명을 코드에 박아 비교합니다(백도어·테스트 우회 의심). 권한은 계정명이 아니라 권한 정보로 판단하세요."
-    severity: WARNING
-    metadata:
-      kisa_category: 보안기능
-      kisa_name: 부적절한 인가
-      cwe: CWE-285
-
-  # 사내 프레임워크(com.sjinc 앱): 사용자 범위(브랜드·회사·사용자)는 @AddUserInfo가 세션 값을 요청 파라미터에 덮어써서 맞춘다.
-  # 그게 없는 컨트롤러 메서드는 클라이언트가 보낸 loginBrndzCd·loginUserId를 그대로 쓸 수 있다(다른 브랜드·사용자 데이터 접근).
-  # 메서드 안에서 직접 세션을 읽거나 FrameEtcUtil.addUserInfo를 부르면 뺀다. 그 밖은 사람이 확인할 후보(WARNING).
-  - id: kisa-authz-missing-user-scope
-    languages: [java]
-    patterns:
-      # 파일명(*Controller.java) 대신 클래스 어노테이션으로 컨트롤러를 가린다 — 이름 규칙을 안 지킨 컨트롤러도 잡고 테스트 예제에도 걸린다.
-      - pattern-either:
-          - pattern-inside: |
-              @RestController
-              class $CLS { ... }
-          - pattern-inside: |
-              @Controller
-              class $CLS { ... }
-      - pattern-either:
-          - pattern: |
-              @$MAP(...)
-              $RET $M(..., @RequestBody $T $P, ...) { ... }
-          - pattern: |
-              @$MAP(...)
-              $RET $M(..., @RequestParam HashMap<$K, $V> $P, ...) { ... }
-          - pattern: |
-              @$MAP(...)
-              $RET $M(..., @RequestParam Map<$K, $V> $P, ...) { ... }
-          - pattern: |
-              @$MAP(...)
-              $RET $M(..., @RequestPart(...) $T $P, ...) { ... }
-      - metavariable-regex:
-          metavariable: $MAP
-          regex: ^(Get|Post|Put|Delete|Patch|Request)Mapping$
-      - pattern-not: |
-          @AddUserInfo
-          $RET $M(...) { ... }
-      - pattern-not: |
-          $RET $M(...) {
-            ...
-            $VAR = <... $REQ.getSession(...) ...>;
-            ...
-          }
-      - pattern-not: |
-          $RET $M(...) {
-            ...
-            $VT $VAR = <... $REQ.getSession(...) ...>;
-            ...
-          }
-      - pattern-not: |
-          $RET $M(...) {
-            ...
-            FrameEtcUtil.addUserInfo(...);
-            ...
-          }
-      - focus-metavariable: $M
-    message: "요청 데이터를 받는데 @AddUserInfo도 세션 조회도 없습니다. 클라이언트가 보낸 login*(브랜드·회사·사용자) 값이 그대로 쓰이면 다른 사용자 데이터에 접근할 수 있습니다. 로그인·공개 API가 아니면 @AddUserInfo를 붙이세요."
     severity: WARNING
     metadata:
       kisa_category: 보안기능

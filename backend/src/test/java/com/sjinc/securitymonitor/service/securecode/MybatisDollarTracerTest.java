@@ -171,8 +171,12 @@ class MybatisDollarTracerTest {
 
         assertThat(v.get("col").safety()).isEqualTo(TraceSafety.BYPASSABLE);
         assertThat(v.get("col").evidence()).anyMatch(e -> e.contains("/common/selectList"));
-        // 세션 덮어쓰기 키는 공통 경로로 와도 안전
+        // 세션 덮어쓰기 키는 공통 경로로 와도 안전 — 공통 경로를 확인한 결과도 근거에 남고, 마지막 줄은 그대로 매퍼 위치·식이다
         assertThat(v.get("loginBrndzCd").safety()).isEqualTo(TraceSafety.SERVER_SET);
+        List<String> evidence = v.get("loginBrndzCd").evidence();
+        assertThat(evidence).anyMatch(e -> e.startsWith("공통 실행 경로로 이 구문을 직접 불러도 세션 값으로 덮어씀")
+                && e.contains("/common/selectList"));
+        assertThat(evidence.get(evidence.size() - 1)).startsWith("t.xml:").contains("${loginBrndzCd}");
     }
 
     @Test

@@ -30,3 +30,16 @@ loginMethodPrefixes: [getLogin]
 # 이 문자열이 타입 이름에 들어간 객체에서 꺼낸 값은 로그인 정보로 본다.
 # 예: LoginUserVo loginUserVo = (LoginUserVo) session.getAttribute(...)
 loginTypeNames: [LoginUser]
+
+# 사용자 범위 키 — 매퍼 SQL의 조건 자리(WHERE·ON·HAVING)에 #{key}로 쓰이면 회사·브랜드·사용자로 데이터를 가르는 조건으로 본다(UserScopeFindings).
+# INSERT VALUES·UPDATE SET 같은 값 자리는 등록자·수정자 기록이라 판정하지 않는다.
+# 그 값을 클라이언트가 정할 수 있으면(세션 덮어쓰기·서버 세팅이 모든 경로에 없으면) "부적절한 인가"(kisa-authz-client-user-scope)로 탐지한다.
+# 모든 시스템에 같이 적용되므로 시스템마다 그 시스템이 범위 조건에 쓰는 키를 추가한다. 이 목록의 키가 하나도 안 쓰이는 저장소는
+# 점검 완료 알림에 "키를 찾지 못함"이 뜬다 — 그 시스템의 키를 여기에 넣으면 된다. 이름·IP처럼 기록용 값은 넣지 않는다.
+# ${key}로 쓰인 키는 SQL 삽입 판정(kisa-sql-injection-mybatis-dollar)이 같은 방법으로 판정하므로 따로 내지 않는다.
+userScopeKeys:
+  # com.sjinc 사내 프레임워크(CRM 등) — @AddUserInfo가 세션 값으로 넣는 키 중 데이터 범위를 가르는 것
+  - loginCompCd
+  - loginBrndzCd
+  - loginUserId
+  - loginEmpNo

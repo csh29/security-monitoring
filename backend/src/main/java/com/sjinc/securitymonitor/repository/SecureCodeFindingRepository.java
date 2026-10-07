@@ -17,6 +17,9 @@ public interface SecureCodeFindingRepository extends JpaRepository<SecureCodeFin
     /** AI 판별 대기열(SecureCodeAiReviewService) — OPEN만 본다. 등급·연계 추적 조건은 서비스에서 거른다. */
     List<SecureCodeFinding> findByStatus(String status);
 
+    /** 폐기한 규칙의 남은 탐지 정리(SecureCodeRuleRetirement). */
+    List<SecureCodeFinding> findByRuleIdAndStatus(String ruleId, String status);
+
     /** 화면 조회. appId·status가 null이면 그 조건 없이. */
     @Query("select f from SecureCodeFinding f where (:appId is null or f.appId = :appId) "
             + "and (:status is null or f.status = :status) "

@@ -16,9 +16,18 @@
         .grid td{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .grid .empty{ white-space:normal; }
 
-        /* 항목별 건수 요약 — 제목보다 작고 옅게. */
-        .summary-line{ font-size:12px; line-height:1.6; color:var(--text-sub); }
-        .summary-line b{ color:var(--text); }
+        /* 제목 옆 "총 N건" — 항목별 건수는 필요할 때만 본다. 예전엔 제목 아래 한 줄에 모든 항목을 나열해 항목이 많으면 여러 줄로 꺾여 난잡했다.
+           링크처럼 밑줄·손 모양 커서를 두고, 마우스를 올리거나(키보드로 초점이 가면) 아래로 항목별 건수 목록을 띄운다. */
+        .count-anchor{ position:relative; display:inline-block; margin-left:8px; font-size:12px; font-weight:400; }
+        .count-link{ color:var(--text); text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
+        .count-link:hover, .count-link:focus{ color:var(--accent); outline:none; }
+        /* 바깥 상자의 padding-top은 투명한 다리 — 숫자에서 목록으로 마우스를 옮기는 사이 틈에서 목록이 닫히지 않게 한다. */
+        .count-popover{ display:none; position:absolute; top:100%; left:0; z-index:20; padding-top:6px; }
+        .count-anchor:hover .count-popover, .count-anchor:focus-within .count-popover{ display:block; }
+        /* 목록은 공통 그리드(.grid)라 배경·헤더·행 높이·선이 탐지 그리드와 같다. 상자는 위 .grid-wrap 규칙(흰 배경·테두리·세로 스크롤)을 그대로 쓰고
+           크기와 그림자만 준다 — 그리드 위에 떠 있는 게 보이게. */
+        /* 폭 = 컬럼 합(250+70) + 세로 스크롤바·테두리 여유. 300px에서는 스크롤바 폭만큼 모자라 가로 스크롤이 생겼다 — 가로는 아예 막는다. */
+        .count-popover-box{ display:block; width:360px; max-height:320px; overflow-x:hidden; box-shadow:0 8px 24px rgba(25,25,64,.18); }
 
         /* 코드 조각은 길어서 기본 모달 폭(560px)으로는 줄이 다 꺾인다. */
         .finding-modal{ max-width:960px; }
@@ -43,8 +52,20 @@
         <section class="search-row" id="searchArea"></section>
 
         <section class="grid-section">
-            <div class="panel-title">탐지 목록</div>
-            <div class="summary-line" id="summaryLine"></div>
+            <div class="panel-title">탐지 목록
+                <div class="count-anchor">
+                    <span class="count-link" id="findingCount" tabindex="0" aria-describedby="findingCountDetail">총 0건</span>
+                    <!-- 부모를 .grid-wrap으로 두면 grid.js가 스크롤 감싸기·높이 계산을 하지 않는다 — 숨겨진 목록에서 높이가 0으로 잡히지 않게. -->
+                    <div class="count-popover">
+                        <div class="count-popover-box grid-wrap" id="findingCountDetail" role="tooltip">
+                            <table class="grid">
+                                <thead id="findingCountHead"></thead>
+                                <tbody id="findingCountBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
             <div class="grid-wrap">
                 <table class="grid">
                     <thead id="findingGridHead"></thead>
@@ -156,8 +177,14 @@
          */
         const TRACE_BADGE = { CLIENT: 'high', BYPASSABLE: 'high', UNKNOWN: 'medium' };
 
-        function traceBadge(row) {
-            return row.traceSafety ? badge(row.traceLabel || row.traceSafety, TRACE_BADGE[row.traceSafety] || 'low') : '';
+        /**
+         * 판정 뱃지. withTarget이면 매퍼 판정의 대상 식을 붙인다("서버가 세팅 · ${loginBrndzCd}") — 상세 모달용. 한 줄에 ${}가 여럿이면 탐지도 여럿인데
+         * 위치·항목이 같아 어느 행이 어느 값의 판정인지 구분되지 않았다. 그리드 열은 판정만 보이고 대상 식은 마우스를 올리면(툴팁) 보인다.
+         */
+        function traceBadge(row, withTarget) {
+            if (!row.traceSafety) return '';
+            const label = (row.traceLabel || row.traceSafety) + (withTarget && row.traceTarget ? ' · ' + row.traceTarget : '');
+            return badge(label, TRACE_BADGE[row.traceSafety] || 'low');
         }
 
         /** 연계 추적이 없는 탐지(${} 규칙이 아니거나 추적 못 함)는 그 줄을 숨긴다. 근거는 한 걸음씩 textContent로. */
@@ -169,7 +196,7 @@
             term.style.display = has ? '' : 'none';
             dd.style.display = has ? '' : 'none';
             if (!has) return;
-            dd.appendChild(traceBadge(row));
+            dd.appendChild(traceBadge(row, true));
             const steps = document.createElement('ol');
             steps.className = 'trace-steps';
             (row.traceEvidence || []).forEach(function (step) {
@@ -209,7 +236,8 @@
             if (!has) return;
             dd.appendChild(aiBadge(row));
             if (row.aiVerdict === 'PENDING') {
-                dd.appendChild(document.createTextNode(' 다음 AI 배치에서 판별합니다.'));
+                // 판별에 쓸 코드 문맥(메서드)은 점검 때 만들어 둔다 — 대상 기준이 넓어진 직후의 탐지는 다음 점검 뒤에 판별된다.
+                dd.appendChild(document.createTextNode(' 다음 AI 배치에서 판별합니다(코드 문맥이 아직 없으면 다음 코드 점검 뒤).'));
                 return;
             }
             dd.appendChild(document.createTextNode(' 신뢰도 ' + (CONFIDENCE_LABELS[row.aiConfidence] || row.aiConfidence || '-')
@@ -270,11 +298,14 @@
                 id: 'severity', label: '심각도', width: 90, align: 'center',
                 render: function (value) { return value ? badge(value, value.toLowerCase()) : ''; }
             },
-            // MyBatis ${}만 값이 어디서 오는지 Java 소스를 따라가 판정한다. 심각도는 이 판정으로 다시 매긴 값이다.
+            // 값이 어디서 오는지 Java 소스를 따라가 본 판정(MyBatis ${}·사용자 범위 #{}·위험 호출 지점). 심각도는 이 판정으로 다시 매긴 값이다.
+            // 열에는 판정만 보이고, 대상 식과 근거는 툴팁으로 본다.
             {
                 id: 'traceLabel', label: '연계 판정', width: 150, align: 'center',
-                render: function (value, row) { return traceBadge(row); },
-                title: function (value, row) { return (row.traceEvidence || []).join('\n'); }
+                render: function (value, row) { return traceBadge(row, false); },
+                title: function (value, row) {
+                    return (row.traceTarget ? '대상: ' + row.traceTarget + '\n' : '') + (row.traceEvidence || []).join('\n');
+                }
             },
             // 결정론(연계 추적)으로 못 정한 높은 등급만 AI가 코드를 보고 판별한다. 참고용 — 처리여부는 바꾸지 않는다.
             {
@@ -284,7 +315,7 @@
             },
             // 오탐·위험수용·조치완료로 저장한 건은 같은 코드가 다시 탐지돼도 유지된다(코드가 바뀌면 새 건이 된다).
             {
-                id: 'status', label: '처리여부', width: 110, align: 'center', type: 'select', optionsQuery: 'SC_STATUS',
+                id: 'status', label: '처리여부', width: 90, align: 'center', type: 'select', optionsQuery: 'SC_STATUS',
                 display: function (value, label) { return badge(label || value || '', (value || '').toLowerCase()); }
             },
             { id: 'statusChangedBy', label: '처리자', width: 80, align: 'center' },
@@ -295,11 +326,11 @@
                 render: function (value, row) { return fileName(row.filePath); },
                 title: function (value, row) { return location(row); }
             },
+            // 규칙 id(kisa-...)는 내부 식별자라 그리드에 두지 않는다 — 무슨 약점인지는 항목·CWE가 보여주고, 규칙 id는 상세보기에 있다.
             { id: 'cwe', label: 'CWE', width: 80, align: 'center' },
-            { id: 'ruleId', label: '규칙', width: 230, title: true },
-            { id: 'firstDetectedAt', label: '최초 탐지', width: 140, align: 'center', render: formatDateTime },
+            { id: 'firstDetectedAt', label: '최초 탐지', width: 130, align: 'center', render: formatDateTime },
             {
-                label: '상세보기', width: 90, align: 'center',
+                label: '상세보기', width: 80, align: 'center',
                 render: function (value, row) {
                     const btn = document.createElement('button');
                     btn.type = 'button';
@@ -332,28 +363,32 @@
         const search = SearchForm.render(document.getElementById('searchArea'), [
             { id: 'appId', label: 'APP', type: 'select', withAll: true, options: loadAppOptions },
             { id: 'status', label: '처리여부', type: 'select', withAll: true, optionsQuery: 'SC_STATUS', defaultValue: 'OPEN' },
-            { id: 'severity', label: '심각도', type: 'select', withAll: true, optionsQuery: 'SEVERITY' },
+            // 코드 점검 등급에는 CRITICAL이 없어 라이브러리용 SEVERITY가 아니라 SC_SEVERITY(HIGH/MEDIUM/LOW)를 쓴다.
+            { id: 'severity', label: '심각도', type: 'select', withAll: true, optionsQuery: 'SC_SEVERITY' },
             { id: 'kisaName', label: '항목', type: 'text', width: 140 },
             { id: 'filePath', label: '파일', type: 'text', width: 180 }
         ], { onSearch: searchFindings });
 
-        /** "총 12건 · SQL 삽입 5 · 크로스사이트 스크립트 4 …" — 화면에 보이는 행 기준. */
+        // 제목 옆 "총 N건"에 마우스를 올리면 뜨는 항목별 건수 — 탐지 그리드와 같은 공통 그리드로 그린다.
+        const COUNT_COLUMNS = [
+            { id: 'kisaName', label: '항목', width: 250, title: true },
+            { id: 'count', label: '건수', width: 70, align: 'right', render: function (value) { return value + '건'; } }
+        ];
+        const countBody = document.getElementById('findingCountBody');
+        Grid.renderHeader(document.getElementById('findingCountHead'), COUNT_COLUMNS);
+
+        /** 총 건수와 항목별 건수(많은 순) — 화면에 보이는 행 기준. */
         function renderSummary(rows) {
             const counts = {};
             rows.forEach(function (row) {
                 const key = row.kisaName || '(항목 없음)';
                 counts[key] = (counts[key] || 0) + 1;
             });
-            const line = document.getElementById('summaryLine');
-            line.replaceChildren();
-            const total = document.createElement('b');
-            total.textContent = '총 ' + rows.length + '건';
-            line.appendChild(total);
-            Object.keys(counts)
+            document.getElementById('findingCount').textContent = '총 ' + rows.length + '건';
+            const items = Object.keys(counts)
                 .sort(function (a, b) { return counts[b] - counts[a]; })
-                .forEach(function (key) {
-                    line.appendChild(document.createTextNode(' · ' + key + ' ' + counts[key]));
-                });
+                .map(function (key) { return { kisaName: key, count: counts[key] }; });
+            Grid.render(countBody, COUNT_COLUMNS, items, { emptyMessage: '탐지된 항목이 없습니다.' });
         }
 
         function renderRows(findings) {

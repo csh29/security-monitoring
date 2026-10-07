@@ -10,10 +10,13 @@ import org.springframework.stereotype.Service;
 import java.io.File;
 import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.EnumMap;
+import java.util.Map;
 import java.util.UUID;
 
 /**
- * 스캔이 새 CVE를 DB에 저장한 직후, 파이썬 AI 판단 배치(ai/vuln_assessor.py)를 백그라운드로 띄운다.
+ * 스캔이 끝난 뒤 파이썬 AI 배치(ai/vuln_assessor.py)를 백그라운드로 띄운다 — 라이브러리 스캔 뒤에는 CVE 단계, 코드 점검 뒤에는
+ * 시큐어코딩 단계만({@link BatchKind}).
  *
  * <p>배치는 자바를 거치지 않고 /api/ai/** 를 직접 호출해 대기 중인 취약점을 스스로 가져가므로,
  * 여기서는 프로세스만 띄우고 결과를 기다리지 않는다(fire-and-forget). AI 판단이 느리거나 실패해도
@@ -65,27 +68,57 @@ public class AiAssessmentTriggerService {
     @Value("${github.token:}")
     private String githubToken;
 
-    private volatile Process currentProcess;
-    private volatile LocalDateTime startedAt;
-    private volatile LocalDateTime lastFinishedAt;
-    private volatile Integer lastExitCode;
+    /**
+     * 배치 종류. 라이브러리 스캔 뒤에는 CVE 단계만, 코드 점검 뒤에는 시큐어코딩 단계만 띄운다 — 예전엔 어느 쪽이든 전체를 돌려서
+     * 코드 점검 뒤 로그에도 할 일 없는 CVE 단계(CVE 판단 0건, fix-plan …)가 찍혔다. 둘은 동시에 돌 수 있어 로그 파일도 나눈다
+     * (같은 파일이면 두 실행의 줄이 섞인다).
+     *
+     * @param arg     vuln_assessor.py에 넘기는 기능 인자(파이썬 STAGES의 키와 같아야 한다)
+     * @param logFile 표준출력·표준에러를 이어 붙일 파일(backend/ 기준, gitignore 대상)
+     */
+    public enum BatchKind {
+        CVE("cve", "ai-assessor.log", "라이브러리 취약점"),
+        SECURE_CODE("securecode", "ai-securecode.log", "시큐어코딩");
+
+        final String arg;
+        final String logFile;
+        final String label;
+
+        BatchKind(String arg, String logFile, String label) {
+            this.arg = arg;
+            this.logFile = logFile;
+            this.label = label;
+        }
+    }
+
+    /** 종류별로 마지막에 띄운 프로세스와 시각. "이미 떠 있으면 건너뜀"도 종류별이다 — 한쪽이 돌고 있다고 다른 쪽 대기를 다음 실행까지 미루지 않는다. */
+    private static final class RunState {
+        volatile Process process;
+        volatile LocalDateTime startedAt;
+        volatile LocalDateTime lastFinishedAt;
+        volatile Integer lastExitCode;
+    }
+
+    private final Map<BatchKind, RunState> states = new EnumMap<>(Map.of(
+            BatchKind.CVE, new RunState(), BatchKind.SECURE_CODE, new RunState()));
 
     /**
      * synchronized로 "이미 떠 있으면 건너뛴다" 판단과 새 프로세스 시작 사이에 경합이 생기지
      * 않게 한다 — 이게 없으면 스캔을 연속 호출할 때마다 파이썬 프로세스가 계속 쌓이고, 그
-     * 각각이 Claude API를 호출해서(과금) 사실상 DoS가 된다.
+     * 각각이 Claude API를 호출해서(과금) 사실상 DoS가 된다. 종류마다 최대 하나다.
      */
-    public synchronized void triggerAsync() {
-        if (currentProcess != null && currentProcess.isAlive()) {
-            log.info("AI 판단 배치가 이미 실행 중이라 이번 트리거는 건너뜁니다.");
+    public synchronized void triggerAsync(BatchKind kind) {
+        RunState state = states.get(kind);
+        if (state.process != null && state.process.isAlive()) {
+            log.info("{} AI 배치가 이미 실행 중이라 이번 트리거는 건너뜁니다.", kind.label);
             return;
         }
 
         try {
             // -u(unbuffered): 표준출력이 터미널이 아니라 파일로 리다이렉트되면 파이썬이 기본적으로
-            // 블록 버퍼링을 해서, 프로세스가 끝나거나 버퍼가 다 찰 때까지 ai-assessor.log에 아무것도
+            // 블록 버퍼링을 해서, 프로세스가 끝나거나 버퍼가 다 찰 때까지 로그 파일에 아무것도
             // 안 쌓인 것처럼 보인다. 실시간으로 로그를 확인할 수 있도록 무버퍼 모드로 띄운다.
-            ProcessBuilder processBuilder = new ProcessBuilder(pythonCommand, "-u", assessorScriptPath);
+            ProcessBuilder processBuilder = new ProcessBuilder(pythonCommand, "-u", assessorScriptPath, kind.arg);
             // 배치 로그 줄마다 붙는 실행 ID. 아래 "배치 실행 시작" 서버 로그에도 같은 값을 찍어 두 로그를 서로 찾아가게 한다.
             String traceId = UUID.randomUUID().toString().substring(0, 8);
             processBuilder.environment().put("ANTHROPIC_API_KEY", claudeApiKey);
@@ -95,27 +128,28 @@ public class AiAssessmentTriggerService {
             if (!githubToken.isBlank()) {
                 processBuilder.environment().put("GITHUB_TOKEN", githubToken);
             }
-            // 출력이 파일로 리다이렉트되면 파이썬은 윈도우 기본 인코딩(cp949)으로 쓴다. IDE는 ai-assessor.log를 UTF-8로
+            // 출력이 파일로 리다이렉트되면 파이썬은 윈도우 기본 인코딩(cp949)으로 쓴다. IDE는 로그 파일을 UTF-8로
             // 열어서(.idea/encodings.xml) 한글이 전부 깨져 보였다 — UTF-8로 쓰게 맞춘다.
             processBuilder.environment().put("PYTHONIOENCODING", "utf-8");
             processBuilder.redirectErrorStream(true);
-            processBuilder.redirectOutput(ProcessBuilder.Redirect.appendTo(new File("ai-assessor.log")));
+            processBuilder.redirectOutput(ProcessBuilder.Redirect.appendTo(new File(kind.logFile)));
 
             Process process = processBuilder.start();
-            currentProcess = process;
-            startedAt = LocalDateTime.now();
-            lastExitCode = null;
+            state.process = process;
+            state.startedAt = LocalDateTime.now();
+            state.lastExitCode = null;
 
             process.onExit().thenAccept(finished -> {
-                lastExitCode = finished.exitValue();
-                lastFinishedAt = LocalDateTime.now();
-                log.info("AI 판단 배치 종료(traceId={}): exitCode={}", traceId, lastExitCode);
+                state.lastExitCode = finished.exitValue();
+                state.lastFinishedAt = LocalDateTime.now();
+                log.info("{} AI 배치 종료(traceId={}): exitCode={}", kind.label, traceId, state.lastExitCode);
             });
 
-            log.info("AI 판단 배치 실행 시작(traceId={}): {} {}", traceId, pythonCommand, assessorScriptPath);
+            log.info("{} AI 배치 실행 시작(traceId={}, 로그 {}): {} {} {}", kind.label, traceId, kind.logFile,
+                    pythonCommand, assessorScriptPath, kind.arg);
         } catch (IOException e) {
             // 파이썬/스크립트를 못 띄워도 스캔 결과 저장 자체는 이미 끝났으므로 스캔을 실패시키지 않는다.
-            log.warn("AI 판단 배치 실행 실패 (스캔 결과 저장에는 영향 없음): {}", e.getMessage());
+            log.warn("{} AI 배치 실행 실패 (스캔 결과 저장에는 영향 없음): {}", kind.label, e.getMessage());
         }
     }
 
@@ -124,8 +158,11 @@ public class AiAssessmentTriggerService {
         return comCdService.isEnabled(CONFIG_GROUP, AUTO_TRIGGER_CODE, autoTriggerDefault);
     }
 
-    public AiBatchStatus getStatus() {
-        boolean running = currentProcess != null && currentProcess.isAlive();
-        return new AiBatchStatus(running, startedAt, lastFinishedAt, lastExitCode);
+    /** 종류별 실행 상태(배치 종류 이름 → 상태). */
+    public Map<BatchKind, AiBatchStatus> getStatus() {
+        Map<BatchKind, AiBatchStatus> result = new EnumMap<>(BatchKind.class);
+        states.forEach((kind, state) -> result.put(kind, new AiBatchStatus(
+                state.process != null && state.process.isAlive(), state.startedAt, state.lastFinishedAt, state.lastExitCode)));
+        return result;
     }
 }

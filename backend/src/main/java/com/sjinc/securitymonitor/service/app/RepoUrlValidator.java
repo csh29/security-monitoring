@@ -11,7 +11,7 @@ import java.util.Locale;
 /**
  * 앱 관리에 등록하려는 저장소 URL이 스캔해도 되는 주소인지 검사한다.
  *
- * <p>스캔은 이 URL을 그대로 clone하면서 {@code git.access.token}(GitLab PAT)을 붙이고, 받아온
+ * <p>스캔은 이 URL을 그대로 clone하면서 Git 인증 정보(GitLab PAT — GitCredentialResolver)를 붙이고, 받아온
  * pom.xml로 Maven을 실행한다. 즉 등록되는 URL은 "서버가 자격증명을 들고 찾아가서, 그쪽이 준
  * 빌드 파일을 실행하는 대상"이다. 임의 호스트를 허용하면 세 가지가 동시에 열린다 —
  * 공격자 서버로 PAT가 그대로 전송되고(자격증명 유출), 공격자가 만든 pom.xml의
@@ -36,6 +36,11 @@ public class RepoUrlValidator {
                 .map(host -> host.trim().toLowerCase(Locale.ROOT))
                 .filter(host -> !host.isEmpty())
                 .toList();
+    }
+
+    /** 허용 호스트(소문자). Git 인증 정보도 이 호스트에만 붙인다(GitConfig). */
+    public List<String> allowedHosts() {
+        return allowedHosts;
     }
 
     /** 허용되지 않는 URL이면 {@link IllegalArgumentException}을 던진다. */

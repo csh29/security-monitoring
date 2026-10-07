@@ -29,11 +29,11 @@
     <script src="/js/modal-drag.js"></script>
     <script>
         (function () {
-            var overlay = document.getElementById('globalLoadingOverlay');
+            const overlay = document.getElementById('globalLoadingOverlay');
             if (!overlay || overlay.dataset.wired) return;
             overlay.dataset.wired = 'true';
 
-            var pending = 0;
+            let pending = 0;
 
             function show() {
                 pending++;
@@ -51,26 +51,26 @@
             // 읽어서 상태를 바꾸는 요청(POST/PUT/PATCH/DELETE)에 X-XSRF-TOKEN 헤더로 그대로
             // 실어 보낸다. 화면마다 fetch 호출 자리에서 따로 챙기지 않도록, 아래에서 감싸는
             // 공통 fetch 래퍼 한 곳에서 처리한다.
-            var CSRF_COOKIE_NAME = 'XSRF-TOKEN';
-            var CSRF_HEADER_NAME = 'X-XSRF-TOKEN';
-            var STATE_CHANGING_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
+            const CSRF_COOKIE_NAME = 'XSRF-TOKEN';
+            const CSRF_HEADER_NAME = 'X-XSRF-TOKEN';
+            const STATE_CHANGING_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
 
             function readCsrfCookie() {
-                var match = document.cookie.match(new RegExp('(?:^|; )' + CSRF_COOKIE_NAME + '=([^;]*)'));
+                const match = document.cookie.match(new RegExp('(?:^|; )' + CSRF_COOKIE_NAME + '=([^;]*)'));
                 return match ? decodeURIComponent(match[1]) : null;
             }
 
             function withCsrfHeader(input, init) {
-                var isRequestObject = typeof Request !== 'undefined' && input instanceof Request;
-                var method = ((init && init.method) || (isRequestObject ? input.method : 'GET') || 'GET').toUpperCase();
+                const isRequestObject = typeof Request !== 'undefined' && input instanceof Request;
+                const method = ((init && init.method) || (isRequestObject ? input.method : 'GET') || 'GET').toUpperCase();
                 if (STATE_CHANGING_METHODS.indexOf(method) === -1) {
                     return init;
                 }
-                var token = readCsrfCookie();
+                const token = readCsrfCookie();
                 if (!token) {
                     return init;
                 }
-                var headers = new Headers((init && init.headers) || (isRequestObject ? input.headers : undefined));
+                const headers = new Headers((init && init.headers) || (isRequestObject ? input.headers : undefined));
                 headers.set(CSRF_HEADER_NAME, token);
                 return Object.assign({}, init, { headers: headers });
             }
@@ -81,8 +81,8 @@
             // 로그인이 풀린 상태(세션 만료·서버 재기동)에서 API를 부르면 서버가 401을 준다(SecurityConfig).
             // 그때는 화면별 오류 처리("조회에 실패했습니다" 알림 등)까지 가지 않도록 여기서 멈추고,
             // 탭(iframe) 안이더라도 창 전체를 로그인 페이지로 보낸다.
-            var LOGIN_URL = '/login';
-            var redirectingToLogin = false;
+            const LOGIN_URL = '/login';
+            let redirectingToLogin = false;
 
             function redirectToLogin() {
                 if (!redirectingToLogin) {
@@ -92,14 +92,19 @@
                 return new Promise(function () {}); // 끝나지 않는 Promise — 화면의 then/catch가 실행되지 않는다
             }
 
-            var originalFetch = window.fetch;
+            // init.silent === true면 스피너를 띄우지 않는다 — 홈 자동 새로고침처럼 사용자가 누르지 않은 백그라운드 갱신이
+            // 주기마다 화면 전체를 덮어 클릭을 막으면 안 된다. CSRF·401 처리는 똑같이 한다.
+            const originalFetch = window.fetch;
             window.fetch = function (input, init) {
-                show();
+                const silent = !!(init && init.silent);
+                if (!silent) show();
                 return originalFetch.call(window, input, withCsrfHeader(input, init))
                     .then(function (res) {
                         return res.status === 401 ? redirectToLogin() : res;
                     })
-                    .finally(hide);
+                    .finally(function () {
+                        if (!silent) hide();
+                    });
             };
         })();
     </script>

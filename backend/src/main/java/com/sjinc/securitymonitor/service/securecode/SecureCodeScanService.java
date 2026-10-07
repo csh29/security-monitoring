@@ -24,8 +24,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
@@ -58,11 +60,6 @@ public class SecureCodeScanService {
      */
     private final ReentrantLock scanLock = new ReentrantLock();
 
-    @Value("${git.access.token}")
-    private String gitAccessToken;
-
-    @Value("${git.user.name}")
-    private String gitUserName;
 
     /** 규칙 폴더. 서버를 backend/에서 띄우는 기준(ai.assessor.script와 같은 방식). */
     @Value("${securecode.rules-dir:../securecode/rules}")
@@ -107,17 +104,22 @@ public class SecureCodeScanService {
         RuleSetLoader.RuleSet ruleSet = new RuleSetLoader().load(rules, List.of(Path.of(traceRulesFile)));
         TraceRules traceRules = loadTraceRules();
 
-        File projectDir = gitCloneService.cloneRepository(app.getRepoUrl(), app.getBranch(), gitUserName, gitAccessToken);
+        File projectDir = gitCloneService.cloneRepository(app.getRepoUrl(), app.getBranch());
         try {
             SemgrepReport report = new SemgrepReportParser(objectMapper)
                     .parse(semgrepRunner.run(projectDir.toPath(), rules));
             SecureCodeSnippetBuilder snippetBuilder = new SecureCodeSnippetBuilder(projectDir.toPath());
             List<DetectedFinding> detected = snippetBuilder.build(report.matches());
-            TraceOutcome trace = traceFindings(app, projectDir.toPath(), detected, traceRules);
+            TraceOutcome trace = traceFindings(app, projectDir.toPath(), detected, traceRules, snippetBuilder);
             detected = attachAiContext(app, snippetBuilder, trace.findings());
 
+            // 사용자 범위 판정은 Semgrep 규칙이 아니라 판정이 만드는 탐지라 규칙셋에 없다. 이번에 판정을 했을 때만 활성 규칙에 넣는다 —
+            // 판정이 실패했거나 설정이 없어 안 했는데 넣으면 기존 탐지가 전부 "해결"로 바뀐다(못 본 것이지 고친 게 아니다).
+            Set<String> activeRuleIds = new HashSet<>(ruleSet.ruleIds());
+            if (trace.userScopeJudged()) activeRuleIds.add(UserScopeFindings.RULE_ID);
+
             SecureCodeApplyResult applied = findingService.applyScan(
-                    app.getId(), detected, report.failedFiles(), ruleSet.ruleIds());
+                    app.getId(), detected, report.failedFiles(), activeRuleIds);
 
             log.info("[{}] 코드 점검 완료: 파일 {}개, 탐지 {}건(신규 {}, 해결 {}), 분석 실패 파일 {}개",
                     app.getSystemName(), report.scannedFileCount(), detected.size(),
@@ -135,8 +137,11 @@ public class SecureCodeScanService {
         }
     }
 
-    /** 연계 추적 결과. note는 화면 알림에 덧붙일 문구(문제가 없으면 null). */
-    private record TraceOutcome(List<DetectedFinding> findings, String note) {
+    /**
+     * 연계 추적 결과. note는 화면 알림에 덧붙일 문구(문제가 없으면 null).
+     * userScopeJudged는 사용자 범위 판정을 끝까지 했는가 — 했을 때만 그 판정의 기존 탐지를 해결 처리할 수 있다.
+     */
+    private record TraceOutcome(List<DetectedFinding> findings, String note, boolean userScopeJudged) {
     }
 
     private TraceRules loadTraceRules() throws IOException {
@@ -153,15 +158,22 @@ public class SecureCodeScanService {
      * <ul>
      *   <li>MyBatis ${}(MybatisDollarTracer) — 값이 클라이언트에서 오는지, 서버가 세팅하는지, 공통 실행 경로로 우회되는지</li>
      *   <li>위험 호출 지점(SinkTracer) — SSRF 변수 주소·명령 실행·다운로드 경로·업로드 저장·문자열 연결 SQL에 들어가는 값의 출처</li>
+     *   <li>사용자 범위(UserScopeFindings) — trace-rules.yml userScopeKeys가 쓰인 매퍼 SQL마다 그 값을 클라이언트가 정할 수 있는지.
+     *       Semgrep 탐지에 판정을 붙이는 게 아니라 판정에서 탐지를 만든다</li>
      * </ul>
-     * Java 구문 분석은 한 번만 하고 둘이 같은 색인을 쓴다. 추적은 부가 판정이라 실패해도 점검을 실패시키지 않는다 — 대신 Semgrep 등급을
+     * Java 구문 분석은 한 번만 하고 모두 같은 색인을 쓴다. 추적은 부가 판정이라 실패해도 점검을 실패시키지 않는다 — 대신 Semgrep 등급을
      * 그대로 두고(모르면 위험한 쪽), 그 사실을 화면 알림으로 올린다. "추적이 돌아서 안전해 보이는 것"과 "추적을 못 한 것"을 구분할 수 있어야 한다.
      */
-    private TraceOutcome traceFindings(App app, Path projectDir, List<DetectedFinding> detected, TraceRules traceRules) {
+    private TraceOutcome traceFindings(App app, Path projectDir, List<DetectedFinding> detected, TraceRules traceRules,
+                                      SecureCodeSnippetBuilder snippetBuilder) {
         boolean hasDollar = detected.stream().anyMatch(f -> DollarTraceMerger.RULE_ID.equals(f.ruleId()));
         boolean hasSink = detected.stream().anyMatch(f -> SinkTracer.supports(f.ruleId()));
-        if (!hasDollar && !hasSink) {
-            return new TraceOutcome(detected, null);
+        boolean hasScope = !traceRules.userScopeKeys().isEmpty();
+        String scopeMissingNote = hasScope ? null
+                : "trace-rules.yml에 userScopeKeys(사용자 범위 키)가 없어 사용자 범위(인가) 판정을 하지 않았습니다. "
+                  + "회사·사용자로 데이터를 가르는 SQL 파라미터 키를 추가하세요.";
+        if (!hasDollar && !hasSink && !hasScope) {
+            return new TraceOutcome(detected, scopeMissingNote, false);
         }
         Map<String, String> sources;
         JavaSourceIndex java;
@@ -170,17 +182,28 @@ public class SecureCodeScanService {
             java = JavaSourceIndex.fromSources(sources);
         } catch (Exception e) {
             log.warn("[{}] 연계 추적용 소스 읽기 실패 — Semgrep 등급 그대로 저장", app.getSystemName(), e);
-            return new TraceOutcome(detected, "연계 추적에 실패해 탐지는 Semgrep 등급 그대로 두었습니다. 서버 로그를 확인하세요.");
+            return new TraceOutcome(detected, "연계 추적에 실패해 탐지는 Semgrep 등급 그대로 두었고 사용자 범위(인가) 판정은 하지 못했습니다. "
+                    + "서버 로그를 확인하세요.", false);
         }
         List<String> notes = new ArrayList<>();
+        if (scopeMissingNote != null) notes.add(scopeMissingNote);
         if (!java.failedFiles().isEmpty()) {
             log.warn("[{}] 연계 추적이 구문 분석하지 못한 Java 파일: {}", app.getSystemName(), java.failedFiles());
             notes.add("Java 파일 " + java.failedFiles().size() + "개를 구문 분석하지 못해 그 안의 값 세팅·호출은 추적하지 못했습니다.");
         }
         List<DetectedFinding> findings = detected;
-        if (hasDollar) {
+        boolean userScopeJudged = false;
+        if (hasDollar || hasScope) {
+            // ${} 판정과 사용자 범위 판정은 같은 엔진이 한 번에 낸다(구문 실행 위치 찾기를 한 번만 하게).
+            MybatisDollarTracer.Result result = null;
             try {
-                MybatisDollarTracer.Result result = MybatisDollarTracer.trace(sources, java, traceRules);
+                result = MybatisDollarTracer.trace(sources, java, traceRules);
+            } catch (Exception e) {
+                log.warn("[{}] MyBatis 연계 추적 실패 — ${…} 탐지는 Semgrep 등급 그대로, 사용자 범위 판정 없음", app.getSystemName(), e);
+                notes.add("MyBatis 연계 추적에 실패해 ${} 탐지는 Semgrep 등급 그대로 두었고 사용자 범위(인가) 판정은 하지 못했습니다. "
+                        + "서버 로그를 확인하세요.");
+            }
+            if (result != null && hasDollar) {
                 DollarTraceMerger.Merged merged = DollarTraceMerger.merge(findings, result.verdicts());
                 findings = merged.findings();
                 log.info("[{}] MyBatis ${…} 연계 추적: {}건 판정, 맞추지 못함 {}건, 공통 실행 경로 {}개",
@@ -190,9 +213,25 @@ public class SecureCodeScanService {
                 }
                 String ruleNote = checkTraceRules(app, sources, java, traceRules, result);
                 if (ruleNote != null) notes.add(ruleNote);
-            } catch (Exception e) {
-                log.warn("[{}] MyBatis ${…} 연계 추적 실패 — Semgrep 등급 그대로 저장", app.getSystemName(), e);
-                notes.add("MyBatis ${} 연계 추적에 실패해 ${} 탐지는 Semgrep 등급 그대로 두었습니다. 서버 로그를 확인하세요.");
+            }
+            if (result != null && hasScope) {
+                try {
+                    List<DetectedFinding> scope = UserScopeFindings.build(result.scopeVerdicts(), snippetBuilder);
+                    findings = new ArrayList<>(findings);
+                    findings.addAll(scope);
+                    userScopeJudged = true;
+                    log.info("[{}] 사용자 범위 판정: 키 사용 {}곳, 탐지 {}건 {}", app.getSystemName(), result.scopeVerdicts().size(),
+                            scope.size(), result.scopeVerdicts().stream()
+                                    .collect(Collectors.groupingBy(v -> v.safety().label(), Collectors.counting())));
+                    if (!result.scopeKeysUsed()) {
+                        // 키가 설정돼 있어도 이 시스템이 다른 이름을 쓰면 아무것도 안 걸린다 — "문제 없음"과 구분되게 알린다.
+                        notes.add("이 저장소의 매퍼 SQL에서 사용자 범위 키(" + String.join(", ", traceRules.userScopeKeys())
+                                + ")를 찾지 못했습니다. 이 시스템이 회사·사용자 범위에 쓰는 키를 trace-rules.yml userScopeKeys에 추가하세요.");
+                    }
+                } catch (Exception e) {
+                    log.warn("[{}] 사용자 범위 탐지 만들기 실패", app.getSystemName(), e);
+                    notes.add("사용자 범위(인가) 판정 결과로 탐지를 만들지 못했습니다. 서버 로그를 확인하세요.");
+                }
             }
         }
         if (hasSink) {
@@ -206,7 +245,7 @@ public class SecureCodeScanService {
                 notes.add("위험 호출 지점(SSRF·명령 실행·파일 경로 등) 연계 추적에 실패해 그 탐지는 Semgrep 등급 그대로 두었습니다. 서버 로그를 확인하세요.");
             }
         }
-        return new TraceOutcome(findings, notes.isEmpty() ? null : String.join("\n", notes));
+        return new TraceOutcome(findings, notes.isEmpty() ? null : String.join("\n", notes), userScopeJudged);
     }
 
     /**
@@ -237,8 +276,9 @@ public class SecureCodeScanService {
     }
 
     /**
-     * 판별 대기가 있으면 AI 배치를 띄운다. 라이브러리 스캔과 같은 자동 실행 스위치(공통코드 AI_CONFIG/AUTO_TRIGGER)를 따른다 — 배치는
-     * Claude API를 호출해 과금된다. 이미 떠 있으면 triggerAsync가 건너뛰고, 남은 대기는 다음 배치가 가져간다.
+     * 판별 대기가 있으면 시큐어코딩 AI 배치만 띄운다(로그는 ai-securecode.log — CVE 단계는 돌리지 않는다). 라이브러리 스캔과 같은 자동 실행
+     * 스위치(공통코드 AI_CONFIG/AUTO_TRIGGER)를 따른다 — 배치는 Claude API를 호출해 과금된다. 시큐어코딩 배치가 이미 떠 있으면
+     * triggerAsync가 건너뛰고, 남은 대기는 다음 배치가 가져간다.
      * 실패해도 점검 결과는 이미 저장됐으니 로그만 남긴다.
      */
     private void triggerAiReviewIfNeeded(App app) {
@@ -251,7 +291,7 @@ public class SecureCodeScanService {
             int pending = aiReviewService.getPendingTargets().size();
             if (pending > 0) {
                 log.info("[{}] AI 판별 대기 {}건(전체 앱) — AI 배치를 띄웁니다.", app.getSystemName(), pending);
-                aiAssessmentTriggerService.triggerAsync();
+                aiAssessmentTriggerService.triggerAsync(AiAssessmentTriggerService.BatchKind.SECURE_CODE);
             }
         } catch (Exception e) {
             log.warn("[{}] AI 판별 배치 실행 판단/시작 실패(점검 결과는 저장됨): {}", app.getSystemName(), e.toString());

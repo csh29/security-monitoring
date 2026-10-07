@@ -32,6 +32,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 파이썬 AI 판단 배치가 호출하는 전용 API.
@@ -123,7 +124,8 @@ public class AiAssessmentController {
     }
 
     @GetMapping("/status")
-    public AiBatchStatus getStatus(@RequestHeader("X-Internal-Token") String token) {
+    /** 배치 종류(CVE / SECURE_CODE)별 실행 상태. 두 종류는 따로 떠서 동시에 돌 수 있다. */
+    public Map<AiAssessmentTriggerService.BatchKind, AiBatchStatus> getStatus(@RequestHeader("X-Internal-Token") String token) {
         verifyToken(token);
         return aiAssessmentTriggerService.getStatus();
     }

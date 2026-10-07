@@ -72,7 +72,7 @@ Windows에서는 `mvnw.cmd`를 쓴다.
 | 키 | 용도 |
 | --- | --- |
 | `nvd.api.key` | NVD CVE API |
-| `git.access.token` / `git.user.name` | 스캔 대상 저장소 clone |
+| `git.credentials[n].url-prefix` / `.username` / `.token` | 저장소 clone 인증 정보. 저장소 주소와 가장 길게 일치하는 항목을 쓰고, 없으면 인증 없이 clone한다. 서버 전체 토큰은 호스트 주소를 url-prefix로(`git.credentials[0].url-prefix=https://git.sejung.co.kr/`), 그룹·저장소마다 다르면 더 긴 url-prefix 항목을 번호를 이어 추가한다. 예전 키 `git.access.token`/`git.user.name`은 없앴다(남아 있으면 기동 실패) |
 | `maven.home` | `dependency:tree` 실행용 Maven 홈 |
 | `claude.api.key` | AI 판단 / fix-plan / 설명 요약 / 영향 분석 / 코드 점검 판별 |
 | `github.token` *(선택)* | 영향 분석이 GitHub Releases를 받을 때 쓰는 읽기 전용 토큰. 없으면 토큰 없이 부른다(IP당 시간당 60회) |
@@ -80,7 +80,8 @@ Windows에서는 `mvnw.cmd`를 쓴다.
 | `ai.python.command` | 파이썬 실행 명령 (이 PC는 `py`) |
 | `ai.assessor.script` | 배치 스크립트 경로 (`../ai/vuln_assessor.py`) |
 | `ai.assessment.severities` | AI 판단 대상 등급 (기본 `HIGH,CRITICAL`) |
-| `ai.securecode.severities` *(선택)* | 코드 점검 탐지 중 AI 판별 대상 등급 (기본 `HIGH,CRITICAL`). 연계 추적이 판정한 건과 하드코드된 비밀값 규칙(값이 가려져 AI가 판단할 근거가 없음)은 등급과 무관하게 빠진다 |
+| `ai.securecode.extra-rules` *(선택)* | 등급과 무관하게 AI 판별 대상에 넣는 규칙 id(쉼표 구분). 기본 난수·취약한 해시·솔트 없는 해시·XXE — 용도를 코드에서 읽어야 판단되는 규칙 |
+| `ai.securecode.severities` *(선택)* | 코드 점검 탐지 중 AI 판별 대상 등급 (기본 `HIGH`). 연계 추적이 판정한 건과 하드코드된 비밀값 규칙(값이 가려져 AI가 판단할 근거가 없음)은 등급과 무관하게 빠진다 |
 | `securecode.semgrep.command` *(선택)* | semgrep 실행 파일(기본 `semgrep`). PATH에 없으면 `ai.python.command` 파이썬의 Scripts 폴더에서 자동으로 찾는다 |
 | `securecode.rules-dir` *(선택)* | 코드 점검 규칙 폴더(기본 `../securecode/rules`, backend/에서 띄우는 기준) |
 | `securecode.timeout-seconds` *(선택)* | 코드 점검 1회 제한시간(기본 600초) |
@@ -101,7 +102,8 @@ py -m pip install -r ../ai/requirements.txt
 
 > 이 PC에서 `python` / `python3`은 Microsoft Store 스텁이라 실행되지 않는다. 항상 `py`를 쓴다.
 
-배치 로그는 `backend/ai-assessor.log`에 쌓인다.
+배치는 기능을 골라 돌릴 수 있다 — `py vuln_assessor.py cve`(라이브러리 취약점), `py vuln_assessor.py securecode`(시큐어코딩), 인자 없으면 둘 다.
+서버가 띄운 배치의 로그는 라이브러리 취약점이 `backend/ai-assessor.log`, 시큐어코딩이 `backend/ai-securecode.log`에 쌓인다.
 
 릴리스 노트 수집기(`ai/release_notes.py`)의 테스트는 네트워크 없이 돈다.
 

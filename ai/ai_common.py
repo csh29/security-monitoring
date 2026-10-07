@@ -188,14 +188,15 @@ class _TimestampedStream:
         return getattr(self._stream, name)
 
 
-def run_batch(main: Callable[[], None]) -> None:
-    """배치 로그 형식(시각·traceId·시작/종료 줄)을 씌워 main을 돌리고 종료 코드로 끝낸다. 각 모듈을 단독 실행할 때도 같은 형식을 쓴다."""
+def run_batch(main: Callable[[], None], label: str = "") -> None:
+    """배치 로그 형식(시각·traceId·시작/종료 줄)을 씌워 main을 돌리고 종료 코드로 끝낸다. 각 모듈을 단독 실행할 때도 같은 형식을 쓴다.
+    label은 시작 줄에 붙일 기능 이름(라이브러리 취약점 / 시큐어코딩) — 어느 배치의 로그인지 첫 줄에서 보이게."""
     # 서버가 띄우면 SECURITY_MONITOR_TRACE_ID를 넘기고 서버 로그의 "배치 실행 시작" 줄에도 같은 값을 찍는다 — 두 로그를
     # 이 값으로 서로 찾아간다. 사람이 직접 돌리면 없으므로 여기서 만든다.
     trace_id = os.environ.get("SECURITY_MONITOR_TRACE_ID") or uuid.uuid4().hex[:8]
     sys.stdout = _TimestampedStream(sys.stdout, trace_id)
     sys.stderr = _TimestampedStream(sys.stderr, trace_id)
-    print("===== AI 배치 시작 =====")
+    print(f"===== AI 배치 시작({label}) =====" if label else "===== AI 배치 시작 =====")
     exit_code = 0
     try:
         main()

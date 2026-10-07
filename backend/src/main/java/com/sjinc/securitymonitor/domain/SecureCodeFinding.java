@@ -198,6 +198,22 @@ public class SecureCodeFinding {
         return true;
     }
 
+    /**
+     * 이 탐지를 낸 규칙을 폐기했다(SecureCodeRuleRetirement). 규칙셋에 없는 규칙의 탐지는 재점검이 해결 처리하지 않으므로(지운 규칙 ≠ 고친 코드)
+     * 그대로 두면 OPEN으로 영원히 남는다. OPEN이고 사람이 정하지 않은 건만 RESOLVED로 바꾸고 이유를 비고에 남긴다(사람이 쓴 비고는 앞에 둔다).
+     */
+    public boolean retireRule(String reason, LocalDateTime now) {
+        if (!OPEN.equals(status) || Boolean.TRUE.equals(statusManual)) {
+            return false;
+        }
+        status = RESOLVED;
+        resolvedAt = now;
+        String merged = remark == null || remark.isBlank() ? reason : remark + " / " + reason;
+        remark = merged.length() > 1000 ? merged.substring(0, 1000) : merged;
+        statusChangedBy = "system";
+        return true;
+    }
+
     /** 화면에서 사람이 처리여부를 바꾼다. OPEN으로 되돌리면 다시 스캔 결과를 따른다. */
     public void changeStatusManually(String newStatus, String changedBy, LocalDateTime now) {
         if (!STATUSES.contains(newStatus)) {

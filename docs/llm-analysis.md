@@ -75,8 +75,8 @@ com.sjinc.securitymonitor
 7. `ScanSnapshot` 저장 (fix-plan이 나중에 참고할 pom.xml + tree 원문)
    — 이어서 `ScanHistoryService.succeed`로 이번 회차의 스캔 이력을 완료 처리한다(아래 "스캔 이력")
 8. `triggerAiAssessmentIfNeeded` → 먼저 자동 실행 스위치(공통코드 `AI_CONFIG`/`AUTO_TRIGGER`의 사용여부)를 보고 꺼져 있으면 바로 끝낸다. 켜져 있으면 AI 판단 대기(`getUnassessedVulnerabilities`), fix-plan 대기
-   (`getPendingFixPlanTargets`), 설명 요약 대기(`CveSummaryService.getPendingSummaryTargets`), 영향 분석 대기(`UpgradeImpactService.getPendingTargets`)가 하나라도 있으면 `AiAssessmentTriggerService.triggerAsync()`로 파이썬
-   배치를 백그라운드로 띄운다(fire-and-forget, 이미 떠 있으면 건너뜀). "새 CVE가 저장됐는가"가 아니라
+   (`getPendingFixPlanTargets`), 설명 요약 대기(`CveSummaryService.getPendingSummaryTargets`), 영향 분석 대기(`UpgradeImpactService.getPendingTargets`)가 하나라도 있으면 `AiAssessmentTriggerService.triggerAsync(BatchKind.CVE)`로 파이썬
+   배치의 **라이브러리 취약점 단계만** 백그라운드로 띄운다(`vuln_assessor.py cve`, fire-and-forget, CVE 배치가 이미 떠 있으면 건너뜀). "새 CVE가 저장됐는가"가 아니라
    배치가 가져갈 대기열로 판단한다 — 새 CVE가 결정론 자동판정으로 끝나면 AI가 볼 게 없고, 새 CVE가
    없어도 스냅샷이 갱신되면 fix-plan은 다시 대기가 된다. 배치는 Claude API를 호출하므로(과금) 스캔마다
    비용이 생길 수 있다. 실행 상태는 `/api/ai/status`(`getStatus()`)로 본다.
@@ -127,7 +127,7 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
    UTF-8로 깨지면 MS949로 다시 읽는다. 저장소 밖(실제 경로 기준, 심볼릭 링크 포함)을 가리키면 읽지 않는다
 6-1. **연계 추적** — 출처를 따라갈 수 있는 탐지가 있을 때만(`SecureCodeScanService.traceFindings`). clone의 Java 소스를 한 번만 구문 분석해
    (`JavaSourceIndex` — JavaParser, 타입 해석기 없이 소스만) 아래 두 추적이 같은 색인을 쓴다. 값의 출처를 따라가는 엔진은 `ValueOriginTracer`(순수)다 —
-   지역 변수는 모든 대입, 파라미터는 모든 호출자(호출 문맥 Frame), 맵은 실행 직전까지 모든 경로의 `put`, 우리 메서드는 반환문, 컨트롤러 요청 매핑 파라미터는
+   지역 변수는 모든 대입, 파라미터는 모든 호출자(호출 문맥 Frame), 맵은 실행 직전까지 모든 경로의 `put`, 우리 메서드는 반환문(값이든 맵이든 — 맵을 만들어 돌려주는 유틸 메서드의 키도 그 안의 `put`까지 따라간다. 2026-10-07 전에는 맵 쪽이 빠져 `FrameFileUtil.excelToTxt(...)`가 돌려준 맵이 "맵 출처를 모름"이었다), 컨트롤러 요청 매핑 파라미터는
    클라이언트 값, 세션 덮어쓰기·로그인 정보는 `trace-rules.yml`. JDK 값 객체(날짜·난수·UUID·숫자 — `PURE_VALUE_TYPES`)·클래스 정적 메서드·정적 상수는
    재료(받는 쪽·인자)의 출처를 따르고, 클라이언트가 보낸 객체(업로드 파일 등)의 메서드 결과는 클라이언트 값이다. RestTemplate·SqlSession처럼 외부에서
    값을 가져오는 객체의 결과는 판정 불가로 둔다. 판정은 `TraceSafety`(공용 enum), 등급은 `TraceSafety.severity()` — 클라이언트 값·우회 가능 HIGH,
@@ -150,6 +150,8 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
    - **공통 실행 경로:** 클라이언트가 구문 id까지 정하는 실행(`selectList(param.getStatement(), paramData)`)을 찾아 모든 구문의 추가 호출처로 함께 판정한다.
      서비스에서 세팅한 값도 그 경로로 직접 부르면 우회되기 때문이다. List를 넘기는 실행은 MyBatis가 `list`로 감싸 `${key}`에 닿지 않아 판정에서 뺀다.
    - 판정: 클라이언트 값·공통 경로로 우회 가능 → HIGH, 판정 불가 → MEDIUM, 세션 값으로 덮어씀·서버가 세팅·XML에서 결정(bind 상수, 상수 비교 if/when 안) → LOW.
+     안전 판정이 직접 경로에서 나왔고 공통 실행 경로도 있으면, 그 경로로 와도 안전한 이유("공통 실행 경로로 이 구문을 직접 불러도 세션 값으로 덮어씀: …")를
+     근거에 한 줄 더 남긴다 — 직접 경로만 보이면 "공통 경로는 확인했나"를 알 수 없었다. 근거의 **마지막 줄은 항상 "매퍼파일:줄 식 (구문)"**이다(화면이 대상 식을 여기서 꺼낸다).
      안전해도 자동 오탐 처리는 하지 않는다. 재점검마다 최신 판정으로 바꾼다.
    - **시스템별 프레임워크 규칙은 `securecode/trace-rules.yml`(`TraceRules`)에만 둔다** — 세션 값을 요청 맵에 덮어쓰는 장치(어노테이션·덮어쓰는 위치·
      첫 파라미터 조건·키), 로그인 정보로 볼 메서드 접두어·타입 이름. 판정 로직에는 특정 시스템 이름이 없다. 규칙은 대상 코드에 그 어노테이션이 있을 때만
@@ -157,6 +159,25 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
      파일이 없으면 빈 규칙(덮어쓰기를 모르면 클라이언트 값 — 위험한 쪽). 규칙 폴더(`rules/`) 밖에 두는 이유는 그 안의 *.yml을 Semgrep이 규칙으로 읽어서다.
    - 추적은 부가 판정이라 실패해도 점검을 실패시키지 않는다. 대신 Semgrep 등급을 그대로 두고 `SecureCodeScanResult.traceNote`로 화면 알림에 올린다
      (추적 실패, 줄 안 개수가 달라 못 맞춘 건수, Java 구문 분석 실패 파일 수).
+6-1-b. **사용자 범위(인가)** — `kisa-authz-client-user-scope`(행안부 "부적절한 인가", CWE-639). **Semgrep 규칙이 아니라 연계 추적 판정이 탐지를 만든다**
+   (`UserScopeFindings`). `trace-rules.yml`의 `userScopeKeys`(회사·브랜드·사용자로 데이터를 가르는 SQL 파라미터 키)가 매퍼 SQL의 **조건 자리**(WHERE·ON·HAVING)에
+   `#{key}`로 쓰인 곳마다. 값 자리(INSERT VALUES·UPDATE SET·SELECT 목록)는 등록자·수정자 기록이라 뺀다 — CRM은 거의 모든 INSERT가 `#{loginEmpNo}`를
+   등록자로 넣어 구분하지 않으면 인가 탐지가 쏟아졌다(`fileMapper.xml`의 `insert_txtFile`). 자리는 `MapperXmlIndex.clauseIsCondition`이 가른다: `<where>`·
+   `<trim prefix="WHERE">` 안이면 조건, `<set>`·`<trim prefix="SET">` 안이면 값, 아니면 그 앞까지의 SQL(주석 제외)의 마지막 키워드(WHERE·ON·HAVING → 조건,
+   SET·VALUES·UPDATE → 값 — `ON DUPLICATE KEY UPDATE`·MERGE도 맞게), 키워드가 없으면 insert는 값·나머지(조각 포함)는 조건(모르면 놓치지 않는 쪽).
+   그런 곳마다
+   `${}`와 같은 엔진(`MybatisDollarTracer` — 매퍼 색인이 `#{}`도 모은다, `MapperXmlIndex.Statement.hashes`)으로 실행 시점의 값 출처를 판정하고,
+   **위험한 판정만** 탐지로 낸다: 클라이언트 값·공통 경로로 우회 가능 HIGH, 판정 불가 MEDIUM. 세션 덮어쓰기·서버 세팅·XML 결정은 내지 않는다(판정에서 만든
+   탐지라 안전한 것까지 내면 거의 모든 SQL이 목록에 오른다). 위치는 조건이 쓰인 매퍼 SQL 줄, 근거는 컨트롤러 → 서비스 → 매퍼 경로. 코드 조각·지문은
+   Semgrep 탐지와 같은 방법(`SecureCodeSnippetBuilder`)이라 재점검 비교·처리여부가 똑같이 동작한다. `${key}`로 쓰인 사용자 범위 키는 SQL 삽입 판정이 이미 같은
+   방법으로 보므로 내지 않는다. (구문, 키) 판정은 메모해 재사용한다 — 사용자 범위 키는 거의 모든 구문에 여러 번 쓰인다.
+   - **시스템이 다른 것은 키 이름(설정)뿐이다.** 키가 설정에 없으면 판정하지 않고 알림("userScopeKeys가 없어 판정하지 않음"), 키가 있는데 이 저장소 매퍼에
+     하나도 안 쓰이면 "이 시스템의 키를 추가하세요" 알림 — "문제 없음"과 구분되게. 새 시스템은 그 시스템의 범위 키와(세션 값을 넣는 장치가 있으면) `sessionOverwrites`를 추가한다.
+   - 이번 점검에서 판정을 끝까지 했을 때만 이 규칙 id를 활성 규칙에 넣는다(규칙셋에 없는 규칙이라) — 판정이 실패했거나 설정이 없어 안 했는데 넣으면 기존 탐지가 전부 "해결"이 된다.
+   - **예전 규칙 `kisa-authz-missing-user-scope`(2026-10-07 폐기)**: "CRM의 `@AddUserInfo`·`FrameEtcUtil.addUserInfo`·세션 조회가 없는 컨트롤러 매핑 메서드"를
+     후보로 냈다. `@AddUserInfo`는 로그인 정보를 넣어 주는 편의 장치일 뿐 강제가 아니고, 다른 시스템엔 없어 컨트롤러 거의 전부가 오탐이 되며, 사용자 범위 조건을
+     쓰지 않는 메서드도 걸렸다. 남은 OPEN 탐지는 `SecureCodeRuleRetirement`가 기동 때 조치완료(비고 "규칙 폐기…")로 정리한다 — 재점검은 규칙셋에 없는 규칙의
+     탐지를 해결 처리하지 않아 그대로 두면 영원히 OPEN이다. 규칙을 또 폐기하면 그 클래스의 `RETIRED_RULES`에 (id → 이유)를 추가한다.
 6-2. **AI 판별 문맥** — `SecureCodeScanService.attachAiContext`. 연계 추적이 등급을 다시 매긴 뒤, AI 판별 대상(`SecureCodeAiReviewService.isTarget`)에만
    `SecureCodeSnippetBuilder.withAiContext`로 걸린 줄을 감싼 가장 안쪽 메서드·생성자(JavaParser, 파일 하나만)를 `aiContext`로 붙인다. 메서드가
    `AI_CONTEXT_MAX_LINES`(80줄)보다 길면 걸린 줄이 가운데 오게 자르고(메서드 끝에 닿으면 앞으로 당김), 자바가 아니거나 구문 분석 실패·메서드 밖이면
@@ -164,7 +185,8 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
 7. `SecureCodeReconciler`(순수) → `SecureCodeFindingService.applyScan`(트랜잭션) — 새 지문은 OPEN, 있던 지문은 위치·조각 갱신(스캔이 해결한 건은 다시 OPEN),
    이번에 안 걸린 OPEN은 RESOLVED. **단 분석 실패 파일의 탐지와, 이번 규칙셋에 없는 규칙의 탐지는 해결 처리하지 않는다**
 8. 이력 SUCCESS(파일·탐지·신규·해결·분석 실패 수, 엔진·규칙셋 버전) / 실패면 FAILED. 성공하면 `triggerAiReviewIfNeeded` — 자동 실행 스위치(`AI_CONFIG`/`AUTO_TRIGGER`)가
-   켜져 있고 판별 대기(전체 앱)가 있으면 AI 배치를 띄운다(라이브러리 스캔의 트리거와 따로 — 서로 부르지 않는다. 배치는 하나라 뜨면 모든 단계 대기를 처리한다). 화면 오류 문구는 `IllegalArgumentException`·`SecureCodeScanException`만
+   켜져 있고 판별 대기(전체 앱)가 있으면 **시큐어코딩 단계만** 띄운다(`triggerAsync(BatchKind.SECURE_CODE)` → `vuln_assessor.py securecode`, 로그 `ai-securecode.log`).
+   예전엔 배치 하나로 전체를 돌려 코드 점검 뒤 로그에도 할 일 없는 CVE 단계(CVE 판단 0건, fix-plan …)가 찍혔다. 두 종류는 따로 떠서 동시에 돌 수 있고 "이미 떠 있으면 건너뜀"도 종류별이다. 화면 오류 문구는 `IllegalArgumentException`·`SecureCodeScanException`만
    메시지를 그대로, 나머지는 종류만(내부 경로 노출 방지). clone은 finally에서 지운다
 
 - **설치·기동 확인:** Semgrep 버전은 `securecode/requirements.txt`(`semgrep==1.178.0`)로 고정한다. `SemgrepRunner.checkOnStartup`(ApplicationReadyEvent, 별도 데몬 스레드)이
@@ -174,7 +196,10 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
   appId 값만 둔다 — 지워진 앱의 탐지는 조회에서 빠진다.
 - **처리여부:** 공통코드 `SC_STATUS` = OPEN(미조치)/RESOLVED(조치완료)/FALSE_POSITIVE(오탐)/ACCEPTED(위험수용). 사람이 OPEN 외로 바꾸면 `statusManual=true`가 되어
   같은 지문이 다시 걸려도·안 걸려도 스캔이 바꾸지 않는다. OPEN으로 되돌리면 다시 스캔을 따른다. 코드가 바뀌면 지문이 바뀌어 새 건이 된다(판단도 다시).
-  `SC_STATUS`는 `DataInitializer`가 **그룹이 없을 때만** 매 기동 심는다(사용자 0명일 때만 심는 다른 초기 데이터와 다르다 — 기존 DB에도 들어가야 해서).
+- **심각도:** HIGH/MEDIUM/LOW뿐이다(Semgrep ERROR/WARNING/INFO, 연계 추적 판정 — CRITICAL은 라이브러리 CVE의 CVSS에만 있다). 그래서 코드 점검 결과
+  조회조건은 라이브러리용 `SEVERITY`가 아니라 공통코드 `SC_SEVERITY`(HIGH/MEDIUM/LOW)를 쓴다 — 같은 그룹이면 걸리는 행이 없는 CRITICAL이 보였다.
+  값이 같은 문자열이라 뱃지·정렬(`SeverityOrder`)은 그대로다. AI 판별 대상 등급 `ai.securecode.severities`도 기본 HIGH다.
+  `SC_STATUS`·`SC_SEVERITY`는 `DataInitializer`가 **그룹이 없을 때만** 매 기동 심는다(사용자 0명일 때만 심는 다른 초기 데이터와 다르다 — 기존 DB에도 들어가야 해서).
 - **API**(`SecureCodeController`, `/api/secure-code`): `POST /scan {appId}`, `GET /scans?appId=`(최신 500건), `GET /findings?appId=&status=`(기본 OPEN, 빈 값=전체),
   `POST /findings/status`(실제로 바뀐 항목만 반영). 화면이 고정 메뉴라 `@RequiresProgram` 없이 로그인만 필요 — 취약점 관리와 같은 기준이다. 누가 바꿨는지는 `statusChangedBy`.
 - **추적 규칙 확인**(`SecureCodeScanService.checkTraceRules` → `TraceRuleDrafter`·`TraceRuleDraftPreview`, 순수): 코드 점검의 연계 추적 단계에서
@@ -195,11 +220,12 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
     CRM 실측: 지금 설정 기준 알림 없음, 설정 파일이 없다고 치면 "다른 항목 3개(@AddUserInfo → paramData, LoginUserVo, getLogin)·판정 26건이 바뀜".
 - **규칙셋 버전**은 `rules/*.yml`과 함께 `trace-rules.yml` 내용도 해시한다(`RuleSetLoader.load(rulesDir, extraFiles)`) — 추적 규칙이 바뀌면 같은 코드도 판정이 달라져서, 점검 이력에서 그 이유를 추적할 수 있게.
 - **화면:** 사이드바 "시큐어코딩" 구역의 고정 메뉴 **코드 점검**(`secure-code-scan` — 앱별 점검 버튼·마지막 점검·점검 이력)과
-  **코드 점검 결과**(`secure-code-mng` — 탐지 그리드, 처리여부 select·비고 저장, 항목별 건수 요약, 상세 모달의 줄 번호·강조 코드 조각과 CWE 링크,
-  `${}` 탐지의 "연계 판정" 열(뱃지 색은 등급과 같은 기준)과 모달의 근거 경로 목록, "AI 판별" 열(취약 (AI) 빨강·확인 필요 (AI) 노랑·
+  **코드 점검 결과**(`secure-code-mng` — 탐지 그리드, 처리여부 select·비고 저장, 제목 옆 "총 N건"(밑줄·손 모양 커서, 마우스를 올리거나 키보드 초점이 가면 항목별 건수를 공통 그리드(`Grid.render`, 부모를 `.grid-wrap`으로 둬 숨겨진 상태에서 높이 계산을 하지 않게)로 띄움 — 예전엔 제목 아래 한 줄에 모든 항목을 나열해 항목이 많으면 여러 줄로 꺾였다), 상세 모달의 규칙 id·줄 번호·강조 코드 조각과 CWE 링크(규칙 id는 내부 식별자라 그리드 열에 두지 않고 상세에만 — 무슨 약점인지는 항목·CWE 열이 보여준다),
+  `${}` 탐지의 "연계 판정" 열(뱃지 색은 등급과 같은 기준, 열에는 판정만 보이고 대상 식·근거는 툴팁, 상세 모달 뱃지에는 매퍼 판정의 대상 식을 붙임 — "서버가 세팅 · ${loginBrndzCd}". 한 줄에 `${}`가 여럿이면
+  탐지도 여럿인데 위치·항목이 같아 어느 행이 어느 값의 판정인지 구분되지 않았다. `SecureCodeFindingView.traceTarget`이 근거 마지막 줄에서 꺼낸다)과 모달의 근거 경로 목록, "AI 판별" 열(취약 (AI) 빨강·확인 필요 (AI) 노랑·
   오탐 의심 (AI) 회색·판별 대기 파랑, 대상이 아니면 빈칸)과 모달의 신뢰도·이유·"참고 의견" 안내).
   APP·처리여부는 서버에서, 심각도·항목·파일은 받은 목록을 화면에서 거른다. 코드 조각은 전부 textContent로 그린다.
-- **규칙(45개 / 22개 파일, 행안부 7개 분류 중 시간 및 상태를 뺀 6개):** 2026-10-02에 아래 기존 규칙에 더해 추가한 것 —
+- **규칙(44개 / 22개 파일, 행안부 7개 분류 중 시간 및 상태를 뺀 6개 — 2026-10-07 인가 후보 규칙 1개 폐기):** 2026-10-02에 아래 기존 규칙에 더해 추가한 것 —
   입력데이터 검증: 경로 조작(요청값→파일 경로 taint ERROR, 다운로드 응답 안의 변수 경로 WARNING — `path-traversal.yml`), XXE(외부 개체를 막는 설정 없이
   만든 XML 파서 WARNING — `xxe.yml`), 오픈 리다이렉트(`open-redirect.yml`), LDAP 삽입·XML(XPath) 삽입·코드 삽입(ScriptEngine·SpEL·`Class.forName`)·
   HTTP 응답분할(`injection.yml`, 앞 셋 ERROR·응답분할 WARNING). **모든 taint 규칙**(기존 명령어 삽입·SSRF·`xss-java` 포함)의 출처에
@@ -231,16 +257,11 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
   하드코드된 중요정보(Java, 설정 파일 — `${}` 참조와 Jasypt `ENC(...)`는 제외, 복호화 키 `jasypt.encryptor.password`는 잡음), 취약한 암호, 부적절한 난수.
   규칙 메타데이터에 행안부 분류·항목명·CWE. 행안부 항목 **번호**는 원문 확인 전이라 넣지 않았다.
   taint 규칙은 무료판 Semgrep 한계로 **한 메서드 안에서만** 흐름을 본다 — 다른 메서드를 거친 입력은 WARNING 규칙(위험 호출 지점)으로만 잡힌다.
-  **인증/인가(`authz.yml`, 5개):** 권한을 요청 값으로 판단(`param.get("isAdmin")`, `getParameter("role")` 등 — ERROR, CWE-807),
-  Spring Security 전체 허용(`anyRequest().permitAll()`)·CSRF 끔·특정 계정명 하드코딩 비교(WARNING),
-  사내 프레임워크용 — 컨트롤러(`@RestController`/`@Controller` 클래스) 매핑 메서드가 요청 데이터를 받는데 `@AddUserInfo`도, 세션 조회도,
-  `FrameEtcUtil.addUserInfo` 호출도 없으면 후보(WARNING, CWE-285). 인가 약점은 "검사가 없는" 것이라 확정하지 못하고 후보로만 낸다.
-  규칙은 CRM_BACK 구조를 보고 만들었다: Spring Security는 전부 허용·CSRF 끔, 인증은 `FrameHandlerInterceptorForToken`(JWT 쿠키, `/**`, 예외는
-  설정값 `interceptorExcludes`), 사용자 범위(브랜드·회사·사용자)는 `@AddUserInfo` AOP가 세션 값을 요청 파라미터에 덮어써서 맞춘다
-  (매퍼의 `#{loginCompCd}`·`${loginBrndzCd}` 등이 이 값을 쓴다).
+  **인증/인가(`authz.yml`, 4개):** 권한을 요청 값으로 판단(`param.get("isAdmin")`, `getParameter("role")` 등 — ERROR, CWE-807),
+  Spring Security 전체 허용(`anyRequest().permitAll()`)·CSRF 끔·특정 계정명 하드코딩 비교(WARNING). 규칙에 특정 시스템의 어노테이션·클래스 이름을 넣지 않는다.
+  사용자 범위(회사·브랜드·사용자) 조건의 값을 클라이언트가 정할 수 있는지는 패턴이 아니라 연계 추적이 판정한다(6-1-b, `kisa-authz-client-user-scope`).
 - **실측(2026-10-01, CRM_BACK, 인증/인가 규칙 추가 후 22개):** 탐지 104건(+18) — 권한 요청 값 판단 3(`Crc020Service`의 `isAdmin`, 결재 분기),
-  permitAll 1·CSRF 끔 1(`FrameWebSecurityConfig`), 사용자 범위 누락 후보 13(로그인·SSO처럼 원래 공개인 것 포함, `WorkflowAPIController`의 finish/init/confirm은
-  HttpServletRequest도 받지 않는다). 후보 규칙은 세션·`addUserInfo` 직접 호출을 빼서 42개 메서드 중 13개로 줄었다.
+  permitAll 1·CSRF 끔 1(`FrameWebSecurityConfig`), 사용자 범위 누락 후보 13(이 후보 규칙은 2026-10-07 폐기 — 6-1-b).
 - **실측(2026-10-02, CRM_BACK, `${}` 연계 추적):** Semgrep `${}` 60건과 추적 판정 60건이 (파일, 줄, 줄당 개수)까지 일치, 추적 약 2초.
   클라이언트 값 14(`WHERE ${saleQuery}`·`${custQuery}`·`${customerQuery}` — 서버가 세팅하지 않는 SQL 조각, 테이블명 `${ym}`, `/common/saveOne`으로 실행되는
   `${sortOrd}`, `<otherwise>` 안의 `${type}`), 공통 경로로 우회 가능 33(`brndzCd`·`tableNm` — 서비스는 로그인 정보·상수로 세팅), 세션 덮어쓰기 7·서버 세팅 4
@@ -252,7 +273,11 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
   `${}`는 동적 테이블명(`SU_MEM_INFO_${brndzCd}`)·Java에서 만든 WHERE 조각(`${saleQuery}`)·정렬값이 섞여 사람 검토가 필요하다.
 - **홈 대시보드:** 두 기능을 좌우 카드로 나란히 둔다(`home.html` `.domain-card` — 조치할 건수 하나를 크게, 비율 둘을 작게, 앱별 TOP 5 막대는
   `fragments/app-bars.html` 공통). 1100px 아래면 위아래로. 시큐어코딩 수치는 `SecureCodeFindingService.getDashboard`(지워진 앱 제외, 탐지가 없으면
-  비율 대신 "-"). 카드의 "… ›" 버튼은 사이드바 메뉴를 대신 눌러 탭으로 연다.
+  비율 대신 "-"). 카드의 "… ›" 버튼은 사이드바 메뉴를 대신 눌러 탭으로 연다(카드가 바뀌어도 되게 `#homePanel`에 위임으로 건다).
+  **자동 새로고침**(1분, 체크박스로 끄고 켬, 상태는 `localStorage` `home.autoRefresh`): 홈은 탭 셸이라 페이지를 다시 읽으면 열린 탭이 전부 닫히므로,
+  `/`를 다시 받아(`fetch(..., {silent:true})` — 스피너 없음) 카드 영역(`.overview`)만 바꿔 끼운다. 수치를 JS로 다시 그리지 않아 화면 모양은 템플릿 한 곳뿐이다.
+  홈이 보일 때만 돌고(다른 탭·가려진 브라우저 탭이면 쉼), 다시 보일 때 주기가 지났으면 바로 갱신한다. 실패하면 이전 수치를 두고 "갱신 실패 시각"을 경고색으로,
+  세션이 끝나 로그인 페이지로 리다이렉트되면 창 전체를 로그인으로 보낸다. 켜 둔 채 홈을 띄워 두면 요청이 계속 가서 세션 유휴 만료가 일어나지 않는다.
 
 ---
 
@@ -295,14 +320,21 @@ AI에게 넘기는 근거도 마찬가지다. OSV에서 뽑은 `knownFixedVersio
 
 시큐어코딩 점검 탐지가 진짜 취약한지 AI가 코드를 보고 판별한다. 라이브러리 단계들과 무관하고 같은 배치의 마지막에 돈다.
 
-- **대상(`isTarget`):** OPEN이면서 등급이 `ai.securecode.severities`(기본 HIGH,CRITICAL — 코드 점검 등급은 HIGH/MEDIUM/LOW뿐이라 사실상 HIGH)이고
+- **대상(`isTarget`):** OPEN이면서 등급이 `ai.securecode.severities`(기본 HIGH)이고
   **연계 추적 판정이 없거나 판정 불가**인 것. 연계 추적이 클라이언트 값(HIGH)·서버 세팅(LOW) 등으로 정한 건은 보내지 않는다 — AI는 마지막 수단.
   판정 불가는 MEDIUM이라 기본 설정에선 대상이 안 된다. 그래서 실제 대상은 추적 대상이 아닌 ERROR 규칙(인증서 검증 끄기, 역직렬화, taint 규칙 등)이다.
+  **추가 규칙**(`ai.securecode.extra-rules`, 2026-10-07): 등급과 무관하게 넣는 규칙 — 기본 난수(`kisa-insecure-random`)·취약한 해시(`kisa-weak-crypto-hash`)·
+  솔트 없는 해시(`kisa-hash-without-salt`)·XXE(`kisa-xxe-parser`), 모두 MEDIUM. 판정의 핵심이 "그 코드를 무엇에 쓰는가"(인증번호용 난수인지 화면 샘플링용인지,
+  비밀번호용 SHA-1인지 캐시 키용인지, 파서가 클라이언트 파일을 읽는지)라 값 출처 추적으로는 못 정하고 메서드를 읽으면 대개 보인다 — 오탐이 가장 많은 묶음이다.
+  `${}`·위험 호출 지점처럼 연계 추적이 판정한 묶음과 품질성 규칙(빈 catch 등)은 AI가 더할 정보가 적어 넣지 않았다.
   **하드코드된 비밀값 규칙(id에 `hardcoded-secret`)은 뺀다** — 점검 단계에서 값을 `****`로 가려 두므로 AI가 평문인지 `ENC(...)`·`${}` 참조인지 구분할 근거가 없다.
   첫 실행(2026-10-06, CRM_BACK·CRM_BATCH 30건)에서 22건이 비밀값 규칙이었고, 값을 못 본 채 거의 다 "취약(high)"을 냈다(규칙을 되풀이한 것뿐).
   그때 저장된 판별은 DB에 남아 있지만 `isReviewCurrent`가 비밀값 규칙이면 숨긴다. 나머지 8건(업로드 원래 파일명 2·`isAdmin` 3·TLS 2·RSA 1024 1)은 대상 그대로.
-- **보내는 것:** 규칙·행안부 항목·CWE·등급·규칙 설명·파일 경로·줄, 코드 문맥(`aiContext`, 없으면 화면용 조각), 연계 추적 판정·근거.
-  코드는 보내기 직전에 `SecretMasker`로 가린다(되돌릴 원문이 없어 대응표는 버린다). **소스 코드가 AI로 나가는 유일한 곳이다**(사내 정책 예외, 2026-10-06 승인).
+- **보내는 것:** 규칙·행안부 항목·CWE·등급·규칙 설명·파일 경로·줄, 코드 문맥(`aiContext`), 연계 추적 판정·근거.
+  **코드 문맥이 없는 탐지는 대기열에 올리지 않고 다음 점검을 기다린다** — 대상 기준을 넓힌 직후 기존 탐지에는 문맥이 없는데, 화면용 조각(앞뒤 5줄)으로 판별하면
+  근거가 부족하고 다음 점검에서 문맥이 생기면 입력이 바뀌어 다시 판별(과금)된다. 화면은 이런 건도 "판별 대기"로 보이고 모달에 "코드 문맥이 아직 없으면 다음 코드 점검 뒤"라고 적는다.
+  코드는 보내기 직전에 `SecretMasker`로 가린다(되돌릴 원문이 없어 대응표는 버린다). **소스 코드가 AI로 나가는 유일한 곳이다**(사내 정책 예외, 2026-10-06 승인,
+  2026-10-07 추가 규칙까지 확대).
 - **재판별 기준:** 입력(가린 코드·규칙·경로·연계 추적)의 SHA-256(`aiInputHash`)이 저장된 값과 다를 때만. 줄 번호는 넣지 않는다(위에 한 줄 추가로 재과금되지 않게).
   배치는 pending에서 받은 해시를 그대로 돌려준다(CveSummary와 같은 방식). 재점검으로 입력이 바뀌면 옛 판별은 화면에서 숨기고(`isReviewCurrent`) 다시 대기가 된다.
 - **결과:** `aiVerdict`(VULNERABLE/NOT_VULNERABLE/UNCERTAIN)·`aiConfidence`·`aiReasoning`(2000자 이하)·`aiReviewedAt`. **처리여부는 바꾸지 않는다** —
@@ -441,7 +473,7 @@ OPEN만)에서도 빠진다.
 | `/js/search-form.js` | 조회영역 공통 렌더러 `SearchForm.render(container, fields, {onSearch})` → `values()`/`reset()`/`field(id)`/`matches(row)`/`ready`. `matches(row)`는 전체 목록을 받아 조회조건을 화면에서 거르는 화면(프로그램·사용자·공통코드 관리, 취약점 조회)이 쓴다 — text 필드마다 `row[field.id]` 부분 일치(대소문자 무시). 화면은 `<section class="search-row" id="searchArea">`만 두고 label/input 마크업을 직접 쓰지 않는다 |
 | `fragments/page-toolbar.html` | 화면 첫 줄 — 좌상단 프로그램명 + 우측 상단 공통 버튼. 값(`programNm`, `pageButtons`)은 `ViewController`가 넣는다. 버튼은 마크업에 쓰지 않는다(아래 "화면 공통 버튼" 참고) |
 | `/js/page-buttons.js` | `PageButtons.bind({ btnSave: fn })` — 권한 때문에 안 그려진 버튼은 건너뛰고 핸들러를 건다. `loading-overlay.html`이 싣는다 |
-| `fragments/loading-overlay.html` | 전역 스피너 + **CSRF 헤더를 붙이는 공통 fetch 래퍼** + `hotkeys.js`·`page-buttons.js`·`xlsx-writer.js`·`modal-drag.js` 로드 |
+| `fragments/loading-overlay.html` | 전역 스피너 + **CSRF 헤더를 붙이는 공통 fetch 래퍼**(`init.silent: true`면 스피너 없이 — 홈 자동 새로고침 같은 백그라운드 갱신용) + `hotkeys.js`·`page-buttons.js`·`xlsx-writer.js`·`modal-drag.js` 로드 |
 
 화면 코드에서 `fetch(...)`에 CSRF 헤더를 붙이는 부분을 찾아도 없다 — `loading-overlay.html`이
 `window.fetch` 자체를 감싸서 전역으로 처리한다.
@@ -483,14 +515,15 @@ OPEN만)에서도 빠진다.
 | `nvd.api.min-interval-ms` | NVD 호출 사이 최소 간격(기본 700). NVD는 키가 있어도 30초당 50회가 상한이라 간격을 두지 않으면 반드시 429를 맞는다 |
 | `nvd.api.max-retries` | NVD 429/5xx 재시도 횟수(기본 3) |
 | `nvd.api.timeout-seconds` | NVD 호출 1회 타임아웃(기본 20) |
-| `git.access.token` / `git.user.name` | 스캔 대상 저장소 clone |
+| `git.credentials[n].url-prefix` / `.username` / `.token` | 저장소 clone 인증 정보(`GitCredentialResolver`, 빈은 `GitConfig`). 저장소 주소와 경로 단위로 **가장 길게** 일치하는 항목을 쓴다(`.../crm`은 `.../crm2/...`에 안 걸림, 대소문자·끝 슬래시 무시). 일치하는 항목이 없으면 인증 없이 clone한다(공개 저장소). 서버 전체 토큰은 호스트 주소(`https://git.sejung.co.kr/`)를 url-prefix로 둔 항목이고, 그룹·저장소마다 토큰이 다르면 더 긴 url-prefix 항목을 추가한다 — 따로 "기본 토큰" 키는 없다. username이 비면 `oauth2`. url-prefix가 https가 아니거나 호스트가 `scan.allowed-repo-hosts`에 없거나 token이 비거나 같은 url-prefix가 두 번이면 **기동 실패**(조용히 인증 없이 clone하다 "저장소 없음"으로 실패하면 원인을 못 찾는다). 토큰은 대개 저장소가 아니라 서버·그룹 단위로 발급되고 비밀값을 DB에 넣지 않으려고 앱 관리(DB)가 아니라 설정 파일에 둔다. clone마다 어느 항목을 썼는지(url-prefix, 토큰 제외) 로그에 남는다. **예전 단일 키 `git.access.token`/`git.user.name`(2026-10-06까지)은 없앴다** — 남아 있으면 옮기라는 메시지로 기동을 멈춘다(어느 주소든 같은 토큰을 붙여 다른 호스트를 허용하는 순간 사내 토큰이 그쪽으로 나갈 수 있었다) |
 | `maven.home` | `dependency:tree` 실행용 Maven 홈 |
 | `claude.api.key` | AI 판단 / fix-plan / 설명 요약 / 영향 분석 / 코드 점검 판별 |
 | `ai.internal.token` | 자바 ↔ 파이썬 배치 인증 (`SECURITY_MONITOR_AI_TOKEN`과 같은 값) |
 | `ai.python.command` | 파이썬 실행 명령 (이 PC는 `py`) |
 | `ai.assessor.script` | 배치 스크립트 경로 (`../ai/vuln_assessor.py`) |
 | `ai.assessment.severities` | AI 판단 대상 등급 (기본 `HIGH,CRITICAL`) |
-| `ai.securecode.severities` | 선택. 코드 점검 탐지 중 AI 판별 대상 등급 (기본 `HIGH,CRITICAL`). 연계 추적이 판정한 건과 하드코드된 비밀값 규칙은 등급과 무관하게 빠진다 |
+| `ai.securecode.severities` | 선택. 코드 점검 탐지 중 AI 판별 대상 등급 (기본 `HIGH`, 코드 점검 등급은 HIGH/MEDIUM/LOW). 연계 추적이 판정한 건과 하드코드된 비밀값 규칙은 등급과 무관하게 빠진다 |
+| `ai.securecode.extra-rules` | 선택. 등급과 무관하게 AI 판별 대상에 넣는 규칙 id(쉼표 구분, 기본 `kisa-insecure-random,kisa-weak-crypto-hash,kisa-hash-without-salt,kisa-xxe-parser`, 비우면 없음). 연계 추적 판정·비밀값 규칙 제외는 같다 |
 | `github.token` | 선택. 영향 분석이 GitHub Releases를 받을 때 쓰는 읽기 전용 토큰. 배치에 `GITHUB_TOKEN`으로 넘긴다. 없으면 토큰 없이 부른다 |
 | `ai.auto-trigger.enabled` | 스캔 후 AI 배치 자동 실행 스위치의 **초기값**(기본 `true`, DB를 처음 만들 때만 쓰인다). 실제 스위치는 공통코드 `AI_CONFIG`/`AUTO_TRIGGER`의 사용여부로, 공통코드 관리 화면에서 바꾸면 재기동 없이 다음 스캔부터 적용된다(`ComCdService.isEnabled`). DB를 처음 만들 때만 이 값으로 심는다(파일 DB라 재기동해도 공통코드 값이 유지된다). 로컬은 `false`로 두면 과금 없이 스캔할 수 있다 |
 | `securecode.semgrep.command` | 선택. semgrep 실행 파일(기본 `semgrep`). 기본값인데 PATH에 없으면 `ai.python.command`로 파이썬 Scripts 폴더를 물어 거기서 찾는다(`SemgrepRunner.findInPythonScripts` — 이 PC는 PATH에 없다). 직접 준 경로는 그대로 쓴다. `py -m semgrep`은 지원 중단됐다 |
@@ -499,7 +532,9 @@ OPEN만)에서도 빠진다.
 | `securecode.trace-rules` | 선택. MyBatis `${}` 연계 추적의 시스템별 프레임워크 규칙 파일(기본 `../securecode/trace-rules.yml`) |
 | `scan.allowed-repo-hosts` | 앱 등록을 허용할 저장소 호스트 목록(쉼표 구분, 기본 `git.sejung.co.kr`). 다른 호스트를 쓰게 되면 여기서 늘린다 |
 
-AI 배치 실행 로그는 `backend/ai-assessor.log`에 이어 쌓인다(gitignore 대상). 줄마다 `[YYYY-MM-DD HH:MM:SS][traceId]`가 붙는다(`_TimestampedStream`, traceback 포함). traceId는 실행마다 하나 — 서버가 띄우면 `AiAssessmentTriggerService`가 만들어 `SECURITY_MONITOR_TRACE_ID`로 넘기고 서버 로그의 "배치 실행 시작/종료" 줄에도 찍는다(사람이 직접 돌리면 파이썬이 만든다). 실행마다 `===== AI 배치 시작 =====` / `===== AI 배치 종료(exit=N) =====` 줄과 끝의 빈 줄이 남는다. 서버가 `PYTHONIOENCODING=utf-8`로 띄워 로그는 UTF-8이다(예전엔 윈도우 기본 cp949라 IDE에서 한글이 깨졌다).
+AI 배치 실행 로그는 종류별 파일에 이어 쌓인다(gitignore 대상) — 라이브러리 취약점 `backend/ai-assessor.log`, 시큐어코딩 `backend/ai-securecode.log`
+(`AiAssessmentTriggerService.BatchKind` — 동시에 돌 수 있어 한 파일이면 두 실행의 줄이 섞인다). 진입점 인자: `vuln_assessor.py cve|securecode`(인자 없으면 둘 다, 사람이 직접 돌릴 때).
+`/api/ai/status`는 종류별 상태 맵을 준다. 줄마다 `[YYYY-MM-DD HH:MM:SS][traceId]`가 붙는다(`_TimestampedStream`, traceback 포함). traceId는 실행마다 하나 — 서버가 띄우면 `AiAssessmentTriggerService`가 만들어 `SECURITY_MONITOR_TRACE_ID`로 넘기고 서버 로그의 "배치 실행 시작/종료" 줄에도 찍는다(사람이 직접 돌리면 파이썬이 만든다). 실행마다 `===== AI 배치 시작(시큐어코딩) =====`(괄호에 기능 이름) / `===== AI 배치 종료(exit=N) =====` 줄과 끝의 빈 줄이 남는다. 서버가 `PYTHONIOENCODING=utf-8`로 띄워 로그는 UTF-8이다(예전엔 윈도우 기본 cp949라 IDE에서 한글이 깨졌다).
 
 ---
 
@@ -532,14 +567,23 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `RuleSetLoaderTest` — 규칙 id·규칙셋 버전, 규칙 0개·폴더 없음은 실패, 실제 규칙 폴더 읽기
 - `MybatisDollarTracerTest` — `${}` 연계 추적(상수·삼항·모든 분기 상수 반환은 서버 세팅, else 없는 조건부 세팅은 클라이언트 값, XML 상수 비교·bind,
   세션 덮어쓰기는 container 안의 키만·첫 파라미터 조건, 공통 실행 경로 우회, List 실행 제외, 다른 프레임워크 규칙은 설정만으로, 규칙 없으면 클라이언트 값, 설정 파일 읽기, XML 줄 번호·주석 제외)
+- `UserScopeTraceTest` — 조건·값 자리 구분(INSERT 값/INSERT…SELECT WHERE, UPDATE SET/WHERE·SET 안 서브쿼리, `<where>`·`<set>`·`<trim>`, MERGE ON·
+  ON DUPLICATE KEY UPDATE, 주석 속 키워드 무시, 키워드 없는 조각은 조건), 값 자리의 키는 인가 판정에서 빠짐, 맵을 돌려주는 유틸 메서드 추적, 사용자 범위 판정(클라이언트가 보낸 키는 클라이언트 값, 설정한 장치가 덮어쓰면 안전·안 덮어쓰는 키는 클라이언트 값, 서비스가 로그인 정보로
+  넣어도 공통 실행 경로로 우회, 키가 매퍼에 없으면 판정 없음·알림용 플래그, 설정 없으면 판정 안 함, 위험한 판정만 탐지·지문 고정, `#{}` 첫 이름 키, 설정 읽기) —
+  CRM이 아닌 가상 시스템 설정으로 검증한다
+- `SecureCodeRuleRetirementTest` — 폐기 규칙의 미조치 탐지를 조치완료로 정리(사람이 쓴 비고 유지, 사람이 정한 상태는 그대로), 폐기 규칙이 규칙 폴더에 없음
+- `SecureCodeFindingViewTest` — 매퍼 판정 근거 마지막 줄에서 대상 식 꺼내기(`${}`·`#{}`), 매퍼 판정이 아니면 없음
 - `DollarTraceMergerTest` — 판정별 등급 재매김·근거·지문 유지, 한 줄 여러 `${}`는 순서로, 줄 안 개수가 다르면 Semgrep 등급 유지, 다른 규칙은 그대로
 - `SinkTracerTest` — 서비스의 위험 호출을 컨트롤러까지 따라가 판정(요청값 주소 CLIENT, `@Value` 주소·고정 호스트 + 쿼리 SERVER_SET, 원래 파일명 저장 CLIENT,
   UUID 파일명 SERVER_SET, 상수 명령 SERVER_SET), 판정으로 등급 재매김(CLIENT HIGH·서버 LOW), 호출을 못 찾은 탐지·다른 규칙은 그대로, 지문 유지
 - `TraceRuleDrafterTest` — AOP 포인트컷·호출 추적으로 세션 덮어쓰기 후보(세션 값 아닌 키는 따로), 이름 붙은 포인트컷·요청 맵 자체 덮어쓰기, AOP 없음·XML AOP 안내,
   초안 YAML을 그대로 TraceRules가 읽음, 지금 설정 대비 상태(이미 있음/신규/다름), 반영 시 판정 변화, 점검 완료 알림 문구(설정과 같으면 없음), 카멜 공통 접두어
+- `GitCredentialResolverTest` — 저장소 주소별 인증 선택(가장 긴 일치, 경로 단위 경계, 대소문자·끝 슬래시 무시, 호스트 항목이 서버 전체 토큰·다른 호스트엔 안 붙음,
+  설정 없으면 인증 없음, 빈 사용자 이름은 oauth2, 로그 문자열에 토큰 없음, 잘못된 설정·중복 url-prefix는 기동 실패) / `GitConfigTest` — `git.credentials[n].*` 키가
+  실제로 읽힘, 예전 단일 키가 남아 있으면 기동 실패, 설정 없으면 인증 없음
 - `SecretMaskerTest` — pom 비밀값만 가림(버전·좌표·`${}` 참조는 남김), AI 결과 되돌림, 보낸 뒤 pom이 바뀌면 되돌리지 않음, 비밀값 없으면 원문 그대로
 
-규칙 자체는 `securecode/rules/`의 예제 파일로 `securecode/test_rules.py`(규칙 파일마다 `semgrep --test`)가 검증한다(22개 규칙 파일 통과).
+규칙 자체는(사용자 범위 판정은 Semgrep 규칙이 아니라 위 Java 테스트로) `securecode/rules/`의 예제 파일로 `securecode/test_rules.py`(규칙 파일마다 `semgrep --test`)가 검증한다(22개 규칙 파일 통과).
 
 파이썬은 `ai/test_release_notes.py`(unittest, 네트워크 없음) — 릴리스 노트 수집기의 버전 범위·절 자르기·HTML 본문 추출·scm 해석·총량 상한,
 가짜 세션으로 본 수집 순서(공식 문서가 있으면 GitHub·Maven Central을 부르지 않음, 없으면 POM의 scm을 따라감).

@@ -24,9 +24,16 @@ import java.util.Set;
  * @param sessionOverwrites 요청 매핑에 붙으면 요청 맵의 키를 세션 값으로 덮어쓰는 장치(AOP 등)
  * @param loginMethodPrefixes 이 이름으로 시작하는 메서드의 반환값은 로그인 정보(서버 값)로 본다(예: getLogin)
  * @param loginTypeNames 이 문자열이 타입 이름에 들어간 객체에서 꺼낸 값은 로그인 정보로 본다(예: LoginUser)
+ * @param userScopeKeys 매퍼 SQL에서 이 키(#{key}·${key})가 쓰이면 사용자 범위 조건(회사·브랜드·사용자로 데이터를 가르는 값)으로 본다.
+ *                      그 값을 클라이언트가 정할 수 있으면 다른 사용자의 데이터에 접근할 수 있다(UserScopeFindings). 비면 이 판정을 하지 않는다
  */
 public record TraceRules(List<SessionOverwrite> sessionOverwrites, Set<String> loginMethodPrefixes,
-                         Set<String> loginTypeNames) {
+                         Set<String> loginTypeNames, Set<String> userScopeKeys) {
+
+    /** 사용자 범위 키 없이(사용자 범위 판정을 하지 않는 규칙). */
+    public TraceRules(List<SessionOverwrite> sessionOverwrites, Set<String> loginMethodPrefixes, Set<String> loginTypeNames) {
+        this(sessionOverwrites, loginMethodPrefixes, loginTypeNames, Set.of());
+    }
 
     /**
      * @param name               사람이 알아볼 이름(근거 표시용)
@@ -68,7 +75,8 @@ public record TraceRules(List<SessionOverwrite> sessionOverwrites, Set<String> l
                     string(rule.get("requiredFirstParam")),
                     strings(rule.get("keys"))));
         }
-        return new TraceRules(overwrites, strings(map.get("loginMethodPrefixes")), strings(map.get("loginTypeNames")));
+        return new TraceRules(overwrites, strings(map.get("loginMethodPrefixes")), strings(map.get("loginTypeNames")),
+                strings(map.get("userScopeKeys")));
     }
 
     private static List<?> list(Object value) {

@@ -102,7 +102,7 @@ public final class TraceRuleDraftPreview {
         draft.loginMethodPrefixes().forEach(e -> prefixes.add(e.value()));
         Set<String> types = new LinkedHashSet<>(current.loginTypeNames());
         draft.loginTypeNames().forEach(e -> types.add(e.value()));
-        return new TraceRules(new ArrayList<>(overwrites.values()), prefixes, types);
+        return new TraceRules(new ArrayList<>(overwrites.values()), prefixes, types, current.userScopeKeys());
     }
 
     /** 같은 ${}(경로·줄·식)의 판정이 바뀐 곳. 한 줄에 같은 식이 둘이면 순서로 맞춘다. */

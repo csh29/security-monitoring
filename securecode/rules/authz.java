@@ -33,39 +33,3 @@ class RoleService {
         return "Y".equals(userId);
     }
 }
-
-@RestController
-class SampleController {
-    @PostMapping("/a")
-    // ruleid: kisa-authz-missing-user-scope
-    public Object noScope(HttpServletRequest request, @RequestBody Map<String, String> param) {
-        return service.list(param);
-    }
-
-    @AddUserInfo
-    @PostMapping("/b")
-    // ok: kisa-authz-missing-user-scope
-    public Object withScope(HttpServletRequest request, @RequestBody Map<String, String> param) {
-        return service.list(param);
-    }
-
-    @PostMapping("/c")
-    // ok: kisa-authz-missing-user-scope
-    public Object readsSession(HttpServletRequest request, @RequestBody Map<String, String> param) {
-        LoginUserVo user = (LoginUserVo) request.getSession().getAttribute("LOGIN_USER");
-        return service.list(param, user);
-    }
-
-    @PostMapping("/d")
-    // ok: kisa-authz-missing-user-scope
-    public Object manual(HttpServletRequest request, @RequestBody HashMap param) {
-        FrameEtcUtil.addUserInfo(param, request);
-        return service.list(param);
-    }
-
-    @GetMapping("/e")
-    // ok: kisa-authz-missing-user-scope
-    public Object noBody() {
-        return "ok";
-    }
-}

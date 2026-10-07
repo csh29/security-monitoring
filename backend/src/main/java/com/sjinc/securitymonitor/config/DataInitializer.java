@@ -43,6 +43,7 @@ public class DataInitializer implements CommandLineRunner {
     private static final String INITIAL_PASSWORD_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
     private static final int INITIAL_PASSWORD_LENGTH = 20;
     private static final String SECURE_CODE_STATUS_GROUP = "SC_STATUS";
+    private static final String SECURE_CODE_SEVERITY_GROUP = "SC_SEVERITY";
 
     private final UserRepository userRepository;
     private final ProgramRepository programRepository;
@@ -60,6 +61,7 @@ public class DataInitializer implements CommandLineRunner {
     public void run(String... args) {
         // 아래 "DB가 비었을 때 한 번만" 규칙보다 먼저 돈다 — 기능이 생기기 전에 만들어진 DB에도 들어가야 화면 select가 채워진다.
         seedSecureCodeStatusIfAbsent();
+        seedSecureCodeSeverityIfAbsent();
 
         if (userRepository.count() > 0) return;
 
@@ -238,6 +240,24 @@ public class DataInitializer implements CommandLineRunner {
                 .codeValue(SecureCodeFinding.ACCEPTED).codeName("위험수용").sortOrder(sort).useYn("Y")
                 .remark("실제 약점이지만 다른 통제가 있거나 영향이 작아 고치지 않기로 한 건").build());
         log.info("공통코드 {}(코드 점검 처리여부)를 추가했습니다.", SECURE_CODE_STATUS_GROUP);
+    }
+
+    /**
+     * 코드 점검 심각도(공통코드 SC_SEVERITY) — HIGH/MEDIUM/LOW. 라이브러리 취약점의 SEVERITY에는 CVSS의 CRITICAL이 있지만 코드 점검 등급은
+     * Semgrep ERROR/WARNING/INFO와 연계 추적 판정에서 나와 CRITICAL이 없다. 같은 그룹을 쓰면 코드 점검 결과 조회조건에 걸리는 행이 없는 CRITICAL이
+     * 보여서 따로 둔다. 값은 SEVERITY와 같은 문자열이라 뱃지·정렬(SeverityOrder)은 그대로 쓴다. SC_STATUS와 같은 이유로 그룹이 없을 때만 심는다.
+     */
+    private void seedSecureCodeSeverityIfAbsent() {
+        if (comCdGroupRepository.existsById(SECURE_CODE_SEVERITY_GROUP)) return;
+
+        comCdGroupRepository.save(ComCdGroup.builder()
+                .codeGroup(SECURE_CODE_SEVERITY_GROUP).groupName("코드 점검 심각도").sortOrder(6).useYn("Y").build());
+        int sort = 1;
+        for (String level : new String[]{"HIGH", "MEDIUM", "LOW"}) {
+            comCdRepository.save(ComCd.builder().codeGroup(SECURE_CODE_SEVERITY_GROUP)
+                    .codeValue(level).codeName(level).sortOrder(sort++).useYn("Y").build());
+        }
+        log.info("공통코드 {}(코드 점검 심각도)를 추가했습니다.", SECURE_CODE_SEVERITY_GROUP);
     }
 
     /** 혼동되기 쉬운 문자(0/O, 1/l/I 등)를 뺀 문자셋에서 무작위로 뽑은 초기 비밀번호. */

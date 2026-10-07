@@ -796,4 +796,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    run_batch(main)
+    run_batch(main, "라이브러리 취약점")

@@ -83,11 +83,15 @@ import java.util.stream.Stream;
 public final class MybatisDollarTracer {
 
     /**
-     * @param verdicts     {@code ${}} 한 곳마다 판정 하나(경로·줄 순)
-     * @param failedFiles  구문 분석에 실패한 파일 — 그 안의 세팅·호출을 못 봤으니 판정이 덜 정확하다
+     * @param verdicts      {@code ${}} 한 곳마다 판정 하나(경로·줄 순)
+     * @param failedFiles   구문 분석에 실패한 파일 — 그 안의 세팅·호출을 못 봤으니 판정이 덜 정확하다
      * @param genericRoutes 클라이언트가 구문 id를 정하는 공통 실행 경로(근거 표시용)
+     * @param scopeVerdicts 사용자 범위 키(TraceRules.userScopeKeys)가 SQL 조건 자리(WHERE·ON·HAVING)에 {@code #{}}로 쓰인 곳마다 판정 하나(경로·줄 순).
+     *                      값 자리(INSERT VALUES·UPDATE SET)는 등록자·수정자 기록이라, {@code ${}}는 위 verdicts가 SQL 삽입으로 이미 판정하므로 넣지 않는다
+     * @param scopeKeysUsed 이 저장소의 매퍼에 사용자 범위 키가 하나라도 쓰였는가 — 키가 설정돼 있는데 false면 이 시스템의 키가 설정에 없다는 뜻이다
      */
-    public record Result(List<DollarVerdict> verdicts, List<String> failedFiles, List<String> genericRoutes) {
+    public record Result(List<DollarVerdict> verdicts, List<String> failedFiles, List<String> genericRoutes,
+                         List<DollarVerdict> scopeVerdicts, boolean scopeKeysUsed) {
     }
 
     /** SqlSession의 구문 실행 메서드. */
@@ -100,6 +104,12 @@ public final class MybatisDollarTracer {
     private final JavaSourceIndex java;
     private final TraceRules rules;
     private final ValueOriginTracer origin;
+    /**
+     * (구문, 키) 판정 재사용. 사용자 범위 키는 거의 모든 구문에 여러 번 쓰여(WHERE·INSERT 값) ${}보다 훨씬 많아서, 같은 구문의 같은 키를
+     * 매번 다시 추적하면 점검 시간이 그만큼 는다. 판정은 구문·키·bind 출처로만 정해지므로 줄이 달라도 같다.
+     */
+    private final Map<String, V> statementKeyMemo = new HashMap<>();
+
     private MybatisDollarTracer(List<MapperXmlIndex.MapperFile> mappers, JavaSourceIndex java, TraceRules rules) {
         this.mappers = mappers.toArray(MapperXmlIndex.MapperFile[]::new);
         this.java = java;
@@ -196,20 +206,50 @@ public final class MybatisDollarTracer {
         statements.values().forEach(s -> collectIncludes(s.fullId(), s.includes(), fragments, includers, new HashSet<>()));
 
         List<DollarVerdict> verdicts = new ArrayList<>();
+        List<DollarVerdict> scopeVerdicts = new ArrayList<>();
+        Set<String> scopeKeys = rules.userScopeKeys();
+        boolean scopeKeysUsed = false;
         for (MapperXmlIndex.MapperFile mapper : mappers) {
             for (MapperXmlIndex.Statement s : mapper.statements()) {
                 for (MapperXmlIndex.Dollar d : s.dollars()) {
-                    verdicts.add(judge(d, List.of(s.fullId()), sitesByStatement, genericSites));
+                    verdicts.add(judge(d, "$", List.of(s.fullId()), sitesByStatement, genericSites));
+                    scopeKeysUsed |= isScopeKey(d, scopeKeys);
+                }
+                for (MapperXmlIndex.Dollar d : s.hashes()) {
+                    if (!isScopeKey(d, scopeKeys)) continue;
+                    scopeKeysUsed = true;
+                    // 값 자리(INSERT VALUES·UPDATE SET)의 사용자 범위 키는 등록자·수정자 기록이라 인가 판정에서 뺀다.
+                    if (!d.condition()) continue;
+                    scopeVerdicts.add(judge(d, "#", List.of(s.fullId()), sitesByStatement, genericSites));
                 }
             }
             for (MapperXmlIndex.Fragment f : mapper.fragments()) {
+                List<String> statementIds = includers.getOrDefault(f.fullId(), List.of());
                 for (MapperXmlIndex.Dollar d : f.dollars()) {
-                    verdicts.add(judge(d, includers.getOrDefault(f.fullId(), List.of()), sitesByStatement, genericSites));
+                    verdicts.add(judge(d, "$", statementIds, sitesByStatement, genericSites));
+                    scopeKeysUsed |= isScopeKey(d, scopeKeys);
+                }
+                for (MapperXmlIndex.Dollar d : f.hashes()) {
+                    if (!isScopeKey(d, scopeKeys)) continue;
+                    scopeKeysUsed = true;
+                    if (!d.condition()) continue;
+                    scopeVerdicts.add(judge(d, "#", statementIds, sitesByStatement, genericSites));
                 }
             }
         }
-        verdicts.sort((a, b) -> a.path().equals(b.path()) ? Integer.compare(a.line(), b.line()) : a.path().compareTo(b.path()));
-        return new Result(verdicts, java.failedFiles(), genericRoutes);
+        verdicts.sort(BY_LOCATION);
+        scopeVerdicts.sort(BY_LOCATION);
+        return new Result(verdicts, java.failedFiles(), genericRoutes, scopeVerdicts, scopeKeysUsed);
+    }
+
+    private static final java.util.Comparator<DollarVerdict> BY_LOCATION =
+            (a, b) -> a.path().equals(b.path()) ? Integer.compare(a.line(), b.line()) : a.path().compareTo(b.path());
+
+    /** 사용자 범위 키를 쓰는가 — 키 자체이거나, bind가 사용자 범위 키로 만든 값이다. */
+    private static boolean isScopeKey(MapperXmlIndex.Dollar d, Set<String> scopeKeys) {
+        if (scopeKeys.isEmpty()) return false;
+        if (scopeKeys.contains(d.key())) return true;
+        return d.bindFrom().stream().anyMatch(scopeKeys::contains);
     }
 
     private static void collectIncludes(String statementId, Set<String> includes, Map<String, MapperXmlIndex.Fragment> fragments,
@@ -230,9 +270,10 @@ public final class MybatisDollarTracer {
         return matches.size() == 1 ? matches.get(0) : id;
     }
 
-    private DollarVerdict judge(MapperXmlIndex.Dollar d, List<String> statementIds,
+    /** @param sigil "$"(SQL 텍스트 치환) 또는 "#"(바인딩) — 근거 표시용 */
+    private DollarVerdict judge(MapperXmlIndex.Dollar d, String sigil, List<String> statementIds,
                                 Map<String, List<Site>> sitesByStatement, List<Site> genericSites) {
-        String xmlStep = d.path().substring(d.path().lastIndexOf('/') + 1) + ":" + d.line() + " ${" + d.expr() + "}";
+        String xmlStep = d.path().substring(d.path().lastIndexOf('/') + 1) + ":" + d.line() + " " + sigil + "{" + d.expr() + "}";
         if (d.xmlFixed() != null) {
             return verdict(d, String.join(", ", statementIds), V.of(TraceSafety.XML_FIXED, d.xmlFixed()), xmlStep);
         }
@@ -252,6 +293,16 @@ public final class MybatisDollarTracer {
     }
 
     private V judgeStatement(MapperXmlIndex.Dollar d, String statementId, List<Site> direct, List<Site> generic) {
+        String memoKey = statementId + "\u0000" + d.key() + "\u0000" + d.bindFrom();
+        V cached = statementKeyMemo.get(memoKey);
+        if (cached == null) {
+            cached = judgeStatementUncached(d, statementId, direct, generic);
+            statementKeyMemo.put(memoKey, cached);
+        }
+        return cached;
+    }
+
+    private V judgeStatementUncached(MapperXmlIndex.Dollar d, String statementId, List<Site> direct, List<Site> generic) {
         Set<String> keys = d.bindFrom().isEmpty() ? Set.of(d.key()) : d.bindFrom();
         String bindNote = d.bindFrom().isEmpty() ? null : "<bind name=\"" + d.key() + "\">가 " + keys + " 로 만든 값";
         V directV = null;
@@ -275,7 +326,14 @@ public final class MybatisDollarTracer {
                     ? genericV.append("직접 호출처 없이 공통 실행 경로로만 실행됨") : genericV;
         }
         if (directV.safety() == TraceSafety.CLIENT || genericV == null || genericV.safety() != TraceSafety.CLIENT) {
-            return V.worst(directV, genericV);
+            V worst = V.worst(directV, genericV);
+            if (worst == directV && genericV != null && worst.safety().isSafe()) {
+                // 안전 판정의 근거가 직접 경로뿐이면 "공통 실행 경로는 봤나?"를 알 수 없다(CRM crd020의 ${loginBrndzCd}를 보고 물었다).
+                // 그 경로로 와도 안전한 이유(세션 값으로 덮어씀 등)를 한 줄 덧붙인다.
+                return worst.append("공통 실행 경로로 이 구문을 직접 불러도 " + genericV.safety().label() + ": "
+                        + String.join(" → ", genericV.evidence()));
+            }
+            return worst;
         }
         // 서비스 경로는 클라이언트 값이 아니지만, 공통 실행 경로로 직접 부르면 클라이언트 값이 들어간다.
         List<String> evidence = new ArrayList<>(directV.evidence());

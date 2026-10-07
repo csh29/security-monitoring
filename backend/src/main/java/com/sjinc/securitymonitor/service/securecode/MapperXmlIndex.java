@@ -13,7 +13,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * MyBatis 매퍼 XML에서 {@code ${}} 사용 위치와, 그 값을 XML 안에서 이미 정해 버리는 장치(bind·조건 검사)를 뽑는다.
+ * MyBatis 매퍼 XML에서 {@code ${}}·{@code #{}} 사용 위치와, 그 값을 XML 안에서 이미 정해 버리는 장치(bind·조건 검사)를 뽑는다.
+ * {@code ${}}는 SQL 삽입 판정에, {@code #{}}는 사용자 범위 키(trace-rules.yml userScopeKeys)의 인가 판정에 쓴다.
  *
  * <p>DOM 파서를 쓰지 않고 태그를 직접 훑는다 — Semgrep 탐지와 맞추려면 {@code ${}}마다 정확한 줄 번호가 필요한데 DOM은
  * 줄 번호를 주지 않고, 매퍼 XML은 DOCTYPE(외부 DTD)을 달고 있어 파서가 DTD를 내려받으려 한다. 매퍼 XML은 구조가 단순해
@@ -25,22 +26,27 @@ final class MapperXmlIndex {
     record MapperFile(String path, String namespace, List<Statement> statements, List<Fragment> fragments) {
     }
 
-    /** select/insert/update/delete 하나. includes는 이 구문이 끌어다 쓰는 sql 조각 id(namespace 붙은 전체 id). */
-    record Statement(String fullId, List<Dollar> dollars, Set<String> includes) {
+    /**
+     * select/insert/update/delete 하나. dollars는 {@code ${}}, hashes는 {@code #{}}.
+     * includes는 이 구문이 끌어다 쓰는 sql 조각 id(namespace 붙은 전체 id).
+     */
+    record Statement(String fullId, List<Dollar> dollars, List<Dollar> hashes, Set<String> includes) {
     }
 
-    /** {@code <sql id>} 조각. 조각 안의 {@code ${}}는 그 조각을 include한 구문마다 따로 판정한다. */
-    record Fragment(String fullId, List<Dollar> dollars, Set<String> includes) {
+    /** {@code <sql id>} 조각. 조각 안의 {@code ${}}·{@code #{}}는 그 조각을 include한 구문마다 따로 판정한다. */
+    record Fragment(String fullId, List<Dollar> dollars, List<Dollar> hashes, Set<String> includes) {
     }
 
     /**
-     * {@code ${expr}} 한 개.
+     * {@code ${expr}} 또는 {@code #{expr}} 한 개(어느 쪽인지는 담긴 목록 — Statement.dollars/hashes — 으로 안다).
      *
      * @param key        값을 꺼내는 파라미터 키(expr의 첫 이름. {@code ym.substring(2)} → ym). foreach 항목이면 컬렉션 키로 바꾼 값
      * @param xmlFixed   XML 안에서 값이 정해져 호출 쪽과 무관하게 안전하면 그 근거, 아니면 null
      * @param bindFrom   {@code <bind>}가 이 키를 다른 키들로 다시 만든 경우 그 원래 키들(호출 쪽에서는 이 키들을 따라간다). 없으면 빈 집합
+     * @param condition  SQL의 조건 자리(WHERE·ON·HAVING)인가. false면 값 자리(INSERT VALUES·UPDATE SET·SELECT 목록 등) — 사용자 범위 키가
+     *                   값 자리에 쓰이면 등록자·수정자 기록이지 데이터 범위 조건이 아니다(clauseIsCondition)
      */
-    record Dollar(String path, int line, String expr, String key, String xmlFixed, Set<String> bindFrom) {
+    record Dollar(String path, int line, String expr, String key, String xmlFixed, Set<String> bindFrom, boolean condition) {
     }
 
     private static final Pattern TOKEN = Pattern.compile(
@@ -52,7 +58,14 @@ final class MapperXmlIndex {
             Pattern.DOTALL);
     private static final Pattern ATTR = Pattern.compile("([\\w.:-]+)\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')");
     private static final Pattern DOLLAR = Pattern.compile("\\$\\{([^}]+)}");
+    /** {@code #{key,jdbcType=VARCHAR}} — 키는 FIRST_NAME으로 첫 이름만 쓴다. */
+    private static final Pattern HASH = Pattern.compile("#\\{([^}]+)}");
     private static final Pattern FIRST_NAME = Pattern.compile("^\\s*([A-Za-z_$][\\w$]*)");
+    /** 조건·값 자리를 가르는 SQL 키워드. 마지막으로 나온 것이 지금 자리다(UPDATE … SET … WHERE, MERGE … ON … UPDATE SET). */
+    private static final Pattern CLAUSE_KEYWORD = Pattern.compile("(?i)\\b(WHERE|ON|HAVING|SET|VALUES|UPDATE)\\b");
+    private static final Set<String> VALUE_KEYWORDS = Set.of("SET", "VALUES", "UPDATE");
+    /** SQL 주석 — 주석 안의 키워드(-- where 조건 추가)로 자리를 잘못 읽지 않게 뺀다. */
+    private static final Pattern SQL_COMMENT = Pattern.compile("--[^\\n]*|/\\*.*?\\*/", Pattern.DOTALL);
     private static final Set<String> STATEMENT_TAGS = Set.of("select", "insert", "update", "delete");
     /** OGNL에서 이름처럼 보이지만 파라미터 키가 아닌 것. */
     private static final Set<String> OGNL_WORDS = Set.of("and", "or", "not", "null", "true", "false",
@@ -72,8 +85,9 @@ final class MapperXmlIndex {
     }
 
     /** 열린 태그 하나. if/when은 test, foreach는 item·collection, bind는 name·value를 들고 있다. */
-    private record Open(String tag, Map<String, String> attrs, List<Dollar> dollars, Set<String> includes,
-                        Map<String, String> binds) {
+    /** sql은 구문(·조각)이면 지금까지 나온 SQL 텍스트(태그 제외) — 파라미터가 조건 자리인지 값 자리인지 앞 키워드로 가른다. */
+    private record Open(String tag, Map<String, String> attrs, List<Dollar> dollars, List<Dollar> hashes,
+                        Set<String> includes, Map<String, String> binds, StringBuilder sql) {
     }
 
     private static final class Parser {
@@ -140,8 +154,10 @@ final class MapperXmlIndex {
                     && (STATEMENT_TAGS.contains(tag) || "sql".equals(tag));
             stack.push(new Open(tag, attrs,
                     isStatement ? new ArrayList<>() : null,
+                    isStatement ? new ArrayList<>() : null,
                     isStatement ? new LinkedHashSet<>() : null,
-                    isStatement ? new LinkedHashMap<>() : null));
+                    isStatement ? new LinkedHashMap<>() : null,
+                    isStatement ? new StringBuilder() : null));
         }
 
         private void close(String tag) {
@@ -151,9 +167,9 @@ final class MapperXmlIndex {
                 if (top.dollars() != null) {
                     String fullId = namespace + "." + top.attrs().get("id");
                     if ("sql".equals(top.tag())) {
-                        fragments.add(new Fragment(fullId, top.dollars(), top.includes()));
+                        fragments.add(new Fragment(fullId, top.dollars(), top.hashes(), top.includes()));
                     } else {
-                        statements.add(new Statement(fullId, top.dollars(), top.includes()));
+                        statements.add(new Statement(fullId, top.dollars(), top.hashes(), top.includes()));
                     }
                 }
                 if (top.tag().equals(tag)) {
@@ -171,11 +187,40 @@ final class MapperXmlIndex {
             m.region(from, to);
             while (m.find()) {
                 String expr = m.group(1).trim();
-                statement.dollars().add(dollar(expr, line(m.start()), statement));
+                statement.dollars().add(dollar(expr, line(m.start()), statement, from, m.start()));
             }
+            Matcher h = HASH.matcher(content);
+            h.region(from, to);
+            while (h.find()) {
+                statement.hashes().add(dollar(h.group(1).trim(), line(h.start()), statement, from, h.start()));
+            }
+            statement.sql().append(content, from, to).append('\n');
         }
 
-        private Dollar dollar(String expr, int line, Open statement) {
+        /**
+         * 이 위치의 파라미터가 SQL 조건 자리(WHERE·ON·HAVING)인가. 사용자 범위 키가 조건에 쓰이면 데이터 범위를 가르지만, INSERT 값·UPDATE SET에
+         * 쓰이면 등록자·수정자 기록이다(CRM의 거의 모든 INSERT가 #{loginEmpNo}를 등록자로 넣어, 구분하지 않으면 인가 탐지가 쏟아졌다).
+         * 동적 SQL 태그가 먼저다 — {@code <where>}·{@code <trim prefix="WHERE">} 안이면 조건, {@code <set>}·{@code <trim prefix="SET">} 안이면 값.
+         * 아니면 지금까지의 SQL에서 마지막 키워드로 가른다. 키워드가 없으면 insert는 값, 나머지(조각·select·update·delete)는 조건으로 본다 —
+         * 조각은 대개 WHERE 뒤에 include되고, 모르면 놓치지 않는 쪽(조건)으로 둔다.
+         */
+        private boolean clauseIsCondition(Open statement, int textFrom, int at) {
+            for (Open open : stack) {
+                if (open == statement) break;
+                String tag = open.tag();
+                String prefix = "trim".equals(tag) ? open.attrs().getOrDefault("prefix", "").trim().toUpperCase() : "";
+                if ("where".equals(tag) || prefix.equals("WHERE")) return true;
+                if ("set".equals(tag) || prefix.equals("SET")) return false;
+            }
+            String before = SQL_COMMENT.matcher(statement.sql() + content.substring(textFrom, at)).replaceAll(" ");
+            Matcher keyword = CLAUSE_KEYWORD.matcher(before);
+            String last = null;
+            while (keyword.find()) last = keyword.group(1).toUpperCase();
+            if (last != null) return !VALUE_KEYWORDS.contains(last);
+            return !"insert".equals(statement.tag());
+        }
+
+        private Dollar dollar(String expr, int line, Open statement, int textFrom, int at) {
             Matcher name = FIRST_NAME.matcher(expr);
             String key = name.find() ? name.group(1) : expr;
             // foreach 항목(${item})은 컬렉션의 한 원소다 — 값의 출처는 컬렉션 키와 같다.
@@ -201,7 +246,7 @@ final class MapperXmlIndex {
             if (xmlFixed == null) {
                 xmlFixed = guard(key);
             }
-            return new Dollar(path, line, expr, key, xmlFixed, bindFrom);
+            return new Dollar(path, line, expr, key, xmlFixed, bindFrom, clauseIsCondition(statement, textFrom, at));
         }
 
         /**

@@ -33,7 +33,8 @@ class SecureCodeAiReviewServiceTest {
         findingRepository = mock(SecureCodeFindingRepository.class);
         appRepository = mock(AppRepository.class);
         service = new SecureCodeAiReviewService(findingRepository, appRepository);
-        ReflectionTestUtils.setField(service, "severities", List.of("HIGH", "CRITICAL"));
+        ReflectionTestUtils.setField(service, "severities", List.of("HIGH"));
+        ReflectionTestUtils.setField(service, "extraRules", List.of("kisa-insecure-random", "kisa-xxe-parser"));
         when(appRepository.findAll()).thenReturn(List.of(App.builder().id(1L).systemName("CRM").build()));
     }
 
@@ -50,9 +51,29 @@ class SecureCodeAiReviewServiceTest {
     }
 
     @Test
+    void 추가_규칙은_등급과_무관하게_대상이다() {
+        // 난수·XXE는 MEDIUM이지만 "무엇에 쓰는가"를 코드에서 읽어야 판단되는 규칙이라 넣는다
+        assertThat(service.isTarget("kisa-insecure-random", "MEDIUM", null)).isTrue();
+        assertThat(service.isTarget("kisa-xxe-parser", "MEDIUM", null)).isTrue();
+        // 추가 규칙이 아닌 MEDIUM은 그대로 대상 아님
+        assertThat(service.isTarget("kisa-empty-catch", "MEDIUM", null)).isFalse();
+    }
+
+    @Test
+    void 코드_문맥이_없는_탐지는_다음_점검까지_기다린다() {
+        SecureCodeFinding withContext = finding(1L, new DetectedFinding("a", "kisa-insecure-random", "보안기능", "난수", "CWE-330",
+                "MEDIUM", "A.java", 5, 5, "메시지", "snippet", 1, null, null, "ctx", 3));
+        SecureCodeFinding noContext = finding(1L, new DetectedFinding("b", "kisa-insecure-random", "보안기능", "난수", "CWE-330",
+                "MEDIUM", "B.java", 5, 5, "메시지", "snippet", 1, null, null, null, null));
+        when(findingRepository.findByStatus("OPEN")).thenReturn(List.of(withContext, noContext));
+
+        // 조각(5줄)으로 한 번, 문맥이 생긴 뒤 또 한 번 판별(과금)하지 않게
+        assertThat(service.getPendingTargets()).extracting(SecureCodeReviewTarget::filePath).containsExactly("A.java");
+    }
+
+    @Test
     void 결정론으로_못_정한_높은_등급만_대상이다() {
         assertThat(service.isTarget(RULE, "HIGH", null)).isTrue();
-        assertThat(service.isTarget(RULE, "CRITICAL", null)).isTrue();
         assertThat(service.isTarget(RULE, "HIGH", "UNKNOWN")).isTrue();
         // 연계 추적이 정한 건은 보내지 않는다(클라이언트 값 HIGH도, 서버 세팅 LOW도).
         assertThat(service.isTarget(RULE, "HIGH", "CLIENT")).isFalse();

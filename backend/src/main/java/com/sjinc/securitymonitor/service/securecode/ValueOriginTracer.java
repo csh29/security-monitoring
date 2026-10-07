@@ -233,7 +233,28 @@ final class ValueOriginTracer {
         if (e instanceof NameExpr name) {
             return keyOfName(name, path, at, frame, depth);
         }
+        if (e instanceof MethodCallExpr call) {
+            // 맵을 만들어 돌려주는 우리 메서드(txtSaveFile = FrameFileUtil.excelToTxt(...)) — 반환문의 맵에서 같은 키를 따라간다
+            // (valueOf의 반환문 처리와 같은 방식). 이게 없어 CRM fileMapper의 #{loginEmpNo}가 "맵 출처를 모름"(판정 불가)이 됐다.
+            V worst = null;
+            for (MethodDeclaration callee : java.resolve(call)) {
+                Frame calleeFrame = Frame.call(callee, call, frame);
+                for (ReturnStmt ret : returnsOf(callee)) {
+                    worst = V.worst(worst, keyOf(ret.getExpression().get(), path, ret, calleeFrame, depth + 1));
+                }
+            }
+            if (worst != null) {
+                return worst.append(java.location(call) + " " + abbreviate(call.toString()) + " 반환 맵");
+            }
+        }
         return V.of(TraceSafety.UNKNOWN, java.location(e) + " 맵 출처를 모름: " + abbreviate(e.toString()));
+    }
+
+    /** 메서드의 값 있는 반환문(람다 안의 return은 그 람다의 것이라 뺀다). */
+    private static List<ReturnStmt> returnsOf(MethodDeclaration callee) {
+        return callee.findAll(ReturnStmt.class).stream()
+                .filter(r -> r.findAncestor(LambdaExpr.class).isEmpty() && r.getExpression().isPresent())
+                .toList();
     }
 
     V keyOfName(NameExpr name, List<String> path, Node at, Frame frame, int depth) {
@@ -543,10 +564,7 @@ final class ValueOriginTracer {
             V worst = null;
             for (MethodDeclaration callee : callees) {
                 Frame calleeFrame = Frame.call(callee, call, frame);
-                List<ReturnStmt> returns = callee.findAll(ReturnStmt.class).stream()
-                        .filter(r -> r.findAncestor(LambdaExpr.class).isEmpty() && r.getExpression().isPresent())
-                        .toList();
-                for (ReturnStmt ret : returns) {
+                for (ReturnStmt ret : returnsOf(callee)) {
                     worst = V.worst(worst, valueOf(ret.getExpression().get(), calleeFrame, depth + 1));
                 }
             }

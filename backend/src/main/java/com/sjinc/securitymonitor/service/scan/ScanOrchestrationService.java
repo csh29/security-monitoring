@@ -56,11 +56,6 @@ public class ScanOrchestrationService {
     private final SourceUsageExtractor sourceUsageExtractor;
     private final ObjectMapper objectMapper;
 
-    @Value("${git.access.token}")
-    private String gitAccessToken;
-
-    @Value("${git.user.name}")
-    private String gitUserName;
 
     @Value("${maven.home}")
     private String mavenHome;
@@ -95,7 +90,7 @@ public class ScanOrchestrationService {
         // 저장 결과만 봐서는 새 행인지 기존 행 갱신인지 알 수 없어서, 전후 OPEN 키 집합을 비교한다.
         Set<String> openKeysBefore = vulnerabilityService.getOpenKeys(appId);
 
-        File projectDir = gitCloneService.cloneRepository(repoUrl, branch, gitUserName, gitAccessToken);
+        File projectDir = gitCloneService.cloneRepository(repoUrl, branch);
         try {
             List<MavenDependency> dependencies = dependencyExtractor.extract(projectDir, mavenHome);
             List<OsvBatchResultItem> results = osvClient.queryBatch(dependencies).getResults();
@@ -238,7 +233,7 @@ public class ScanOrchestrationService {
             // 끝난 건을 다시 시도할 수 있게 대기열로 본다.
             boolean hasPendingImpact = !upgradeImpactService.getPendingTargets().isEmpty();
             if (hasPendingAssessment || hasPendingFixPlan || hasPendingSummary || hasPendingImpact) {
-                aiAssessmentTriggerService.triggerAsync();
+                aiAssessmentTriggerService.triggerAsync(AiAssessmentTriggerService.BatchKind.CVE);
             } else {
                 log.info("AI 판단·fix-plan·설명 요약·영향 분석 대기 건이 없어 AI 배치를 띄우지 않습니다.");
             }
