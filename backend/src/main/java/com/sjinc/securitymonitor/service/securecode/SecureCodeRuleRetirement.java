@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import com.sjinc.securitymonitor.service.securecode.trace.UserScopeFindings;
 
 /**
  * 폐기한 코드 점검 규칙의 남은 OPEN 탐지를 기동 때 정리한다.

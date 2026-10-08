@@ -34,6 +34,7 @@
 </div>
 
 <script src="/js/grid.js"></script>
+<script src="/js/com-cd.js"></script>
 <script th:inline="javascript">
     (function () {
         const API_URL = '/api/apps';
@@ -41,6 +42,8 @@
 
         const COLUMNS = [
             { type: 'row-select', width: 36, align: 'center' },
+            // Git: 저장소에서 받아 라이브러리 스캔·코드 점검. 소스 업로드: Git으로 접근할 수 없는 앱 — zip을 올려 코드 점검만 한다.
+            { id: 'sourceType', label: '소스 출처', type: 'select', optionsQuery: 'APP_SOURCE', width: 120 },
             { id: 'repoUrl', label: 'Repository URL', type: 'text' },
             { id: 'branch', label: 'Branch', type: 'text' },
             { id: 'systemName', label: '시스템명', type: 'text' },
@@ -75,8 +78,11 @@
             const requests = [];
 
             for (const row of Grid.getRows(gridBody)) {
-                const repoUrl = row.repoUrl;
-                const branch = row.branch;
+                // 예전에 등록된 앱은 소스 출처가 비어 있다 — Git 앱이다(서버도 같은 기준).
+                const sourceType = row.sourceType || 'GIT';
+                const upload = sourceType === 'UPLOAD';
+                const repoUrl = upload ? '' : row.repoUrl;
+                const branch = upload ? '' : row.branch;
                 const systemName = row.systemName;
                 const description = row.description;
                 const managerName = row.managerName;
@@ -85,13 +91,18 @@
                 if (!repoUrl && !branch && !systemName && !description && !managerName && !managerEmail) {
                     continue;
                 }
-                if (!repoUrl || !branch || !systemName) {
-                    alert('Repository URL, Branch, 시스템명은 필수입니다.');
+                if (!systemName) {
+                    alert('시스템명은 필수입니다.');
+                    return;
+                }
+                if (!upload && (!repoUrl || !branch)) {
+                    alert('Git 앱은 Repository URL과 Branch가 필수입니다(Git으로 접근할 수 없는 앱은 소스 출처를 "소스 업로드"로 두세요).');
                     return;
                 }
 
                 const payload = {
                     id: row._isNew ? null : row.id,
+                    sourceType: sourceType,
                     repoUrl: repoUrl,
                     branch: branch,
                     systemName: systemName,

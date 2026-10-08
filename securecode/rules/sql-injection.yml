@@ -27,29 +27,66 @@ rules:
       kisa_name: SQL 삽입
       cwe: CWE-89
 
+  # iBatis 2(옛 시스템)의 문자열 치환 $key$ — MyBatis의 ${key}와 같은 위험이다(바인딩은 #key#). 위 규칙과 같은 파일 범위·주석 제외 기준.
+  # $ 뒤가 이름으로 시작해야 한다 — ${}·SQL 안의 '$' 한 글자는 걸리지 않는다. 값 출처는 MyBatis와 같은 연계 추적이 판정한다(MybatisDollarTracer).
+  - id: kisa-sql-injection-ibatis-dollar
+    languages: [generic]
+    paths:
+      include:
+        - "*Mapper.xml"
+        - "*mapper*.xml"
+        - "*Sql*.xml"
+        - "*sql*.xml"
+        - "*SQL*.xml"
+        - "**/mapper/**/*.xml"
+        - "**/mappers/**/*.xml"
+        - "**/sqlmap/**/*.xml"
+        - "**/sqlmaps/**/*.xml"
+    patterns:
+      - pattern-regex: '\$[A-Za-z_][\w.\[\]]*\$'
+      - pattern-not-regex: '(?s)<!--.*?-->'
+    message: "iBatis $값$ 는 값을 SQL에 그대로 이어 붙입니다. #값# 바인딩을 쓰거나, 컬럼명·정렬처럼 불가피하면 허용 목록으로 검증하세요(<isEqual compareValue> 등)."
+    severity: ERROR
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: SQL 삽입
+      cwe: CWE-89
+
   # 문자열 연결·format으로 만든 쿼리를 JDBC/JPA/JdbcTemplate 실행 메서드에 넘기는 경우.
-  # 무료판은 메서드 밖으로 값을 추적하지 못해 "연결된 값이 상수인지"는 모른다 — 연결 자체를 잡는다.
+  # 무료판은 메서드 밖으로 값을 추적하지 못해 "연결된 값이 상수인지"는 모른다 — 연결 자체를 잡고, 값 출처는 연계 추적(SinkTracer)이 판정한다.
+  # 연결식은 깊은 식(<... ...>)으로 본다 — "SELECT ... '" + bar + "'"는 +가 왼쪽부터 묶여 가장 바깥이 (식) + "'"라서,
+  # 예전처럼 바깥 모양("..." + $E)만 보면 가장 흔한 SQL 모양을 통째로 놓쳤다(OWASP Benchmark SQL 삽입 504건 중 0건 탐지).
   - id: kisa-sql-injection-java-concat
     languages: [java]
     patterns:
       - pattern-either:
-          - pattern: $X.$M("..." + $E, ...)
-          - pattern: $X.$M($E + "...", ...)
+          - pattern: $X.$M(<... "..." + $E ...>, ...)
+          - pattern: $X.$M(<... $E + "..." ...>, ...)
           - pattern: $X.$M(String.format(...), ...)
           # 쿼리를 변수에 먼저 만든 경우 — 위치는 선언이 아니라 실행하는 줄로 잡는다(pattern-inside).
           - patterns:
               - pattern-either:
                   - pattern-inside: |
-                      String $Q = "..." + $E;
+                      String $Q = <... "..." + $E ...>;
+                      ...
+                  - pattern-inside: |
+                      String $Q = <... $E + "..." ...>;
+                      ...
+                  - pattern-inside: |
+                      $Q = <... "..." + $E ...>;
                       ...
                   - pattern-inside: |
                       $Q += $E;
+                      ...
+                  - pattern-inside: |
+                      String $Q = String.format(...);
                       ...
               - pattern: $X.$M($Q, ...)
           - pattern: $X.$M($SB.append(...).toString(), ...)
       - metavariable-regex:
           metavariable: $M
-          regex: ^(executeQuery|executeUpdate|execute|addBatch|prepareStatement|prepareCall|createQuery|createNativeQuery|createSQLQuery|query|queryForObject|queryForList|queryForMap|queryForRowSet|update|batchUpdate)$
+          # queryForLong·queryForInt는 옛 JdbcTemplate(Spring 3 이하) — 레거시 시스템에 남아 있다.
+          regex: ^(executeQuery|executeUpdate|executeLargeUpdate|execute|addBatch|prepareStatement|prepareCall|createQuery|createNativeQuery|createSQLQuery|query|queryForObject|queryForList|queryForMap|queryForRowSet|queryForLong|queryForInt|update|batchUpdate)$
     message: "문자열 연결로 만든 SQL을 실행합니다. PreparedStatement 파라미터(?)·이름 있는 파라미터로 바인딩하세요."
     severity: ERROR
     metadata:

@@ -2,6 +2,7 @@ package com.sjinc.securitymonitor.service.securecode;
 
 import com.sjinc.securitymonitor.dto.securecode.DetectedFinding;
 import com.sjinc.securitymonitor.dto.securecode.SemgrepMatch;
+import com.sjinc.securitymonitor.dto.securecode.TraceStepCode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -10,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -188,5 +190,60 @@ class SecureCodeSnippetBuilderTest {
         assertThat(f.aiContextStartLine()).isEqualTo(25 - SecureCodeSnippetBuilder.AI_CONTEXT_LINES);
         assertThat(f.aiContext().split("\n")).hasSize(SecureCodeSnippetBuilder.AI_CONTEXT_LINES * 2 + 1);
         assertThat(f.aiContext()).contains("db.password=****").doesNotContain("secret123");
+    }
+
+    @Test
+    void 자바_조각은_걸린_줄을_감싼_메서드_전체이고_길면_80줄로_자른다() throws Exception {
+        String code = "class A {\n  void f(String p) {\n    String a = p;\n    String b = a;\n    String c = b;\n"
+                + "    String d = c;\n    String e = d;\n    String sql = \"x\" + e;\n    run(sql);\n  }\n}\n";
+        DetectedFinding d = buildOne(code, match("r", "src/A.java", 9, 9));
+        assertThat(d.snippetStartLine()).isEqualTo(2);
+        assertThat(d.snippet().split("\n")).hasSize(9).startsWith("  void f(String p) {").endsWith("  }");
+
+        DetectedFinding big = buildOne(longMethod(), match("r", "src/A.java", 100, 100));
+        assertThat(big.snippet().split("\n")).hasSize(SecureCodeSnippetBuilder.SNIPPET_MAX_LINES);
+        assertThat(big.snippetStartLine()).isLessThan(100).isGreaterThan(100 - SecureCodeSnippetBuilder.SNIPPET_MAX_LINES);
+    }
+
+    @Test
+    void 매퍼_XML_조각은_걸린_줄을_감싼_구문이다() throws Exception {
+        String xml = "<mapper>\n  <select id=\"a\">\n    SELECT 1\n  </select>\n  <select id=\"b\">\n    SELECT *\n"
+                + "    FROM t\n    WHERE x = ${x}\n  </select>\n</mapper>\n";
+        DetectedFinding d = buildOne(xml, match("r", "src/m.xml", 8, 8));
+        assertThat(d.snippetStartLine()).isEqualTo(5);
+        assertThat(d.snippet().split("\n")).hasSize(5).startsWith("  <select id=\"b\">").endsWith("  </select>");
+    }
+
+    @Test
+    void 연계_추적_근거_걸음마다_그_줄_주변_코드를_붙인다() throws Exception {
+        Files.createDirectories(dir.resolve("a"));
+        Files.createDirectories(dir.resolve("b"));
+        StringBuilder controller = new StringBuilder();
+        for (int i = 1; i <= 20; i++) controller.append("c").append(i).append('\n');
+        Files.writeString(dir.resolve("a/C.java"), controller, StandardCharsets.UTF_8);
+        Files.writeString(dir.resolve("a/S.java"), "s1\ns2\n", StandardCharsets.UTF_8);
+        Files.writeString(dir.resolve("b/S.java"), "x1\nx2\n", StandardCharsets.UTF_8);
+        DetectedFinding f = new DetectedFinding("fp", "r", "분류", "항목", "CWE-1", "HIGH", "a/S.java", 2, 2, "m",
+                "s", 1, "CLIENT", "C.java:10 POST /x — 클라이언트가 보낸 값\n파라미터 없이 실행\nS.java:1 run(sql)\nZ.java:1 없는 파일",
+                null, null);
+        Map<String, List<String>> byName = Map.of("C.java", List.of("a/C.java"), "S.java", List.of("a/S.java", "b/S.java"));
+
+        List<TraceStepCode> code = new SecureCodeSnippetBuilder(dir).traceCode(f, byName);
+
+        assertThat(code).hasSize(4);
+        assertThat(code.get(0).path()).isEqualTo("a/C.java");
+        assertThat(code.get(0).line()).isEqualTo(10);
+        assertThat(code.get(0).startLine()).isEqualTo(10 - SecureCodeSnippetBuilder.TRACE_CONTEXT_LINES);
+        assertThat(code.get(0).code().split("\n")).hasSize(SecureCodeSnippetBuilder.TRACE_CONTEXT_LINES * 2 + 1).contains("c10");
+        assertThat(code.get(1)).isNull();                          // 파일·줄이 없는 걸음
+        assertThat(code.get(2).path()).isEqualTo("a/S.java");     // 동명 파일 중 탐지 파일 자신
+        assertThat(code.get(3)).isNull();                          // 찾지 못한 파일
+    }
+
+    @Test
+    void 동명_파일은_탐지_파일과_경로가_가장_많이_겹치는_것을_고르고_못_고르면_빈다() {
+        Map<String, List<String>> byName = Map.of("U.java", List.of("m1/src/U.java", "m2/src/U.java"));
+        assertThat(SecureCodeSnippetBuilder.pickPath("U.java", "m2/src/X.java", byName)).isEqualTo("m2/src/U.java");
+        assertThat(SecureCodeSnippetBuilder.pickPath("U.java", "m3/src/X.java", byName)).isNull();
     }
 }

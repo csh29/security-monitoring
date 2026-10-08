@@ -71,12 +71,19 @@ py -m pip install -r ../securecode/requirements.txt
 - `metavariable-regex`는 값의 **처음부터** 맞춘다(re.match). 중간 문자열을 찾으려면 `.*`로 시작한다.
 - 규칙 id에 점(.)을 넣지 않는다 — 결과의 `check_id`에서 마지막 점 뒤를 규칙 id로 쓴다(SemgrepReportParser).
 - 연계 추적(`ValueOriginTracer`·`MybatisDollarTracer`·`SinkTracer`)에 **특정 시스템의 어노테이션·키·클래스 이름을 넣지 않는다.** 시스템마다 다른 장치(세션 값을 요청 맵에
-  덮어쓰는 AOP, 로그인 정보 객체 이름)는 `securecode/trace-rules.yml`에 항목으로 추가한다. 새 시스템을 점검 대상에 넣으면 그 시스템이 로그인 정보를
-  요청 값에 어떻게 넣는지 확인하고 항목을 추가한다 — 없으면 그 값이 클라이언트 값으로 판정된다(위험한 쪽이라 놓치지는 않지만 오탐이 된다).
-  이 파일은 `rules/` 밖에 둔다(안에 두면 Semgrep이 규칙으로 읽는다).
+  덮어쓰는 AOP, 로그인 정보 객체 이름)는 `securecode/trace-rules.yml`에 항목으로 추가한다. 새 시스템을 점검하면 점검이 초안을 만든다 — 판정을 느슨하게 하는
+  변경(장치·키·로그인 정보 이름·사용자 범위 키 추가)은 코드 점검 화면 "추적 규칙 초안"에서 **근거를 보고** 반영한다. 세션 값이 아닌 키를 넣으면 실제 위험이 LOW로 묻힌다.
+  초안이 못 찾는 장치(필터가 요청을 감싸는 방식 등)는 직접 확인해 넣는다 — 없으면 그 값이 클라이언트 값으로 판정된다(위험한 쪽이라 놓치지는 않지만 오탐이 된다).
+  이 파일은 `rules/` 밖에 둔다(안에 두면 Semgrep이 규칙으로 읽는다). **서버도 이 파일을 고친다**(`TraceRulesFileEditor`) — 손으로 고칠 때 `keys`·`loginTypeNames`·
+  `loginMethodPrefixes`는 `[a, b]` 한 줄 목록으로, 세션 덮어쓰기 항목 안 주석은 들여써서 쓴다(모양이 다르면 서버가 자동 반영을 못 하고 안내만 한다).
+  끝의 `frameworks` 섹션은 서버가 다시 쓰는 기록이라 손으로 고치지 않는다. 서버가 고친 내용도 git으로 확인해 커밋한다.
+  **판정을 느슨하게 하는 변경을 자동 반영 쪽(`TraceRuleChange.Type.automatic`)으로 옮기지 않는다** — 근거가 틀리면 조용히 위험을 놓친다.
   **Semgrep 규칙(`rules/*.yml`)에도 특정 시스템의 어노테이션·클래스 이름을 넣지 않는다** — 한 시스템 구조를 보고 "그 장치가 없으면 탐지"로 만든 규칙은
   다른 시스템에서 전부 오탐이 된다(`kisa-authz-missing-user-scope`를 그래서 폐기했다). 시스템마다 다른 것은 설정(`trace-rules.yml`)으로 받고 판정은 연계 추적으로 한다.
-  새 시스템을 넣을 때는 그 시스템이 회사·사용자 범위에 쓰는 SQL 키를 `userScopeKeys`에 추가한다(없으면 점검 완료 알림에 "키를 찾지 못함"이 뜬다).
+  새 시스템을 넣을 때는 그 시스템이 회사·사용자 범위에 쓰는 SQL 키를 `userScopeKeys`에 추가한다(초안이 세션 덮어쓰기 키 중 SQL 조건에 쓰인 것을 후보로 내지만,
+  서비스가 로그인 정보로 따로 세팅하는 키는 못 찾는다. 없으면 점검 완료 알림에 "키를 찾지 못함"이 뜬다).
+- 코드 점검 클래스는 `service/securecode` 아래 성격별 하위 패키지에 둔다 — 점검 흐름·결과는 루트, Semgrep 실행·해석은 `semgrep`, 연계 추적 엔진은 `trace`,
+  추적 규칙(설정·초안)은 `tracerule`. 판정 값처럼 화면 DTO도 쓰는 타입은 `dto/securecode`, 예외는 `exception`. 한 폴더에 다시 섞지 않는다.
 - 규칙을 없앨 때는 규칙 파일에서 지우고 `SecureCodeRuleRetirement.RETIRED_RULES`에 (규칙 id → 이유)를 추가한다. 재점검은 규칙셋에 없는 규칙의 탐지를
   해결 처리하지 않아서(실수로 지운 규칙 보호) 그냥 지우면 그 탐지가 영원히 미조치로 남는다.
 - 비밀값 규칙의 id는 `hardcoded-secret`을 포함해야 코드 조각·지문에서 값이 가려진다(SecureCodeSnippetBuilder.isSecretRule).
@@ -102,7 +109,10 @@ py -m pip install -r ../securecode/requirements.txt
   **그 화면에서만 다른 값**만 남긴다. 버튼(`.btn`) 크기·그리드 행 높이는 모든 화면 공통이라 화면에서 덮어쓰지 않는다.
 - fetch 호출에 CSRF 헤더나 스피너를 직접 붙이지 않는다 — `loading-overlay` 래퍼가 이미 한다.
 - 새 화면의 첫 줄은 `<section th:replace="~{fragments/page-toolbar :: toolbar}"></section>` 한 줄이다. 공통 버튼(조회/신규/저장/삭제/초기화/기타1~5)은 **마크업에 쓰지 않는다** — 프로그램 관리·사용자별 권한관리 설정대로 서버가 그린다. 화면 JS는 `PageButtons.bind({ btnSearch: ..., btnAdd: ..., btnEtc1: ... })`로만 핸들러를 건다(`getElementById(...).addEventListener`로 걸면 권한 없는 사용자에게서 null 오류로 스크립트가 멈춘다). 단축키(F3/F4/F5/F9/F12)와 `[F3]` 표기는 자동이다.
+- zip을 만들어야 하면 `ZipWriter.storedBlob`(`/js/zip-writer.js`)을 쓴다 — 엑셀 다운로드와 코드 점검 폴더 업로드가 같이 쓴다.
 - 그리드 복사·엑셀 다운로드는 화면에 만들지 않는다 — `grid.js` 우클릭 메뉴가 모든 그리드에 이미 붙어 있다. 엑셀 파일이 따로 필요하면 `XlsxWriter.download`를 쓰고 CSV를 새로 만들지 않는다.
+- 행이 수백 개인 그리드는 `Grid.render(..., { virtual: true })`로 보이는 행만 붙인다 — 화면에서 페이징·지연 그리기를 따로 만들지 않는다.
+  셀이 줄바꿈되면(행 높이가 달라지면) 스크롤 위치가 어긋나니 그런 그리드에는 켜지 않는다.
 - 그리드 `<tbody>`는 비워 둔다. 첫 안내 행은 `Grid.renderHeader`가 넣고, 문구가 다르면 `{ initialMessage }`로 준다.
 - 조회영역은 마크업으로 쓰지 않고 `SearchForm.render`(`/js/search-form.js`)에 필드 정의로 넘긴다 — 그리드의 `COLUMNS`와 같은 방식. 조회조건을 화면에서 거를 때는 필드 id를 행 데이터 키와 맞추고 `list.filter(search.matches)`를 쓴다. `contains` 류 함수를 화면에 다시 만들지 않는다.
 - 화면 JS(템플릿의 `<script>`, `static/js`)에서 **`var`를 쓰지 않는다** — 재대입하지 않으면 `const`, 하는 것만 `let`. `var`는 블록을 무시하고
@@ -190,6 +200,7 @@ DB 스키마 변경, 대량 삭제, 외부로 나가는 호출(Git push, 외부 
 | `/api/**` CSRF 검증 유지 (`/api/ai/**` 제외) | 제외하면 로그인한 관리자가 악성 페이지만 열어도 `POST /api/scan` 등이 대신 날아간다 |
 | `/api/ai/**`만 CSRF에서 제외 | 세션 쿠키가 아니라 헤더 토큰으로만 인증하는 배치 전용 경로라 CSRF의 전제(브라우저가 쿠키를 자동 전송)가 성립하지 않는다. **빼지 않으면 배치의 POST가 전부 403이 되는데, GET은 통과해서 "판단은 다 하고 저장만 실패"로 조용히 깨진다** |
 | `spring.h2.console.enabled=false` 유지 | H2 콘솔은 `CREATE ALIAS`로 사실상 원격 코드 실행이 가능하다 |
+| 소스 업로드 점검은 app-mng 권한·업로드 앱만·소스 없는 zip 거부, 압축 해제는 `SourceArchiveExtractor`만 | 올린 소스가 그 앱의 점검 결과를 대신한다 — 아무나 올리거나 빈 zip을 받으면 기존 탐지가 전부 "해결"이 된다. 외부 zip을 서버에 푸는 일이라 경로 조작(Zip Slip)·압축 폭탄 검사를 우회하는 다른 압축 해제 코드를 만들지 않는다. 업로드 앱은 라이브러리 스캔(Maven 실행)을 하지 않는다 |
 | 스캔은 앱 관리에 등록된 `repoUrl/branch`만 허용 | 임의 URL 스캔 시 GitLab PAT 유출, 악성 pom.xml 실행, SSRF 위험 |
 | Git 인증 정보는 주소가 일치하는 저장소·허용 호스트에만 붙인다(`GitCredentialResolver`) | 어느 주소든 같은 토큰을 붙이면 허용 호스트를 늘리거나 등록 검사가 뚫리는 순간 사내 토큰이 그 서버로 나간다. 토큰은 설정 파일에만 두고 DB(앱 관리)에 넣지 않는다 |
 | 앱 등록 시 `RepoUrlValidator`로 호스트·스킴 검증 | 위 규칙은 "등록된 것만"이지 "등록되는 것"은 안 거른다. 등록 자리에서 막지 않으면 그 뒤로 거를 자리가 없다 |

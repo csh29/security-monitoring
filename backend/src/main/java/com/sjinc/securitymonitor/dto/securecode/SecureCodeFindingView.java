@@ -1,9 +1,8 @@
 package com.sjinc.securitymonitor.dto.securecode;
 
 import com.sjinc.securitymonitor.domain.SecureCodeFinding;
-import com.sjinc.securitymonitor.service.securecode.DollarTraceMerger;
-import com.sjinc.securitymonitor.service.securecode.TraceSafety;
-import com.sjinc.securitymonitor.service.securecode.UserScopeFindings;
+import com.sjinc.securitymonitor.service.securecode.trace.DollarTraceMerger;
+import com.sjinc.securitymonitor.service.securecode.trace.UserScopeFindings;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -12,7 +11,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 코드 점검 결과 화면 한 행. 엔티티에 없는 시스템명을 붙여 내려준다.
+ * 코드 점검 결과 화면 한 행. 엔티티에 없는 시스템명을 붙여 내려준다. 코드(조각·연계 추적 코드)는 넣지 않는다 — 상세보기를 열 때
+ * 한 건씩 받는다(SecureCodeFindingCode).
  *
  * <p>aiVerdict는 AI 판별 결과(VULNERABLE/NOT_VULNERABLE/UNCERTAIN), 대상인데 아직 판별 전이거나 재점검으로 입력이 바뀌었으면
  * PENDING, 대상이 아니면 null이다. 옛 입력 기준 판별은 내려주지 않는다(SecureCodeAiReviewService.isReviewCurrent).
@@ -34,8 +34,6 @@ public record SecureCodeFindingView(
         Integer startLine,
         Integer endLine,
         String message,
-        String snippet,
-        Integer snippetStartLine,
         String traceSafety,
         String traceLabel,
         String traceTarget,
@@ -60,8 +58,11 @@ public record SecureCodeFindingView(
         }
     }
 
-    private static final Set<String> MAPPER_TRACE_RULES = Set.of(DollarTraceMerger.RULE_ID, UserScopeFindings.RULE_ID);
-    private static final Pattern MAPPER_EXPRESSION = Pattern.compile("[$#]\\{[^}]*}");
+    private static final Set<String> MAPPER_TRACE_RULES =
+            Set.of(DollarTraceMerger.RULE_ID, DollarTraceMerger.IBATIS_RULE_ID, UserScopeFindings.RULE_ID);
+    /** MyBatis ${…}·#{…}, iBatis $이름$·#이름#(#이름:VARCHAR# 포함) — 근거 마지막 줄 "파일:줄 식 (구문)"의 식. */
+    private static final Pattern MAPPER_EXPRESSION = Pattern.compile(
+            "[$#]\\{[^}]*}|\\$[A-Za-z_][\\w.\\[\\]]*\\$|#[A-Za-z_][\\w.\\[\\]]*(?:[:,][^#\\s]*)?#");
 
     static String traceTarget(String ruleId, List<String> evidence) {
         if (!MAPPER_TRACE_RULES.contains(ruleId) || evidence.isEmpty()) return null;
@@ -81,7 +82,7 @@ public record SecureCodeFindingView(
         List<String> evidence = f.getTraceEvidence() == null ? List.of() : List.of(f.getTraceEvidence().split("\n"));
         return new SecureCodeFindingView(f.getId(), f.getAppId(), systemName, f.getRuleId(), f.getKisaCategory(),
                 f.getKisaName(), f.getCwe(), f.getSeverity(), f.getFilePath(), f.getStartLine(), f.getEndLine(),
-                f.getMessage(), f.getSnippet(), f.getSnippetStartLine(),
+                f.getMessage(),
                 f.getTraceSafety(), traceLabel(f.getTraceSafety()), traceTarget(f.getRuleId(), evidence), evidence,
                 f.getStatus(), aiVerdict,
                 aiReviewCurrent ? f.getAiConfidence() : null,

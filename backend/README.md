@@ -3,7 +3,7 @@
 
 Git 저장소(Maven 프로젝트)를 clone 해서 의존성을 뽑고, OSV/NVD로 취약점을 조회한 뒤,
 버전 범위로 판단할 수 없는 건만 AI로 판단해 pom.xml 수정안(fix-plan)까지 만들어 준다.
-이와 별개 기능으로, 같은 저장소의 소스를 시큐어코딩 규칙(행안부 SW 보안약점 기준, Semgrep)으로 점검하고, 연계 추적으로도 판정하지 못한 높은 등급 탐지만 AI가 코드를 보고 진짜 취약한지 판별한다(참고용 — 처리여부는 사람이 정한다).
+이와 별개 기능으로, 같은 저장소의 소스를 시큐어코딩 규칙(행안부 SW 보안약점 기준, Semgrep)으로 점검하고, 연계 추적으로도 판정하지 못한 높은 등급 탐지만 AI가 코드를 보고 진짜 취약한지 판별한다(참고용 — 처리여부는 사람이 정한다). Git으로 접근할 수 없는 앱(옛날 시스템 등)은 앱 관리에서 소스 출처를 "소스 업로드"로 두고 소스 zip을 올려 코드 점검만 할 수 있다(라이브러리 CVE 스캔은 Git 앱만).
 
 ## 시스템 구성
 
@@ -11,7 +11,7 @@ Git 저장소(Maven 프로젝트)를 clone 해서 의존성을 뽑고, OSV/NVD�
 | --- | --- |
 | `backend/` | Spring Boot 서버 + 화면(Thymeleaf). 스캔·판정·조회 전부 |
 | `securecode/rules/` | 시큐어코딩 점검 규칙(Semgrep YAML)과 규칙별 테스트 예제. AI 없이 서버가 Semgrep으로 돌린다 |
-| `securecode/trace-rules.yml` | MyBatis `${}` 연계 추적이 쓰는 시스템별 프레임워크 규칙(세션 값을 요청 맵에 덮어쓰는 어노테이션 등). 새 시스템을 점검할 때 항목을 추가한다 |
+| `securecode/trace-rules.yml` | MyBatis `${}` 연계 추적이 쓰는 시스템별 프레임워크 규칙(세션 값을 요청 맵에 덮어쓰는 어노테이션 등)과 시스템별 프레임워크 구조 기록. 코드 점검이 저장소 코드·설정 파일로 초안을 만들어 판정을 엄격하게 하는 변경은 바로 고치고, 느슨하게 하는 변경은 코드 점검 화면 "추적 규칙 초안"에서 사람이 반영한다. **서버가 고치는 파일이라 바뀌면 git으로 확인·커밋한다** |
 | `ai/` | 파이썬 AI 판단 배치. 진입점 `vuln_assessor.py`가 기능별 모듈 `cve_assessor.py`(라이브러리 취약점)·`secure_code_reviewer.py`(시큐어코딩 판별)를 차례로 돌린다(공통 부분은 `ai_common.py`, 한 기능만 돌리려면 그 모듈을 직접 실행). 판정·fix-plan·업그레이드 영향 분석·코드 점검 탐지 판별(`claude-sonnet-5`)과 CVE 설명 한국어 요약(`claude-haiku-4-5`)을 한다. 영향 분석의 근거(릴리스 노트)는 `release_notes.py`가 AI 없이 모은다. 스캔 직후 AI 판단·fix-plan·설명 요약·영향 분석 대기 건이 있으면(코드 점검 직후에는 판별 대기 건이 있으면) 서버가 띄우고, 배치는 `/api/ai/**`를 직접 호출해 대기 중인 취약점을 가져가 결과를 되돌려준다 |
 
 ## 개발 환경
@@ -38,7 +38,7 @@ Git 저장소(Maven 프로젝트)를 clone 해서 의존성을 뽑고, OSV/NVD�
 | `spring-boot-starter-data-jpa` | 엔티티 / Repository |
 | `spring-boot-starter-security` | 로그인 및 접근 제어 |
 | `spring-boot-starter-thymeleaf` | 화면 템플릿 |
-| `h2` *(runtime)* | 파일 DB |
+| `h2` *(runtime)* | 파일 DB — 2.5.252(`pom.xml`의 `h2.version`으로 Spring Boot 기본 2.2.224를 덮어씀. 2.2.224로 만든 파일이 그대로 열린다) |
 | `spring-boot-devtools` *(runtime, optional)* | 로컬 자동 재시작 |
 | `spring-boot-starter-tomcat` *(provided)* | 내장 서버 (외부 WAS 배포 시 제외) |
 | `maven-invoker` | 스캔 대상 프로젝트에서 `dependency:tree` 실행 |
@@ -85,6 +85,7 @@ Windows에서는 `mvnw.cmd`를 쓴다.
 | `securecode.semgrep.command` *(선택)* | semgrep 실행 파일(기본 `semgrep`). PATH에 없으면 `ai.python.command` 파이썬의 Scripts 폴더에서 자동으로 찾는다 |
 | `securecode.rules-dir` *(선택)* | 코드 점검 규칙 폴더(기본 `../securecode/rules`, backend/에서 띄우는 기준) |
 | `securecode.timeout-seconds` *(선택)* | 코드 점검 1회 제한시간(기본 600초) |
+| `securecode.upload.max-bytes` *(선택)* | 코드 점검 소스 zip 업로드 크기 상한(기본 500MB). 푼 크기·파일 수 상한은 `securecode.upload.max-extracted-bytes`(2GB)·`max-entries`(20만) |
 | `securecode.trace-rules` *(선택)* | MyBatis `${}` 연계 추적 규칙 파일(기본 `../securecode/trace-rules.yml`) |
 | `ai.auto-trigger.enabled` | 스캔 후 AI 배치 자동 실행의 초기값 — DB를 처음 만들 때만 쓰인다 (기본 `true`). 실행 중에는 공통코드 관리 화면 `AI_CONFIG`/`AUTO_TRIGGER` 사용여부로 재기동 없이 켜고 끈다 |
 
@@ -146,6 +147,7 @@ com.sjinc.securitymonitor
 ├── controller              # REST API 엔드포인트
 ├── mvc                     # 화면(뷰) 반환 컨트롤러 + 사이드바·상단바 전역 모델
 ├── domain                  # 도메인 모델 (JPA 엔티티, VO)
+├── exception               # 기능에서 정의한 예외(SecureCodeScanException — 코드 점검 실패·동시 실행 409)
 ├── security                # 프로그램 접근 권한 판정(ProgramAccessGuard)
 ├── dto
 │   ├── ai                  # AI 판단/fix-plan 요청·응답 DTO
@@ -156,7 +158,7 @@ com.sjinc.securitymonitor
 │   ├── permission          # 사용자별 프로그램 권한 DTO
 │   ├── program             # 프로그램(화면) 관리 DTO
 │   ├── scan                # 스캔 요청/응답 DTO
-│   ├── securecode          # 코드 점검(Semgrep 결과·탐지·처리여부) DTO
+│   ├── securecode          # 코드 점검(Semgrep 결과·탐지·처리여부·추적 규칙 초안) DTO, 연계 추적 판정 값(TraceSafety·DollarVerdict)
 │   ├── user                # 사용자 관리 DTO
 │   └── vulnerability       # 취약점 조회 API 응답 DTO
 ├── repository              # JPA Repository
@@ -171,7 +173,10 @@ com.sjinc.securitymonitor
     ├── permission          # 사용자별 프로그램 권한
     ├── program             # 프로그램(화면) 관리
     ├── scan                # 스캔 오케스트레이션, 스캔 이력, 소스 사용 목록(import·설정 키) 추출
-    ├── securecode          # 코드 점검: Semgrep 실행·결과 해석·코드 조각/지문·재점검 비교, 연계 추적(MyBatis ${}·위험 호출 지점)·추적 규칙 확인
+    ├── securecode          # 코드 점검 흐름(SecureCodeScanService)·결과 저장·재점검 비교·코드 조각/지문·소스 업로드 압축 해제
+    │   ├── semgrep         # Semgrep 실행·결과 해석·규칙셋(규칙 id·버전)
+    │   ├── trace           # 연계 추적 엔진(Java·매퍼 색인, 값 출처 추적, MyBatis ${}·사용자 범위·위험 호출 지점 판정)
+    │   └── tracerule       # 추적 규칙(trace-rules.yml) 읽기·초안·프레임워크 구조·자동 반영/확인 대기
     ├── user                # 사용자 관리, 인증
     └── vulnerability       # 취약점 조회/동기화/판정
 ```

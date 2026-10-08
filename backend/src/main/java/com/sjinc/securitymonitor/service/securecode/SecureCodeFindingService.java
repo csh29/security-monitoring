@@ -1,5 +1,8 @@
 package com.sjinc.securitymonitor.service.securecode;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sjinc.securitymonitor.domain.App;
 import com.sjinc.securitymonitor.domain.SecureCodeFinding;
 import com.sjinc.securitymonitor.domain.SeverityOrder;
@@ -8,7 +11,9 @@ import com.sjinc.securitymonitor.dto.securecode.SecureCodeDashboard;
 import com.sjinc.securitymonitor.dto.securecode.SecureCodeStatusCount;
 import com.sjinc.securitymonitor.dto.vulnerability.AppVulnerabilityCount;
 import com.sjinc.securitymonitor.dto.securecode.SecureCodeApplyResult;
+import com.sjinc.securitymonitor.dto.securecode.SecureCodeFindingCode;
 import com.sjinc.securitymonitor.dto.securecode.SecureCodeFindingView;
+import com.sjinc.securitymonitor.dto.securecode.TraceStepCode;
 import com.sjinc.securitymonitor.dto.securecode.SecureCodeStatusRequest;
 import com.sjinc.securitymonitor.repository.AppRepository;
 import com.sjinc.securitymonitor.repository.SecureCodeFindingRepository;
@@ -35,13 +40,14 @@ public class SecureCodeFindingService {
     private final SecureCodeFindingRepository findingRepository;
     private final AppRepository appRepository;
     private final SecureCodeAiReviewService aiReviewService;
+    private final ObjectMapper objectMapper;
 
     /** 이번 점검 결과를 기존 탐지와 맞춰 저장한다. 순수 DB 작업만 하므로 트랜잭션 하나로 묶는다(일부만 반영되지 않게). */
     @Transactional
     public SecureCodeApplyResult applyScan(Long appId, List<DetectedFinding> detected, Set<String> failedFiles,
-                                           Set<String> activeRuleIds) {
+                                           Set<String> activeRuleIds, Map<String, String> mergedAway) {
         SecureCodeReconciler.Result result = SecureCodeReconciler.reconcile(appId, findingRepository.findByAppId(appId),
-                detected, failedFiles, activeRuleIds, LocalDateTime.now());
+                detected, failedFiles, activeRuleIds, mergedAway, LocalDateTime.now());
         findingRepository.saveAll(result.toSave());
         return new SecureCodeApplyResult(result.newCount(), result.resolvedCount());
     }
@@ -85,6 +91,25 @@ public class SecureCodeFindingService {
                         SecureCodeFinding.OPEN.equals(finding.getStatus())
                                 && aiReviewService.isTarget(finding.getRuleId(), finding.getSeverity(), finding.getTraceSafety())))
                 .toList();
+    }
+
+    /** 상세보기에서 여는 코드 — 조각과 연계 추적 근거 걸음마다의 코드. 지워진 앱의 탐지는 없는 것으로 본다. */
+    @Transactional(readOnly = true)
+    public SecureCodeFindingCode getCode(Long id) {
+        SecureCodeFinding f = findingRepository.findById(id)
+                .filter(finding -> appRepository.existsById(finding.getAppId()))
+                .orElseThrow(() -> new IllegalArgumentException("탐지 건을 찾을 수 없습니다: id=" + id));
+        List<TraceStepCode> traceCode = List.of();
+        if (f.getTraceCode() != null && !f.getTraceCode().isBlank()) {
+            try {
+                traceCode = objectMapper.readValue(f.getTraceCode(), new TypeReference<List<TraceStepCode>>() { });
+            } catch (JsonProcessingException e) {
+                // 저장 형식이 바뀐 옛 값 — 근거 글은 그대로 보이고 코드만 빠진다. 다음 점검에서 다시 만든다.
+                log.warn("연계 추적 코드를 읽지 못했습니다: id={} {}", id, e.getOriginalMessage());
+            }
+        }
+        return new SecureCodeFindingCode(f.getId(), f.getFilePath(), f.getStartLine(), f.getEndLine(),
+                f.getSnippet(), f.getSnippetStartLine(), traceCode);
     }
 
     /**

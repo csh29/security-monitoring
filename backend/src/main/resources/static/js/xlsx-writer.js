@@ -12,93 +12,11 @@
  * CSV가 아니라 xlsx로 만드는 이유: CSV는 엑셀이 열 때 값을 추측 변환한다 — 버전 "1.10"이 숫자 1.1로,
  * "2024-01-01"이 날짜로 바뀐다. 버전 문자열이 핵심인 화면이라 모든 셀을 문자열(inlineStr)로 넣는다.
  *
- * xlsx는 XML 몇 개를 zip으로 묶은 것이라, 압축 없이(stored) 묶는 zip 작성기를 여기 같이 둔다.
+ * xlsx는 XML 몇 개를 zip으로 묶은 것이라 공통 zip 작성기(zip-writer.js — loading-overlay.html이 이 파일보다 먼저 싣는다)로 묶는다.
  */
 (function (global) {
     const MAX_CELL_LENGTH = 32767; // 엑셀 셀 한 칸의 최대 글자 수
     const HEADER_FILL = 'FF1F3864'; // 헤더 배경 RGB(31,56,100). 엑셀 색은 ARGB(앞 FF = 불투명)
-
-    // ── zip(무압축) ──────────────────────────────────────────────
-    const CRC_TABLE = (function () {
-        const table = new Uint32Array(256);
-        for (let n = 0; n < 256; n++) {
-            let c = n;
-            for (let k = 0; k < 8; k++) {
-                c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-            }
-            table[n] = c >>> 0;
-        }
-        return table;
-    })();
-
-    function crc32(bytes) {
-        let crc = 0xFFFFFFFF;
-        for (let i = 0; i < bytes.length; i++) {
-            crc = CRC_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
-        }
-        return (crc ^ 0xFFFFFFFF) >>> 0;
-    }
-
-    function dosDateTime(date) {
-        return {
-            time: (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2),
-            date: ((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate()
-        };
-    }
-
-    /** files: [{ name, data(Uint8Array) }] → zip Blob. 파일명은 ASCII만 쓴다(xlsx 내부 경로). */
-    function zipStored(files) {
-        const encoder = new TextEncoder();
-        const stamp = dosDateTime(new Date());
-        const parts = [];
-        const central = [];
-        let offset = 0;
-
-        files.forEach(function (file) {
-            const name = encoder.encode(file.name);
-            const crc = crc32(file.data);
-            const size = file.data.length;
-
-            const local = new DataView(new ArrayBuffer(30));
-            local.setUint32(0, 0x04034b50, true);  // 로컬 파일 헤더 시그니처
-            local.setUint16(4, 20, true);          // 필요 버전
-            local.setUint16(8, 0, true);           // 압축 없음(stored)
-            local.setUint16(10, stamp.time, true);
-            local.setUint16(12, stamp.date, true);
-            local.setUint32(14, crc, true);
-            local.setUint32(18, size, true);
-            local.setUint32(22, size, true);
-            local.setUint16(26, name.length, true);
-            parts.push(new Uint8Array(local.buffer), name, file.data);
-
-            const entry = new DataView(new ArrayBuffer(46));
-            entry.setUint32(0, 0x02014b50, true);  // 중앙 디렉터리 시그니처
-            entry.setUint16(4, 20, true);
-            entry.setUint16(6, 20, true);
-            entry.setUint16(10, 0, true);
-            entry.setUint16(12, stamp.time, true);
-            entry.setUint16(14, stamp.date, true);
-            entry.setUint32(16, crc, true);
-            entry.setUint32(20, size, true);
-            entry.setUint32(24, size, true);
-            entry.setUint16(28, name.length, true);
-            entry.setUint32(42, offset, true);     // 로컬 헤더 위치
-            central.push(new Uint8Array(entry.buffer), name);
-
-            offset += 30 + name.length + size;
-        });
-
-        const centralSize = central.reduce(function (sum, part) { return sum + part.length; }, 0);
-        const end = new DataView(new ArrayBuffer(22));
-        end.setUint32(0, 0x06054b50, true);        // 중앙 디렉터리 끝 시그니처
-        end.setUint16(8, files.length, true);
-        end.setUint16(10, files.length, true);
-        end.setUint32(12, centralSize, true);
-        end.setUint32(16, offset, true);
-
-        return new Blob(parts.concat(central, [new Uint8Array(end.buffer)]),
-            { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    }
 
     // ── xlsx ─────────────────────────────────────────────────────
     /** XML 특수문자 이스케이프 + XML에 들어갈 수 없는 제어문자 제거(NVD 설명 등에 섞여 오면 파일이 안 열린다). */
@@ -204,9 +122,9 @@
             'xl/worksheets/sheet1.xml': sheetXml(table)
         };
 
-        return zipStored(Object.keys(files).map(function (name) {
+        return global.ZipWriter.storedBlob(Object.keys(files).map(function (name) {
             return { name: name, data: encoder.encode(files[name]) };
-        }));
+        }), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     }
 
     function download(filename, table) {

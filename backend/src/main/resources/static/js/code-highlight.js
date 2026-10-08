@@ -7,6 +7,7 @@
  *     → [[{type:'keyword', text:'private'}, {type:'', text:' '}, ...], ...]  줄마다 토큰 배열
  *   화면은 토큰마다 <span class="tok-<type>">을 만들고 textContent로 넣는다(innerHTML을 쓰지 않는다 — 코드 안의 HTML이 실행되지 않게).
  *   색은 common-ui.css의 .code-block .tok-* 에 있다.
+ *   CodeHighlight.enableUsages(pre) — 이름(변수·메서드·클래스·상수, MyBatis ${}·#{})을 누르면 같은 이름을 모두 칠한다(IntelliJ의 사용처 강조).
  *
  * 조각은 파일 중간에서 잘린 것이라 여러 줄 주석·태그 한가운데서 시작할 수 있다. 그런 경우 그 부분만 일반 글자로 보일 뿐 깨지지는 않는다.
  */
@@ -48,13 +49,13 @@
             // 대문자·숫자·밑줄만인 이름은 상수(static final) — IntelliJ처럼 따로 표시한다.
             ['constant', /[A-Z][A-Z0-9_]*[A-Z0-9](?![\w$])/y],
             ['type', /[A-Z][\w$]*/y],
-            ['', /[A-Za-z_$][\w$]*/y]
+            ['ident', /[A-Za-z_$][\w$]*/y]
         ]),
         js: C_LIKE_COMMON.concat([
             ['string', /`(?:\\.|[^`\\])*`?/y],
             ['keyword', words(JS_KEYWORDS, 'y')],
             ['function', /[A-Za-z_$][\w$]*(?=\s*\()/y],
-            ['', /[A-Za-z_$][\w$]*/y]
+            ['ident', /[A-Za-z_$][\w$]*/y]
         ]),
         markup: [
             ['comment', /<!--[\s\S]*?(?:-->|$)/y],
@@ -154,5 +155,46 @@
         return null;
     }
 
-    global.CodeHighlight = { lines: lines, tokenize: tokenize, languageOf: languageOf };
+    /** 누르면 사용처를 칠하는 토큰 종류 — 이름인 것만(키워드·문자열·주석은 아니다). */
+    const SYMBOL_TYPES = ['ident', 'type', 'constant', 'function', 'param', 'danger'];
+    const USAGE_CLASS = 'tok-usage';
+
+    /** MyBatis ${loginCompCd}·#{loginCompCd}는 같은 값을 가리키므로 안쪽 이름으로 비교한다. */
+    function symbolName(span) {
+        const text = span.textContent;
+        const m = /^[$#]\{\s*([^,}\s]+)/.exec(text);
+        return m ? m[1] : text;
+    }
+
+    function symbolOf(target) {
+        if (!(target instanceof Element) || !target.classList) return null;
+        for (const type of SYMBOL_TYPES) {
+            if (target.classList.contains('tok-' + type)) return target;
+        }
+        return null;
+    }
+
+    /**
+     * 코드 블록(pre)에서 이름을 누르면 같은 이름을 모두 칠한다. 다시 누르거나 이름이 아닌 곳을 누르면 지운다.
+     * 블록 안에서만 찾는다(상세보기의 조각과 연계 추적 걸음 코드는 각자). 이벤트는 블록에 한 번만 건다.
+     */
+    function enableUsages(pre) {
+        if (pre.dataset.usages) return;
+        pre.dataset.usages = '1';
+        pre.addEventListener('click', function (e) {
+            const symbol = symbolOf(e.target);
+            const wasSelected = symbol && symbol.classList.contains(USAGE_CLASS);
+            pre.querySelectorAll('.' + USAGE_CLASS).forEach(function (el) { el.classList.remove(USAGE_CLASS); });
+            if (!symbol || wasSelected) return;
+            // 드래그로 코드를 고르는 중이면(복사하려고) 칠하지 않는다.
+            const selection = window.getSelection ? window.getSelection() : null;
+            if (selection && !selection.isCollapsed) return;
+            const name = symbolName(symbol);
+            pre.querySelectorAll('span').forEach(function (el) {
+                if (symbolOf(el) && symbolName(el) === name) el.classList.add(USAGE_CLASS);
+            });
+        });
+    }
+
+    global.CodeHighlight = { lines: lines, tokenize: tokenize, languageOf: languageOf, enableUsages: enableUsages };
 })(window);

@@ -67,9 +67,16 @@ public class ScanOrchestrationService {
         // 만든 pom.xml의 <repositories>/build extension을 Maven이 그대로 실행하거나, repoUrl에
         // 내부망 주소·file:// 경로를 넣어 SSRF/로컬 파일 접근에 악용될 수 있다. 앱 관리("app-mng"
         // 권한이 있어야 등록 가능)에 이미 등록된 조합만 스캔을 허용해서 이 경로를 원천 차단한다.
+        // 빈 값으로 찾으면 Spring Data가 "IS NULL" 조회를 해서 저장소가 없는 소스 업로드 앱이 잡힌다 — 먼저 거른다.
+        if (repoUrl == null || repoUrl.isBlank() || branch == null || branch.isBlank()) {
+            throw new IllegalArgumentException("저장소 URL과 브랜치가 필요합니다.");
+        }
         App app = appRepository.findByRepoUrlAndBranch(repoUrl, branch)
                 .orElseThrow(() -> new IllegalArgumentException(
                         "앱 관리에 등록되지 않은 저장소/브랜치입니다: " + repoUrl + " (" + branch + ")"));
+        if (app.isUploadSource()) {
+            throw new IllegalArgumentException("소스 업로드 앱은 라이브러리 스캔을 할 수 없습니다(코드 점검만 가능).");
+        }
 
         // 등록 검증을 통과한 스캔만 이력에 남긴다 — 미등록 저장소 요청은 앱이 없어 이력의 주인이 없다.
         ScanHistory history = scanHistoryService.start(app, requestedBy);

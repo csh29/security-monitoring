@@ -17,7 +17,7 @@
  *   search.matches(row) // 행 하나가 조회조건에 맞는지 — 목록을 화면에서 거를 때 쓴다(아래 설명)
  *   search.ready      // select 옵션이 다 채워지면 resolve되는 Promise — 첫 조회는 이걸 기다린 뒤 한다
  *
- * fields: [{ id, label, type, width, placeholder, defaultValue, options, optionsQuery, withAll, allLabel, onChange }]
+ * fields: [{ id, label, type, width, placeholder, defaultValue, options, optionsQuery, withAll, allLabel, onChange, match }]
  *   - id           : values()의 키이자 엘리먼트 id("fld" + 첫 글자 대문자, 예: fldProgramId).
  *   - label        : 입력 앞에 붙는 라벨.
  *   - type         : 'text'(기본) | 'select'.
@@ -30,6 +30,8 @@
  *                    /js/com-cd.js를 같이 불러와야 한다(grid.js의 optionsQuery와 같은 규칙).
  *   - withAll      : select 맨 앞에 값이 빈 "전체" 옵션을 넣는다. allLabel로 문구를 바꾼다.
  *   - onChange     : (value, values) — select처럼 값이 바뀌자마자 조회해야 하는 필드에 쓴다.
+ *   - match        : (value, keyword) → boolean. text 필드를 matches()에서 부분 일치 대신 이 함수로 비교한다
+ *                    (예: CWE 번호처럼 "89"가 "CWE-189"까지 걸리면 안 되는 값). 빈 입력값은 부르지 않고 통과.
  *
  * options:
  *   - onSearch : text 필드에서 Enter를 누르면 호출된다(보통 조회 함수).
@@ -142,7 +144,9 @@
             matches: function (row) {
                 const cond = values();
                 return fields.every(function (field) {
-                    return field.type === 'select' || containsIgnoreCase(row[field.id], cond[field.id]);
+                    if (field.type === 'select') return true;
+                    if (field.match) return !cond[field.id] || field.match(row[field.id], cond[field.id]);
+                    return containsIgnoreCase(row[field.id], cond[field.id]);
                 });
             },
             reset: function () {

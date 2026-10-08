@@ -10,6 +10,16 @@
         /* 화면 공통 뼈대·뱃지는 common-ui.css, .grid는 grid.css. 여기는 이 화면에서만 다른 값만. */
         .scan-note{ font-size:12px; line-height:1.6; color:var(--text-sub); margin:4px 0 8px; }
         .history-head{ margin-top:22px; }
+
+        /* 추적 규칙 초안 모달 — 그리드·근거가 길어 기본 모달 폭(560px)보다 넓게. 그리드는 모달 안에서만 스크롤한다
+           (부모를 .grid-wrap으로 두면 grid.js가 화면 아래 끝 기준 높이 계산을 하지 않는다). */
+        .rule-modal{ max-width:1000px; max-height:90vh; }
+        .rule-modal .scan-note{ margin-top:0; }
+        .rule-grid{ max-height:280px; overflow-y:auto; border:1px solid var(--line); border-radius:var(--radius-box); }
+        .rule-grid .grid{ border:none; border-radius:0; }
+        .rule-filter{ display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-sub); margin-bottom:8px; }
+        .rule-modal .detail-list{ grid-template-columns:110px 1fr; margin-top:12px; }
+        .rule-evidence{ margin:0; padding-left:18px; font-size:12px; line-height:1.6; word-break:break-all; }
     </style>
 </head>
 <body>
@@ -25,11 +35,20 @@
 
         <section class="panel-head">
             <div class="panel-title">앱 목록</div>
+            <!-- 점검이 만든 추적 규칙(trace-rules.yml) 초안. 판정을 느슨하게 하는 변경은 여기서 근거를 보고 반영한다. -->
+            <button type="button" class="btn" id="ruleModalOpen">추적 규칙 초안</button>
         </section>
         <div class="scan-note">
-            저장소를 받아 시큐어코딩 규칙(행안부 SW 보안약점 기준)으로 소스를 점검합니다. AI는 쓰지 않으며 코드는 외부로 나가지 않습니다.
+            저장소를 받아(소스 업로드 앱은 올린 zip을 풀어) 시큐어코딩 규칙(행안부 SW 보안약점 기준)으로 소스를 점검합니다.
+            판정은 서버가 규칙과 연계 추적으로 하고, 그래도 못 정한 일부 탐지만 해당 메서드 코드를 AI로 보내 참고 판별을 받습니다(비밀값은 가림).
             점검은 한 번에 하나만 실행됩니다. 결과는 <b>코드 점검 결과</b> 화면에서 봅니다.
+            소스 업로드는 앱 관리 권한이 필요합니다. 소스 폴더를 zip으로 올리거나(빌드 결과물 target·build·node_modules는 빼고),
+            폴더를 그대로 고르면 점검 대상 파일만 골라 zip으로 묶어 올립니다.
         </div>
+
+        <!-- 소스 업로드 앱의 "zip"·"폴더" 버튼이 여는 선택 창. 화면에 보이지 않는다. -->
+        <input type="file" id="uploadInput" accept=".zip" hidden>
+        <input type="file" id="folderInput" webkitdirectory multiple hidden>
 
         <section>
             <table class="grid">
@@ -51,12 +70,53 @@
     </main>
 </div>
 
+<div class="modal-backdrop" id="ruleModalBackdrop">
+    <div class="modal rule-modal">
+        <h3>추적 규칙 초안</h3>
+        <div class="scan-note">
+            점검할 때 저장소의 프레임워크 장치(세션 값을 요청에 넣는 AOP 등)와 설정 파일을 읽어 연계 추적 규칙(trace-rules.yml)과 비교합니다.
+            판정을 엄격하게 하는 변경과 프레임워크 구조 기록은 점검 때 바로 반영하고, <b>판정을 느슨하게 하는 변경</b>(세션 값으로 볼 키·로그인 정보 이름 추가 등)과
+            사용자 범위 키 추가는 여기서 근거를 확인한 뒤 반영합니다 — 세션 값이 아닌 키를 잘못 넣으면 실제 위험을 놓칩니다.
+            반영한 규칙은 모든 앱의 다음 점검부터 쓰이고, 반영·무시는 앱 관리 권한이 필요합니다. 바뀐 trace-rules.yml은 git으로 확인해 커밋하세요.
+        </div>
+        <label class="rule-filter"><input type="checkbox" id="ruleShowAll"> 처리된 것도 보기(자동 반영·반영·무시)</label>
+        <div class="grid-wrap rule-grid">
+            <table class="grid">
+                <thead id="ruleGridHead"></thead>
+                <tbody id="ruleGridBody"></tbody>
+            </table>
+        </div>
+        <dl class="detail-list" id="ruleDetail" hidden>
+            <dt>반영하면</dt><dd id="ruleDetailEffect"></dd>
+            <dt>근거</dt><dd><ul class="rule-evidence" id="ruleDetailEvidence"></ul></dd>
+            <dt>처리</dt><dd id="ruleDetailDecision"></dd>
+        </dl>
+        <div class="modal-actions">
+            <button type="button" class="btn" id="ruleApply">반영</button>
+            <button type="button" class="btn" id="ruleDismiss">무시</button>
+            <button type="button" class="btn" id="ruleModalClose">닫기</button>
+        </div>
+    </div>
+</div>
+
 <script src="/js/grid.js"></script>
 <script src="/js/search-form.js"></script>
 <script th:inline="javascript">
     (function () {
         const APPS_URL = '/api/apps';
         const SCAN_URL = '/api/secure-code/scan';
+        const UPLOAD_SCAN_URL = '/api/secure-code/scan-upload';
+        const uploadInput = document.getElementById('uploadInput');
+        const folderInput = document.getElementById('folderInput');
+        let uploadTarget = null; // 선택 창을 연 행의 { app, button }
+
+        // 폴더 업로드 때 묶을 파일. 서버 SourceArchiveExtractor.SOURCE_EXTENSIONS(점검 규칙이 보는 확장자)와 같다 — 업로드를 줄이려는 것이고,
+        // 서버는 받은 zip을 다시 검사한다. 이 목록이 서버보다 좁아지면 그 확장자 파일은 점검되지 않으니 같이 고친다.
+        const SOURCE_EXTENSIONS = ['java', 'jsp', 'jspx', 'jspf', 'xml', 'properties', 'yml', 'yaml',
+            'js', 'jsx', 'ts', 'tsx', 'vue', 'html', 'htm'];
+        // 빌드 결과물·외부 라이브러리·버전 관리 폴더 — 점검에서 어차피 빠지고(SemgrepRunner의 .semgrepignore), node_modules는 .js가
+        // 수만 개라 묶으면 업로드가 막힌다.
+        const SKIP_DIRS = ['.git', '.svn', 'node_modules', 'target', 'build', 'dist', 'out', '.idea', '.gradle'];
         const HISTORY_URL = '/api/secure-code/scans';
         const appGridBody = document.getElementById('appGridBody');
         const historyGridBody = document.getElementById('historyGridBody');
@@ -91,18 +151,25 @@
         const APP_COLUMNS = [
             { id: 'systemName', label: '시스템명', width: 140 },
             { id: 'description', label: '디스크립션' },
-            { id: 'branch', label: 'Branch', width: 100 },
+            // Git 앱은 브랜치, 소스 업로드 앱은 "소스 업로드"
+            {
+                id: 'branch', label: '소스', width: 110,
+                render: function (value, app) { return app.uploadSource ? '소스 업로드' : (value || ''); }
+            },
             { id: 'lastScanAt', label: '마지막 점검', width: 150, align: 'center', render: formatDateTime },
             { id: 'lastScanStatus', label: '결과', width: 150, align: 'center', render: statusBadge },
             {
-                label: '점검', width: 100, align: 'center',
+                // Git 앱은 "점검", 소스 업로드 앱은 "zip"(zip 파일 선택)·"폴더"(폴더 선택 → 소스만 zip으로 묶어 올림)
+                label: '점검', width: 150, align: 'center',
                 render: function (value, app) {
-                    const btn = document.createElement('button');
-                    btn.type = 'button';
-                    btn.className = 'btn grid-btn';
-                    btn.textContent = '점검';
-                    btn.addEventListener('click', function () { scanApp(app, btn); });
-                    return btn;
+                    if (!app.uploadSource) {
+                        return scanButton('점검', function (btn) { scanApp(app, btn); });
+                    }
+                    const cell = document.createElement('span');
+                    cell.appendChild(scanButton('zip', function (btn) { chooseUpload(app, btn); }));
+                    cell.appendChild(document.createTextNode(' '));
+                    cell.appendChild(scanButton('폴더', function (btn) { chooseFolder(app, btn); }));
+                    return cell;
                 }
             }
         ];
@@ -110,7 +177,12 @@
         const HISTORY_COLUMNS = [
             { id: 'startedAt', label: '시작 일시', width: 150, align: 'center', render: formatDateTime },
             { id: 'systemName', label: '시스템명', width: 120 },
-            { id: 'branch', label: 'Branch', width: 90 },
+            // Git 점검은 브랜치, 업로드 점검은 올린 zip 이름(마우스를 올리면 내용 해시 — 어떤 소스로 점검했는지 맞춰 볼 때)
+            {
+                id: 'branch', label: '소스', width: 150,
+                render: function (value, row) { return row.uploadFileName || value || ''; },
+                title: function (value, row) { return row.uploadFileName ? 'SHA-256 ' + (row.uploadSha256 || '-') : (value || ''); }
+            },
             { id: 'status', label: '결과', width: 80, align: 'center', render: statusBadge },
             {
                 id: 'duration', label: '소요', width: 80, align: 'right',
@@ -171,6 +243,7 @@
         function searchAll() {
             // 앱별 마지막 점검을 구하려고 이력은 항상 전체로 받고, 시스템명 조건은 화면에서 거른다.
             const appId = search.values().appId;
+            refreshRuleCount();
             fetch(HISTORY_URL)
                 .then(function (res) {
                     if (!res.ok) throw new Error('점검 이력 조회에 실패했습니다.');
@@ -186,20 +259,131 @@
                 });
         }
 
+        function scanButton(label, onClick) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn grid-btn';
+            btn.textContent = label;
+            btn.addEventListener('click', function () { onClick(btn); });
+            return btn;
+        }
+
         /** 행의 "점검" 버튼. clone·Semgrep이 끝날 때까지 기다린다(저장소 크기에 따라 수 분). */
         function scanApp(app, button) {
             if (!confirm(app.systemName + ' 저장소를 점검하시겠습니까?\n저장소 크기에 따라 수 분 걸릴 수 있습니다.')) {
                 return;
             }
-            button.disabled = true;
-            button.textContent = '점검 중...';
-
-            fetch(SCAN_URL, {
+            runScan(button, '점검', fetch(SCAN_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ appId: app.id })
-            })
+            }));
+        }
+
+        /** 소스 업로드 앱의 "업로드 점검" 버튼 — zip 선택 창을 연다. 고르면 uploadInput의 change에서 올린다. */
+        function chooseUpload(app, button) {
+            uploadTarget = { app: app, button: button };
+            uploadInput.value = '';
+            uploadInput.click();
+        }
+
+        uploadInput.addEventListener('change', function () {
+            const file = uploadInput.files && uploadInput.files[0];
+            const target = uploadTarget;
+            uploadTarget = null;
+            if (!file || !target) return;
+            if (!/\.zip$/i.test(file.name)) {
+                alert('zip 파일만 올릴 수 있습니다.');
+                return;
+            }
+            if (!confirm(target.app.systemName + ' 소스를 "' + file.name + '"(' + Math.ceil(file.size / 1024 / 1024) + 'MB)로 점검하시겠습니까?\n' +
+                    '이 소스에서 안 걸린 기존 탐지는 해결 처리됩니다 — 그 앱의 전체 소스를 올렸는지 확인하세요.')) {
+                return;
+            }
+            const form = new FormData();
+            form.append('appId', target.app.id);
+            form.append('file', file);
+            runScan(target.button, 'zip', fetch(UPLOAD_SCAN_URL, { method: 'POST', body: form }));
+        });
+
+        /** 소스 업로드 앱의 "폴더" 버튼 — 폴더 선택 창을 연다. 고르면 folderInput의 change에서 묶어 올린다. */
+        function chooseFolder(app, button) {
+            uploadTarget = { app: app, button: button };
+            folderInput.value = '';
+            folderInput.click();
+        }
+
+        function extensionOf(name) {
+            const dot = name.lastIndexOf('.');
+            return dot < 0 ? '' : name.substring(dot + 1).toLowerCase();
+        }
+
+        /** 점검 대상만 고른다 — 빌드·라이브러리 폴더 아래는 빼고, 점검 규칙이 보는 확장자만. */
+        function isSourceFile(file) {
+            const dirs = file.webkitRelativePath.split('/').slice(0, -1);
+            if (dirs.some(function (d) { return SKIP_DIRS.indexOf(d) >= 0; })) return false;
+            return SOURCE_EXTENSIONS.indexOf(extensionOf(file.name)) >= 0;
+        }
+
+        /**
+         * 고른 파일들을 zip으로 묶는다(공통 ZipWriter — 압축 없이). zip 업로드와 같은 API로 보내 서버의 경로 조작·크기·빈 zip 검사를
+         * 그대로 받게 하려는 것이다. 경로는 브라우저가 준 상대 경로(최상위 폴더 포함 — 서버가 벗긴다).
+         */
+        function packFolder(files) {
+            return Promise.all(files.map(function (file) {
+                return file.arrayBuffer().then(function (buffer) {
+                    return { name: file.webkitRelativePath, data: new Uint8Array(buffer) };
+                });
+            })).then(function (entries) {
+                return ZipWriter.storedBlob(entries, 'application/zip');
+            });
+        }
+
+        folderInput.addEventListener('change', function () {
+            const all = Array.from(folderInput.files || []);
+            const target = uploadTarget;
+            uploadTarget = null;
+            if (all.length === 0 || !target) return;
+            const folderName = all[0].webkitRelativePath.split('/')[0] || 'source';
+            const picked = all.filter(isSourceFile);
+            if (picked.length === 0) {
+                alert('"' + folderName + '" 폴더에 점검할 소스 파일(.java·.jsp·.xml 등)이 없습니다.');
+                return;
+            }
+            const megabytes = Math.ceil(picked.reduce(function (sum, f) { return sum + f.size; }, 0) / 1024 / 1024);
+            if (!confirm(target.app.systemName + ' 소스를 "' + folderName + '" 폴더로 점검하시겠습니까?\n' +
+                    '전체 ' + all.length + '개 중 소스 ' + picked.length + '개(' + megabytes + 'MB)를 묶어 올립니다.\n' +
+                    '이 소스에서 안 걸린 기존 탐지는 해결 처리됩니다 — 그 앱의 전체 소스 폴더를 골랐는지 확인하세요.')) {
+                return;
+            }
+            const button = target.button;
+            button.disabled = true;
+            button.textContent = '묶는 중...';
+            packFolder(picked)
+                .then(function (blob) {
+                    const form = new FormData();
+                    form.append('appId', target.app.id);
+                    // 서버는 .zip 이름만 받는다. 이력에 폴더에서 올린 것이 보이게 이름에 표시한다.
+                    form.append('file', blob, folderName + '(폴더).zip');
+                    runScan(button, '폴더', fetch(UPLOAD_SCAN_URL, { method: 'POST', body: form }));
+                })
+                .catch(function (err) {
+                    alert(err.message);
+                    button.disabled = false;
+                    button.textContent = '폴더';
+                });
+        });
+
+        /** 점검 요청(Git·업로드 공통)의 응답을 받아 결과를 알린다. */
+        function runScan(button, label, request) {
+            button.disabled = true;
+            button.textContent = '점검 중...';
+
+            request
                 .then(function (res) {
+                    if (res.status === 403) {
+                        throw new Error('소스 업로드 점검은 앱 관리 권한이 필요합니다.');
+                    }
                     if (!res.ok) {
                         return res.text().then(function (text) { throw new Error(text || '점검에 실패했습니다.'); });
                     }
@@ -221,14 +405,136 @@
                     );
                 })
                 .catch(function (err) {
-                    alert(err.message);
+                    // 업로드 크기 상한을 크게 넘으면 서버가 응답 전에 연결을 끊어 fetch가 TypeError로 끝난다.
+                    alert(err instanceof TypeError
+                        ? '점검 요청이 끊겼습니다. 업로드라면 파일이 너무 클 수 있습니다 — 빌드 결과물을 빼고 소스만 압축하세요.'
+                        : err.message);
                 })
                 .finally(function () {
                     button.disabled = false;
-                    button.textContent = '점검';
+                    button.textContent = label;
                     searchAll();
                 });
         }
+
+        // ---------------------------------------------------------------- 추적 규칙 초안
+
+        const RULE_URL = '/api/secure-code/trace-rule-proposals';
+        const RULE_STATUS_LABELS = {
+            PENDING: '확인 대기', AUTO_APPLIED: '자동 반영', APPLIED: '반영', DISMISSED: '무시', OBSOLETE: '근거 없어짐'
+        };
+        const ruleModalBackdrop = document.getElementById('ruleModalBackdrop');
+        const ruleGridBody = document.getElementById('ruleGridBody');
+        const ruleShowAll = document.getElementById('ruleShowAll');
+        const ruleOpenButton = document.getElementById('ruleModalOpen');
+
+        const RULE_COLUMNS = [
+            { type: 'row-select', width: 36, align: 'center', stopPropagation: true },
+            {
+                id: 'status', label: '상태', width: 100, align: 'center',
+                render: function (value) { return badge(RULE_STATUS_LABELS[value] || value, value.toLowerCase()); }
+            },
+            { id: 'systemName', label: '시스템명', width: 110, title: true },
+            { id: 'kind', label: '종류', width: 170, title: true },
+            { id: 'summary', label: '내용', title: true },
+            { id: 'lastSeenAt', label: '마지막 확인', width: 140, align: 'center', render: formatDateTime }
+        ];
+        Grid.renderHeader(document.getElementById('ruleGridHead'), RULE_COLUMNS, { initialMessage: '초안을 불러오는 중입니다...' });
+
+        /** 버튼에 확인 대기 건수를 붙인다 — 점검 뒤 대기가 생겼는지 모달을 열지 않아도 보이게. */
+        function refreshRuleCount() {
+            fetch(RULE_URL)
+                .then(function (res) { return res.ok ? res.json() : []; })
+                .then(function (list) {
+                    ruleOpenButton.textContent = '추적 규칙 초안' + (list.length ? ' (확인 대기 ' + list.length + '건)' : '');
+                })
+                .catch(function () { /* 건수 표시는 부가 기능 — 실패하면 이름만 둔다. */ });
+        }
+
+        function loadRules() {
+            document.getElementById('ruleDetail').hidden = true;
+            fetch(RULE_URL + '?status=' + (ruleShowAll.checked ? '' : 'PENDING'))
+                .then(function (res) {
+                    if (!res.ok) throw new Error('추적 규칙 초안 조회에 실패했습니다.');
+                    return res.json();
+                })
+                .then(function (list) {
+                    Grid.render(ruleGridBody, RULE_COLUMNS, list || [], {
+                        emptyMessage: ruleShowAll.checked ? '초안이 없습니다.' : '확인 대기 중인 초안이 없습니다.',
+                        onRowClick: function (tr, row) { showRuleDetail(row); }
+                    });
+                })
+                .catch(function (err) {
+                    Grid.renderMessage(ruleGridBody, RULE_COLUMNS.length, err.message);
+                });
+        }
+
+        /** 고른 행의 판정 영향·근거. 근거는 코드 줄이라 textContent로만 넣는다. */
+        function showRuleDetail(row) {
+            document.getElementById('ruleDetail').hidden = false;
+            document.getElementById('ruleDetailEffect').textContent = row.effect || '-';
+            const list = document.getElementById('ruleDetailEvidence');
+            list.replaceChildren();
+            (row.evidence || []).forEach(function (line) {
+                const li = document.createElement('li');
+                li.textContent = line;
+                list.appendChild(li);
+            });
+            document.getElementById('ruleDetailDecision').textContent = row.decidedAt
+                ? (RULE_STATUS_LABELS[row.status] || row.status) + ' · ' + (row.decidedBy || '') + ' · ' + formatDateTime(row.decidedAt)
+                  + (row.decisionNote ? ' — ' + row.decisionNote : '')
+                : '처음 나온 시각 ' + formatDateTime(row.createdAt);
+        }
+
+        /** 반영·무시 공통 — 확인 대기인 행만 보낸다. */
+        function decideRules(action, label) {
+            const ids = Grid.getRows(ruleGridBody)
+                .filter(function (row) { return row._selected && row.status === 'PENDING'; })
+                .map(function (row) { return row.id; });
+            if (ids.length === 0) {
+                alert(label + '할 확인 대기 초안을 선택하세요.');
+                return;
+            }
+            const message = action === 'apply'
+                ? '선택한 ' + ids.length + '건을 trace-rules.yml에 반영하시겠습니까?\n근거를 확인했는지 다시 보세요 — 모든 앱의 다음 점검부터 판정이 바뀝니다.'
+                : '선택한 ' + ids.length + '건을 무시하시겠습니까?\n같은 초안은 다시 묻지 않습니다.';
+            if (!confirm(message)) return;
+            fetch(RULE_URL + '/' + action, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids: ids })
+            })
+                .then(function (res) {
+                    if (res.status === 403) throw new Error('추적 규칙 반영·무시는 앱 관리 권한이 필요합니다.');
+                    if (!res.ok) return res.text().then(function (text) { throw new Error(text || label + '에 실패했습니다.'); });
+                    return res.json();
+                })
+                .then(function (count) {
+                    alert(count + '건을 ' + label + '했습니다.' + (action === 'apply'
+                        ? '\n다음 점검부터 적용됩니다. 바뀐 trace-rules.yml은 git으로 확인해 커밋하세요.' : ''));
+                })
+                .catch(function (err) { alert(err.message); })
+                .finally(function () {
+                    loadRules();
+                    refreshRuleCount();
+                });
+        }
+
+        function closeRuleModal() {
+            ruleModalBackdrop.classList.remove('open');
+        }
+
+        ruleOpenButton.addEventListener('click', function () {
+            ruleModalBackdrop.classList.add('open');
+            loadRules();
+        });
+        ruleShowAll.addEventListener('change', loadRules);
+        document.getElementById('ruleApply').addEventListener('click', function () { decideRules('apply', '반영'); });
+        document.getElementById('ruleDismiss').addEventListener('click', function () { decideRules('dismiss', '무시'); });
+        document.getElementById('ruleModalClose').addEventListener('click', closeRuleModal);
+        ruleModalBackdrop.addEventListener('click', function (e) {
+            if (e.target === ruleModalBackdrop) closeRuleModal();
+        });
 
         PageButtons.bind({
             btnSearch: searchAll,

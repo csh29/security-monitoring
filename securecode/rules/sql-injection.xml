@@ -37,3 +37,20 @@
     <!-- 정렬 --> ORDER BY ${sort}
   </select>
 </mapper>
+
+<!-- iBatis 2 sqlMap — $값$는 치환(위험), #값#는 바인딩(안전) -->
+<sqlMap namespace="Board">
+  <select id="ibatisBad" parameterClass="map">
+    <!-- ruleid: kisa-sql-injection-ibatis-dollar -->
+    SELECT * FROM board_$tableSuffix$ WHERE title LIKE '%' || #keyword# || '%'
+    <!-- ok: kisa-sql-injection-ibatis-dollar -->
+    AND writer = #writer:VARCHAR#
+    <!-- ruleid: kisa-sql-injection-ibatis-dollar -->
+    ORDER BY $sortCol$
+  </select>
+  <select id="ibatisCommented">
+    <!-- ORDER BY $oldSort$ -->
+    <!-- ok: kisa-sql-injection-ibatis-dollar -->
+    SELECT price * 2 AS doubled FROM item WHERE memo = '$'
+  </select>
+</sqlMap>

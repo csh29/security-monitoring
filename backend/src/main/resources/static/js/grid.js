@@ -78,6 +78,9 @@
  *                       클릭한 행은 render()가 자동으로 'current' 클래스를 붙여 강조 표시하므로,
  *                       공통코드관리 화면처럼 "행을 클릭하면 우측에 상세를 보여준다" 같은 동작만
  *                       이 콜백에 얹으면 된다.
+ *   - virtual : true면 행이 VIRTUAL_MIN_ROWS(100) 이상일 때 보이는 범위의 행만 붙인다(가상 스크롤 — 아래 "가상 스크롤" 설명).
+ *               행이 수백 개인 그리드에서 탭 전환·창 크기 변경 때 버벅이지 않게. 셀이 줄바꿈되지 않아 행 높이가 일정하고,
+ *               table의 부모(.grid-wrap/.grid-scroll)가 세로 스크롤 영역인 그리드에만 켠다. getRows·엑셀·복사·입력값은 그대로다.
  *
  * 모든 그리드 공통(화면이 따로 할 일 없음):
  *   - 셀을 클릭하면(엔터·방향키로 옮겨 가도) 그 셀에 'cell-current' 테두리가 표시된다.
@@ -399,6 +402,7 @@
     }
 
     function clearAndAppendMessage(tbody, colspan, message) {
+        stopVirtual(tbody);
         tbody.innerHTML = '';
         const tr = document.createElement('tr');
         const td = document.createElement('td');
@@ -415,7 +419,8 @@
      * 어느 쪽으로 행이 바뀌었든 강조색과 onRowClick 부수효과가 항상 같이 따라오게 하기 위함.
      */
     function markRowCurrent(tbody, tr) {
-        Array.from(tbody.querySelectorAll('tr.current')).forEach(function (other) {
+        // 붙어 있는 행만이 아니라 전체 행에서 지운다 — 가상 스크롤(virtual)로 화면 밖에 떼어 둔 행도 다시 붙으면 강조가 남아 있다.
+        dataRows(tbody).forEach(function (other) {
             if (other !== tr) {
                 other.classList.remove('current');
             }
@@ -426,8 +431,14 @@
         }
     }
 
-    /** tbody의 데이터 행(buildRow로 만든 tr)만. 안내 문구 행(td.empty)은 빠진다. */
+    /**
+     * tbody의 데이터 행(buildRow로 만든 tr)만. 안내 문구 행(td.empty)·가상 스크롤의 빈 칸 행은 빠진다.
+     * 가상 스크롤(virtual)이면 화면에 붙어 있지 않은 행까지 전체다 — 저장(getRows)·엑셀·복사가 보이는 행만 보면 안 된다.
+     */
     function dataRows(tbody) {
+        if (tbody._gridAllRows) {
+            return tbody._gridAllRows.slice();
+        }
         return Array.from(tbody.rows).filter(function (tr) { return !!tr._gridColumns; });
     }
 
@@ -474,7 +485,15 @@
         });
 
         const tr = buildRow(columns, null, { buildRow: tbody._gridBuildRow });
-        tbody.insertBefore(tr, tbody.firstChild);
+        tr._gridTbody = tbody;
+        if (tbody._gridAllRows) {
+            // 가상 스크롤: 전체 행 맨 앞에 넣고 맨 위로 스크롤해 다시 붙인다.
+            tbody._gridAllRows.unshift(tr);
+            tbody._gridVirtual.container.scrollTop = 0;
+            windowRows(tbody, true);
+        } else {
+            tbody.insertBefore(tr, tbody.firstChild);
+        }
 
         const target = options.focus
             ? (tr._fields || {})[options.focus]
@@ -497,10 +516,33 @@
     /** getRows/getRow로 받은 행 데이터에 해당하는 tr을 지운다. 인덱스가 밀리지 않게 먼저 다 찾은 뒤 지운다. */
     function removeRows(tbody, rows) {
         const trs = dataRows(tbody);
-        (rows || [])
+        const targets = (rows || [])
             .map(function (row) { return trs[row._rowIndex]; })
-            .filter(Boolean)
-            .forEach(function (tr) { tr.remove(); });
+            .filter(Boolean);
+        if (tbody._gridAllRows) {
+            tbody._gridAllRows = tbody._gridAllRows.filter(function (tr) { return targets.indexOf(tr) < 0; });
+            windowRows(tbody, true);
+            return;
+        }
+        targets.forEach(function (tr) { tr.remove(); });
+    }
+
+    /**
+     * 위/아래 행(delta = -1/+1). 형제 노드가 아니라 전체 행 순서로 찾는다 — 가상 스크롤이면 이웃 행이 화면에 붙어 있지 않을 수 있어,
+     * 찾은 행을 보이는 자리로 스크롤해 붙인 뒤 돌려준다.
+     */
+    function neighborRow(tr, delta) {
+        const tbody = tr._gridTbody || tr.parentElement;
+        if (!tbody) {
+            return null;
+        }
+        const rows = dataRows(tbody);
+        const index = rows.indexOf(tr);
+        const target = index < 0 ? null : (rows[index + delta] || null);
+        if (target && tbody._gridAllRows) {
+            revealRow(tbody, index + delta);
+        }
+        return target;
     }
 
     /** 다른 행의 입력 필드로 포커스를 옮기고, 클릭했을 때와 똑같이 그 행을 'current'로 강조한다. */
@@ -527,7 +569,7 @@
         e.preventDefault();
 
         const index = (tr._orderedFields || []).indexOf(field);
-        const target = e.key === 'ArrowUp' ? tr.previousElementSibling : tr.nextElementSibling;
+        const target = neighborRow(tr, e.key === 'ArrowUp' ? -1 : 1);
         if (index === -1 || !target || !target._orderedFields || target._orderedFields.length === 0) {
             return;
         }
@@ -563,7 +605,7 @@
                 return;
             }
 
-            const nextRow = tr.nextElementSibling;
+            const nextRow = neighborRow(tr, 1);
             if (nextRow && nextRow._orderedFields && nextRow._orderedFields.length > 0) {
                 focusRowField(nextRow, nextRow._orderedFields[0]);
             }
@@ -662,11 +704,13 @@
 
     /** 클릭(또는 엔터·방향키로 포커스가 옮겨 간) 셀을 그 tbody 안에서 유일한 'cell-current'로 만든다(테두리 표시). */
     function markCellCurrent(tbody, td) {
-        const previous = tbody.querySelector('td.cell-current');
+        // tbody에서 찾지 않고 기억해 둔다 — 가상 스크롤로 떼어 둔 행의 셀이면 querySelector로는 안 보여 테두리가 남는다.
+        const previous = tbody._gridCurrentCell || tbody.querySelector('td.cell-current');
         if (previous && previous !== td) {
             previous.classList.remove('cell-current');
         }
         td.classList.add('cell-current');
+        tbody._gridCurrentCell = td;
     }
 
     /** 복사·엑셀에 넣는 컬럼 — 값이 있는(col.id) 컬럼만. 행 선택 체크박스와 버튼 열(상세보기·스캔)은 뺀다. */
@@ -837,7 +881,8 @@
     function bindRowClickHighlight(tbody) {
         tbody.addEventListener('click', function (e) {
             const tr = e.target.closest('tr');
-            if (!tr || tr.parentElement !== tbody || tr.querySelector(':scope > td.empty')) {
+            // 데이터 행만 — 안내 문구 행·가상 스크롤의 빈 칸 행은 _gridColumns가 없다.
+            if (!tr || tr.parentElement !== tbody || !tr._gridColumns) {
                 return;
             }
             const td = e.target.closest('td');
@@ -864,6 +909,126 @@
         tbody._gridClickBound = true;
     }
 
+    // ── 가상 스크롤(options.virtual) ─────────────────────────────────────
+    //
+    // 행이 수백 개면 전부 붙인 표는 탭(iframe)을 다시 보일 때·창 크기를 바꿀 때 브라우저가 모든 행을 다시 배치해서 버벅였다
+    // (코드 점검 결과 600행). 상용 그리드처럼 보이는 범위(± 여유분)의 행만 tbody에 붙이고, 위아래는 높이만 차지하는 빈 칸 행으로 채운다.
+    // 행(tr)은 전부 만들어 tbody._gridAllRows에 들고 있다가 붙였다 뗐다 한다 — 다시 만들지 않으므로 입력 중인 값(처리여부·비고)이
+    // 스크롤해도 남고, getRows·엑셀·복사는 dataRows로 전체 행을 본다. 행 높이가 일정하다는 전제라(grid.css 32px 고정) 셀이 줄바꿈되는
+    // 그리드는 켜지 않는다. 스크롤 영역은 table의 부모(.grid-wrap 또는 .grid-scroll)여야 한다.
+
+    /** 이보다 적으면 다 붙인다 — 계산·빈 칸 행이 더 비싸다. */
+    const VIRTUAL_MIN_ROWS = 100;
+    /** 보이는 범위 위아래로 미리 붙여 둘 행 수(빠르게 스크롤할 때 빈 화면이 보이지 않게). */
+    const VIRTUAL_BUFFER = 20;
+    const DEFAULT_ROW_HEIGHT = 32;
+    const virtualBodies = new Set();
+
+    function stopVirtual(tbody) {
+        tbody._gridAllRows = null;
+        tbody._gridVirtual = null;
+        virtualBodies.delete(tbody);
+    }
+
+    function spacerRow(columnCount, height) {
+        const tr = document.createElement('tr');
+        tr.className = 'grid-spacer';
+        const td = document.createElement('td');
+        td.colSpan = columnCount;
+        // grid.css의 행 높이·테두리를 덮어써 정확히 이 높이만 차지하게 한다.
+        td.style.cssText = 'height:' + height + 'px;padding:0;border:none;';
+        tr.appendChild(td);
+        return tr;
+    }
+
+    /** 지금 스크롤 위치에서 보일 범위의 행만 붙인다. force가 아니면 범위가 그대로일 때 아무것도 하지 않는다. */
+    function windowRows(tbody, force) {
+        const state = tbody._gridVirtual;
+        const rows = tbody._gridAllRows;
+        if (!state || !rows) {
+            return;
+        }
+        const viewport = state.container.clientHeight;
+        // 숨겨진 탭(iframe)에서는 높이가 0이라 계산할 수 없다 — 다시 보일 때(resize) 계산한다.
+        if (viewport === 0 && !force) {
+            return;
+        }
+        const rowHeight = state.rowHeight;
+        // tbody 맨 위(빈 칸 행 포함)가 스크롤 영역 위쪽보다 얼마나 올라가 있는가 = 지나간 행 높이.
+        const scrolled = Math.max(0, state.container.getBoundingClientRect().top - tbody.getBoundingClientRect().top);
+        const visible = Math.ceil((viewport || 600) / rowHeight);
+        const start = Math.max(0, Math.min(rows.length, Math.floor(scrolled / rowHeight)) - VIRTUAL_BUFFER);
+        const end = Math.min(rows.length, start + visible + VIRTUAL_BUFFER * 2);
+        if (!force && start === state.start && end === state.end) {
+            return;
+        }
+        state.start = start;
+        state.end = end;
+
+        const columnCount = (tbody._gridColumns || []).length || 1;
+        const fragment = document.createDocumentFragment();
+        if (start > 0) fragment.appendChild(spacerRow(columnCount, start * rowHeight));
+        for (let i = start; i < end; i++) fragment.appendChild(rows[i]);
+        if (end < rows.length) fragment.appendChild(spacerRow(columnCount, (rows.length - end) * rowHeight));
+        tbody.replaceChildren(fragment);
+
+        // 실제 행 높이를 한 번 재서 맞춘다(화면 CSS가 다르면). 다르면 그 높이로 다시 계산한다.
+        if (!state.measured && viewport > 0 && end > start) {
+            state.measured = true;
+            const measured = rows[start].offsetHeight;
+            if (measured > 0 && measured !== rowHeight) {
+                state.rowHeight = measured;
+                windowRows(tbody, true);
+            }
+        }
+    }
+
+    /** index번째 행이 보이도록 스크롤하고 붙인다(엔터·방향키로 화면 밖 행에 갈 때). */
+    function revealRow(tbody, index) {
+        const state = tbody._gridVirtual;
+        if (!state) {
+            return;
+        }
+        const rows = tbody._gridAllRows;
+        if (rows[index] && rows[index].parentElement === tbody) {
+            return; // 이미 붙어 있다 — 브라우저 포커스가 알아서 보이게 스크롤한다
+        }
+        const tbodyTopInContent = tbody.getBoundingClientRect().top - state.container.getBoundingClientRect().top
+            + state.container.scrollTop;
+        state.container.scrollTop = Math.max(0, tbodyTopInContent + index * state.rowHeight - state.container.clientHeight / 2);
+        windowRows(tbody, true);
+    }
+
+    function startVirtual(tbody, trs) {
+        const table = tbody.closest('table');
+        const container = table && table.parentElement;
+        tbody._gridAllRows = trs;
+        tbody._gridVirtual = { container: container, rowHeight: DEFAULT_ROW_HEIGHT, start: -1, end: -1, measured: false };
+        virtualBodies.add(tbody);
+        if (container && !container._gridVirtualScrollBound) {
+            let scheduled = false;
+            container.addEventListener('scroll', function () {
+                if (scheduled) return;
+                scheduled = true;
+                global.requestAnimationFrame(function () {
+                    scheduled = false;
+                    container.querySelectorAll('tbody').forEach(function (body) {
+                        if (body._gridVirtual) windowRows(body, false);
+                    });
+                });
+            }, { passive: true });
+            container._gridVirtualScrollBound = true;
+        }
+        windowRows(tbody, true);
+    }
+
+    // 창 크기가 바뀌거나 숨겨졌던 탭(iframe)이 다시 보이면(iframe 안에서 resize가 난다) 보이는 범위를 다시 잡는다.
+    global.addEventListener('resize', function () {
+        virtualBodies.forEach(function (tbody) {
+            if (tbody.isConnected) windowRows(tbody, false);
+        });
+    });
+
     function render(tbody, columns, rows, options) {
         options = options || {};
         tbody._gridOnRowClick = options.onRowClick;
@@ -875,6 +1040,8 @@
         }
 
         function paint() {
+            stopVirtual(tbody);
+            tbody._gridCurrentCell = null;
             tbody.innerHTML = '';
             scheduleFitScrollHeights();
 
@@ -883,9 +1050,18 @@
                 return;
             }
 
-            rows.forEach(function (row) {
-                tbody.appendChild(buildRow(columns, row, options));
+            const trs = rows.map(function (row) {
+                const tr = buildRow(columns, row, options);
+                tr._gridTbody = tbody; // 떼어 둔 행에서도 자기 tbody를 찾게(neighborRow)
+                return tr;
             });
+            if (options.virtual && trs.length >= VIRTUAL_MIN_ROWS) {
+                startVirtual(tbody, trs);
+                return;
+            }
+            const fragment = document.createDocumentFragment();
+            trs.forEach(function (tr) { fragment.appendChild(tr); });
+            tbody.appendChild(fragment);
         }
 
         // col.optionsQuery가 붙은 select 컬럼은 그리는 것보다 먼저 공통코드에서 옵션을 받아와야

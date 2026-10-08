@@ -7,6 +7,7 @@ import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.CallableDeclaration;
 import com.sjinc.securitymonitor.dto.securecode.DetectedFinding;
 import com.sjinc.securitymonitor.dto.securecode.SemgrepMatch;
+import com.sjinc.securitymonitor.dto.securecode.TraceStepCode;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -24,6 +25,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -32,8 +34,23 @@ import java.util.regex.Pattern;
  */
 public class SecureCodeSnippetBuilder {
 
-    /** 걸린 줄 앞뒤로 보여줄 줄 수. */
+    /** 감싼 메서드·매퍼 구문을 못 찾을 때 걸린 줄 앞뒤로 보여줄 줄 수. */
     static final int CONTEXT_LINES = 5;
+
+    /**
+     * 화면용 조각의 최대 줄 수. 조각은 걸린 줄을 감싼 메서드(매퍼 XML이면 구문)를 통째로 보여준다 — 앞뒤 5줄로는 요청값을 받는 줄과 SQL을 실행하는 줄이
+     * 같은 메서드 안에 있어도 잘려, 연계 추적 근거가 가리키는 줄을 화면에서 볼 수 없었다. 긴 메서드는 이 길이만큼 걸린 줄 주변만.
+     */
+    static final int SNIPPET_MAX_LINES = 80;
+
+    /** 연계 추적 근거 한 걸음마다 보여줄, 그 줄 앞뒤 줄 수. */
+    static final int TRACE_CONTEXT_LINES = 3;
+
+    /** 연계 추적 근거 한 걸음의 시작 "파일명:줄"(JavaSourceIndex.location·MybatisDollarTracer의 XML 걸음과 같은 모양). */
+    private static final Pattern STEP_LOCATION = Pattern.compile("^([^\\s:/\\\\]+\\.(?:java|xml)):(\\d+)(?=\\s|$)");
+    /** 매퍼 XML의 구문 태그(MyBatis·iBatis). */
+    private static final Pattern XML_STATEMENT_OPEN = Pattern.compile("(?i)<(select|insert|update|delete|sql|statement|procedure)\\b");
+    private static final Pattern XML_STATEMENT_CLOSE = Pattern.compile("(?i)</(select|insert|update|delete|sql|statement|procedure)\\s*>");
 
     /** 한 줄이 이보다 길면 자른다 — 압축된 JS 한 줄이 수십 KB라 화면·DB를 채운다. */
     static final int MAX_LINE_LENGTH = 300;
@@ -81,8 +98,11 @@ public class SecureCodeSnippetBuilder {
             String key = match.ruleId() + "\n" + match.filePath() + "\n" + matchedCode;
             int occurrence = occurrences.merge(key, 1, Integer::sum) - 1;
 
-            int snippetStart = Math.max(1, match.startLine() - CONTEXT_LINES);
-            int snippetEnd = Math.min(lines.size(), match.endLine() + CONTEXT_LINES);
+            int[] range = enclosingRange(match.filePath(), lines, match.startLine(), match.endLine());
+            if (range == null) range = new int[]{match.startLine() - CONTEXT_LINES, match.endLine() + CONTEXT_LINES};
+            range = cap(range, match.startLine(), Math.max(match.startLine(), match.endLine()), SNIPPET_MAX_LINES);
+            int snippetStart = Math.max(1, range[0]);
+            int snippetEnd = Math.min(lines.size(), range[1]);
             String snippet = String.join("\n", mask(slice(lines, snippetStart, snippetEnd), secret));
 
             detected.add(new DetectedFinding(
@@ -105,20 +125,110 @@ public class SecureCodeSnippetBuilder {
         int start = finding.startLine(), end = Math.max(finding.startLine(), finding.endLine());
 
         int[] method = enclosingCallable(finding.filePath(), lines, start, end);
-        int from = method != null ? method[0] : start - AI_CONTEXT_LINES;
-        int to = method != null ? method[1] : end + AI_CONTEXT_LINES;
-        if (to - from + 1 > AI_CONTEXT_MAX_LINES) {
-            // 걸린 줄이 가운데 오게 자른다. 메서드 끝에 닿으면 그만큼 앞으로 당긴다.
-            int before = Math.max(0, (AI_CONTEXT_MAX_LINES - (end - start + 1)) / 2);
-            int newFrom = Math.max(from, start - before);
-            int newTo = Math.min(to, newFrom + AI_CONTEXT_MAX_LINES - 1);
-            from = Math.max(from, Math.min(newFrom, newTo - AI_CONTEXT_MAX_LINES + 1));
-            to = newTo;
-        }
-        from = Math.max(1, from);
-        to = Math.min(lines.size(), to);
+        int[] range = cap(method != null ? method : new int[]{start - AI_CONTEXT_LINES, end + AI_CONTEXT_LINES},
+                start, end, AI_CONTEXT_MAX_LINES);
+        int from = Math.max(1, range[0]);
+        int to = Math.min(lines.size(), range[1]);
         String context = String.join("\n", mask(slice(lines, from, to), isSecretRule(finding.ruleId())));
         return finding.withAiContext(context, from);
+    }
+
+    /**
+     * 연계 추적 근거의 걸음마다 그 줄 주변 코드(점검 때만 만들 수 있다 — clone은 점검이 끝나면 지운다). 근거와 같은 순서로, 파일·줄이 없는 걸음
+     * ("파라미터 없이 실행" 등)이나 파일을 하나로 정하지 못한 걸음은 null. 코드가 붙은 걸음이 하나도 없으면 null.
+     *
+     * @param pathsByFileName 파일 이름 → 저장소 기준 경로들. 근거는 파일 이름만 적으므로(화면에서 읽기 좋게) 여기서 경로로 되돌린다.
+     */
+    public List<TraceStepCode> traceCode(DetectedFinding finding, Map<String, List<String>> pathsByFileName) throws IOException {
+        if (finding.traceEvidence() == null || finding.traceEvidence().isBlank()) return null;
+        boolean secret = isSecretRule(finding.ruleId());
+        List<TraceStepCode> steps = new ArrayList<>();
+        boolean any = false;
+        for (String step : finding.traceEvidence().split("\n")) {
+            Matcher m = STEP_LOCATION.matcher(step);
+            String path = m.find() ? pickPath(m.group(1), finding.filePath(), pathsByFileName) : null;
+            List<String> lines = path == null ? List.of() : readLines(path);
+            int line = path == null ? 0 : Integer.parseInt(m.group(2));
+            if (lines.isEmpty() || line < 1 || line > lines.size()) {
+                steps.add(null);
+                continue;
+            }
+            int from = Math.max(1, line - TRACE_CONTEXT_LINES);
+            int to = Math.min(lines.size(), line + TRACE_CONTEXT_LINES);
+            steps.add(new TraceStepCode(path, line, from, String.join("\n", mask(slice(lines, from, to), secret))));
+            any = true;
+        }
+        return any ? steps : null;
+    }
+
+    /**
+     * 근거의 파일 이름을 경로로. 탐지 파일 자신이면 그것, 후보가 하나면 그것, 여럿이면 탐지 파일과 경로 앞부분이 가장 길게 겹치는 것
+     * (같은 모듈일 가능성이 크다). 그래도 하나로 못 고르면 null — 엉뚱한 파일의 코드를 보여주지 않는다.
+     */
+    static String pickPath(String fileName, String findingPath, Map<String, List<String>> pathsByFileName) {
+        if (findingPath.equals(fileName) || findingPath.endsWith("/" + fileName)) return findingPath;
+        List<String> candidates = pathsByFileName.getOrDefault(fileName, List.of());
+        if (candidates.size() == 1) return candidates.get(0);
+        String best = null;
+        int bestLength = -1;
+        boolean tie = false;
+        for (String candidate : candidates) {
+            int common = commonPrefix(candidate, findingPath);
+            if (common > bestLength) {
+                best = candidate;
+                bestLength = common;
+                tie = false;
+            } else if (common == bestLength) {
+                tie = true;
+            }
+        }
+        return tie ? null : best;
+    }
+
+    private static int commonPrefix(String a, String b) {
+        int n = Math.min(a.length(), b.length()), i = 0;
+        while (i < n && a.charAt(i) == b.charAt(i)) i++;
+        return i;
+    }
+
+    /** 걸린 줄이 가운데 오게 범위를 max 줄로 자른다. 범위 끝에 닿으면 그만큼 앞으로 당긴다. */
+    static int[] cap(int[] range, int start, int end, int max) {
+        int from = range[0], to = range[1];
+        if (to - from + 1 <= max) return new int[]{from, to};
+        int before = Math.max(0, (max - (end - start + 1)) / 2);
+        int newFrom = Math.max(from, start - before);
+        int newTo = Math.min(to, newFrom + max - 1);
+        return new int[]{Math.max(from, Math.min(newFrom, newTo - max + 1)), newTo};
+    }
+
+    /** 화면용 조각의 범위 — 자바면 감싼 메서드, 매퍼 XML이면 감싼 구문(select·insert…). 못 찾으면 null. */
+    private int[] enclosingRange(String path, List<String> lines, int start, int end) {
+        if (path.endsWith(".xml")) return enclosingXmlStatement(lines, start, end);
+        return enclosingCallable(path, lines, start, end);
+    }
+
+    /** 걸린 줄을 감싼 매퍼 구문 태그의 줄 범위. 위로 올라가다 여는 태그보다 닫는 태그를 먼저 만나면 구문 밖이다. */
+    static int[] enclosingXmlStatement(List<String> lines, int start, int end) {
+        int open = -1;
+        String tag = null;
+        for (int i = Math.min(start, lines.size()); i >= 1; i--) {
+            String line = lines.get(i - 1);
+            Matcher o = XML_STATEMENT_OPEN.matcher(line);
+            if (o.find()) {
+                open = i;
+                tag = o.group(1);
+                break;
+            }
+            if (i < start && XML_STATEMENT_CLOSE.matcher(line).find()) return null;
+        }
+        if (open < 0) return null;
+        for (int i = open; i <= lines.size(); i++) {
+            Matcher c = XML_STATEMENT_CLOSE.matcher(lines.get(i - 1));
+            while (c.find()) {
+                if (c.group(1).equalsIgnoreCase(tag)) return i >= end ? new int[]{open, i} : null;
+            }
+        }
+        return null;
     }
 
     /** 걸린 줄을 감싼 가장 안쪽 메서드·생성자의 줄 범위. 자바가 아니거나 구문 분석에 실패하면 null. */
@@ -202,7 +312,7 @@ public class SecureCodeSnippetBuilder {
         return lines;
     }
 
-    static String decode(byte[] bytes) {
+    public static String decode(byte[] bytes) {
         try {
             return StandardCharsets.UTF_8.newDecoder()
                     .onMalformedInput(CodingErrorAction.REPORT)

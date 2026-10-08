@@ -54,10 +54,24 @@ com.sjinc.securitymonitor
 ├── mvc          # 화면(뷰) 반환 컨트롤러 + 전역 모델(ControllerAdvice)
 ├── domain       # JPA 엔티티
 ├── dto/{ai,app,comcd,nvd,osv,permission,program,scan,securecode,user,vulnerability}
+├── exception    # 기능이 정의한 예외(SecureCodeScanException)
 ├── repository   # JPA Repository
 ├── security     # @RequiresProgram + 이를 읽는 AuthorizationManager, ProgramAccessGuard, CsrfCookieFilter
 └── service/{ai,app,comcd,git,maven,nvd,osv,permission,program,scan,securecode,user,vulnerability}
 ```
+
+`service/securecode`만 하위 패키지가 있다(2026-10-08에 한 폴더 29개 클래스를 나눴다):
+
+| 패키지 | 들어 있는 것 |
+| --- | --- |
+| `service.securecode` | 점검 흐름(`SecureCodeScanService`)·결과 저장·재점검 비교·코드 조각/지문·업로드 압축 해제·폐기 규칙 정리 |
+| `service.securecode.semgrep` | `SemgrepRunner`·`SemgrepReportParser`·`RuleSetLoader` |
+| `service.securecode.trace` | 연계 추적 엔진 — `JavaSourceIndex`·`MapperXmlIndex`·`ValueOriginTracer`·`ConstantFolder`·`MybatisDollarTracer`·`SinkTracer`·`DollarTraceMerger`·`UserScopeFindings` |
+| `service.securecode.tracerule` | 추적 규칙 — `TraceRules`(설정)·`TraceRuleService`·`TraceRuleDrafter`·`FrameworkProfiler`·`TraceRuleChange`·`TraceRuleChangePlanner`·`TraceRulesFileEditor`·`TraceRuleDraftPreview` |
+| `dto.securecode` | 판정 값 `TraceSafety`(enum)·`DollarVerdict`도 여기 — 화면 DTO(`SecureCodeFindingView`)와 AI 판별 서비스가 같이 써서, dto가 service를 import하지 않게 |
+
+패키지가 나뉘어 `JavaSourceIndex`·`MapperXmlIndex`와 그 일부 메서드, `MybatisDollarTracer.readSources`/`trace`, `SinkTracer` 생성자·`trace`·`apply`가
+public이다(다른 하위 패키지가 쓴다). `ValueOriginTracer`·`ConstantFolder`는 `trace` 안에서만 쓰여 package-private 그대로다.
 
 `controller`와 `mvc`가 나뉘어 있다 — **REST API를 찾을 때 `mvc`를 보면 안 되고, 화면 라우팅을
 찾을 때 `controller`를 보면 안 된다.**
@@ -112,7 +126,8 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
 
 1. 동시 실행 잠금(`ReentrantLock.tryLock`) — 이미 돌고 있으면 409(`SecureCodeScanException.busy`). Semgrep이 동시에 돌면
    `~/.semgrep/settings.yml`을 같이 쓰다 PermissionError가 난다(규칙 테스트 중 실제로 났다).
-2. `appId`로 등록된 앱만(임의 URL 없음) → `SecureCodeScan` RUNNING 기록
+2. `appId`로 등록된 앱만(임의 URL 없음) → `SecureCodeScan` RUNNING 기록. **소스를 얻는 방법만 앱의 소스 출처에 따라 다르고 3번부터는 같다**(`analyze`):
+   Git 앱은 `scan` → clone, 소스 업로드 앱은 `scanUpload` → zip 압축 해제(아래 "소스 업로드 점검")
 3. `RuleSetLoader` — 규칙 폴더(`securecode.rules-dir`, 기본 `../securecode/rules`)의 `*.yml` 규칙 id 목록과 규칙셋 버전(내용 해시 12자리).
    규칙이 0개면 실패시킨다(0건 성공 → 기존 탐지 전부 해결 처리를 막기 위함)
 4. clone → `SemgrepRunner`: clone 루트에 우리 `.semgrepignore`를 **지우고 새로 쓴 뒤**(저장소 쪽 파일·심볼릭 링크를 따르지 않게, `src/test/`·빌드 폴더 제외)
@@ -122,17 +137,26 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
 5. `SemgrepReportParser` — 규칙 id는 `check_id`의 마지막 점 뒤(Semgrep이 설정 경로를 앞에 붙인다), 경로는 `/`로, 심각도는 ERROR/WARNING/INFO →
    공통코드 SEVERITY의 HIGH/MEDIUM/LOW. `errors` 중 경로가 있는 것은 **분석 실패 파일**로 센다
 6. `SecureCodeSnippetBuilder` — 무료판 Semgrep은 `extra.lines`·`fingerprint`에 `"requires login"`을 넣어서, 서버가 clone 파일을 직접 읽어
-   앞뒤 5줄 조각과 **지문**을 만든다. 지문 = SHA-256(규칙 id + 파일 경로 + 걸린 줄의 공백 정리 텍스트 + 같은 키의 파일 내 순번). 줄 번호는 넣지 않는다
+   조각과 **지문**을 만든다. 조각은 걸린 줄을 감싼 메서드(매퍼 XML이면 감싼 `<select>`·`<insert>`… 구문, 못 찾으면 앞뒤 5줄)이고 길면
+   걸린 줄 가운데로 80줄(`SNIPPET_MAX_LINES`) — 2026-10-07 전엔 앞뒤 5줄이라 같은 메서드 안의 요청값 받는 줄도 잘렸다. 지문 = SHA-256(규칙 id + 파일 경로 + 걸린 줄의 공백 정리 텍스트 + 같은 키의 파일 내 순번). 줄 번호는 넣지 않는다
    (위에 한 줄 추가로 전부 "해결+신규"가 되지 않게). 규칙 id에 `hardcoded-secret`이 들어가면 조각·지문 모두 문자열 리터럴·설정 값을 `****`로 가린 뒤 쓴다.
-   UTF-8로 깨지면 MS949로 다시 읽는다. 저장소 밖(실제 경로 기준, 심볼릭 링크 포함)을 가리키면 읽지 않는다
+   UTF-8로 깨지면 MS949로 다시 읽는다. 저장소 밖(실제 경로 기준, 심볼릭 링크 포함)을 가리키면 읽지 않는다.
+   연계 추적 뒤에는 근거 걸음마다("파일명:줄 …") 그 줄 앞뒤 3줄을 `traceCode`(TraceStepCode 목록 JSON, 근거와 같은 순서, 없는 걸음은 null)로 붙인다
+   (`SecureCodeScanService.attachTraceCode`) — 근거는 다른 파일·메서드를 가리키는데 clone은 점검이 끝나면 지워 나중에 읽을 수 없다. 근거는 파일 이름만 적으므로
+   경로로 되돌릴 때 탐지 파일 자신 → 후보가 하나 → 탐지 파일과 경로 앞부분이 가장 길게 겹치는 것 순으로 고르고, 못 고르면 비운다(엉뚱한 파일을 보여주지 않게)
 6-1. **연계 추적** — 출처를 따라갈 수 있는 탐지가 있을 때만(`SecureCodeScanService.traceFindings`). clone의 Java 소스를 한 번만 구문 분석해
    (`JavaSourceIndex` — JavaParser, 타입 해석기 없이 소스만) 아래 두 추적이 같은 색인을 쓴다. 값의 출처를 따라가는 엔진은 `ValueOriginTracer`(순수)다 —
-   지역 변수는 모든 대입, 파라미터는 모든 호출자(호출 문맥 Frame), 맵은 실행 직전까지 모든 경로의 `put`, 우리 메서드는 반환문(값이든 맵이든 — 맵을 만들어 돌려주는 유틸 메서드의 키도 그 안의 `put`까지 따라간다. 2026-10-07 전에는 맵 쪽이 빠져 `FrameFileUtil.excelToTxt(...)`가 돌려준 맵이 "맵 출처를 모름"이었다), 컨트롤러 요청 매핑 파라미터는
+   지역 변수는 모든 대입(단 상수 조건으로 실행되지 않는 갈래와, 쓰기 전에 같은 블록에서 무조건 다시 대입돼 덮인 값은 뺀다 — `ConstantFolder`), 파라미터는 모든 호출자(호출 문맥 Frame), 맵은 실행 직전까지 모든 경로의 `put`, 우리 메서드는 반환문(값이든 맵이든 — 맵을 만들어 돌려주는 유틸 메서드의 키도 그 안의 `put`까지 따라간다. 2026-10-07 전에는 맵 쪽이 빠져 `FrameFileUtil.excelToTxt(...)`가 돌려준 맵이 "맵 출처를 모름"이었다), 컨트롤러 요청 매핑 파라미터는
    클라이언트 값, 세션 덮어쓰기·로그인 정보는 `trace-rules.yml`. JDK 값 객체(날짜·난수·UUID·숫자 — `PURE_VALUE_TYPES`)·클래스 정적 메서드·정적 상수는
    재료(받는 쪽·인자)의 출처를 따르고, 클라이언트가 보낸 객체(업로드 파일 등)의 메서드 결과는 클라이언트 값이다. RestTemplate·SqlSession처럼 외부에서
-   값을 가져오는 객체의 결과는 판정 불가로 둔다. 판정은 `TraceSafety`(공용 enum), 등급은 `TraceSafety.severity()` — 클라이언트 값·우회 가능 HIGH,
+   값을 가져오는 객체의 결과는 판정 불가로 둔다. 메서드 연결(`JavaSourceIndex.resolve`)은 타입 해석기 없이 이름으로 하므로, 같은 이름의 클래스가 여럿이면
+   호출 지점에서 보이는 것만 고른다(같은 파일 → 단일 import → 같은 패키지, 못 고르면 전부). `ConstantFolder`(순수)는 리터럴·한 번만 정해지는 지역 변수·
+   static final 필드와 그 사이의 사칙연산·비교·`String` 메서드(`charAt`·`equals` 등)를 계산해 if·삼항·switch(fall-through 포함)·`while (false)`의
+   실행되지 않는 갈래를 가리고, 빈 지역 리스트에 같은 블록에서 차례로 add·remove·set만 한 뒤 상수 위치로 꺼내는 `get(i)`의 원소를 계산한다.
+   모르면 계산하지 않는다(그 갈래는 실행될 수 있다고 보고 판정은 가장 나쁜 쪽으로 남는다). 판정은 `TraceSafety`(공용 enum), 등급은 `TraceSafety.severity()` — 클라이언트 값·우회 가능 HIGH,
    판정 불가 MEDIUM, 안전 판정 LOW. 판정·근거는 `SecureCodeFinding.traceSafety`·`traceEvidence`에 저장하고, 지문은 그대로라 재점검 비교·처리여부에 영향이 없다.
-   - **위험 호출 지점**(`SinkTracer`): SSRF 변수 주소(`kisa-ssrf-dynamic-url`)·명령 실행(`kisa-os-command-exec`)·다운로드 경로(`kisa-path-traversal-download`)·
+   - **위험 호출 지점**(`SinkTracer`): SSRF 변수 주소(`kisa-ssrf-dynamic-url`)·명령 실행(`kisa-os-command-exec`, 같은 호출을 taint로 보는 `kisa-os-command-injection-request`도 같은 기준 —
+     taint는 상수 조건을 계산하지 못해 실행되지 않는 요청값 갈래로도 HIGH가 되고 추적이 없으면 AI 대기로 갔다)·다운로드 경로(`kisa-path-traversal-download`)·
      업로드 저장(`kisa-file-upload-save`)·문자열 연결 SQL(`kisa-sql-injection-java-concat`) 탐지 줄에서 규칙이 보는 호출을 구문 트리로 다시 찾아(`JavaSourceIndex.nodesAt`)
      그 인자(주소·명령·경로·SQL)의 출처를 판정한다. 무료판 Semgrep taint는 한 메서드 안만 봐서, 컨트롤러가 받은 값을 서비스에서 쓰는 사내 구조에서는
      Spring 출처를 넣어도 이어지지 않던 것을 호출자를 거슬러 컨트롤러까지 따라가 확정한다. SSRF는 고정 호스트로 시작하는 주소(지역 변수에 만든 것도)를
@@ -141,6 +165,22 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
      가능)은 HIGH, 설정값 + 날짜 + 난수로 이름을 만드는 2곳은 LOW. SSRF 변수 주소 2건(`callUrl` 대입 3곳 모두 서버 값, `batchUrl` `@Value`)은 LOW.
      ext-api 2건 — 상수 주소를 넘겨받은 `new URL(url)` LOW, 외부 HTML의 `img.attr("src")`는 판정 불가.
      처음엔 `.append()` 체인 깊이(MAX_DEPTH 14 → 40), JDK 날짜·난수 객체, `File.separator` 같은 클래스 상수를 몰라 안전한 2곳이 판정 불가였다.
+   - **OWASP Benchmark 1.2 SQL 인젝션(2026-10-07, sqli 504건 = 실제 취약 272 + 오탐 유도 232):** 규칙 수정 전 탐지 0건이었다 —
+     `kisa-sql-injection-java-concat`이 실행 인자 바깥 모양 `"..." + $E`만 봤는데, `+`는 왼쪽 결합이라 `"... '" + bar + "'"`의 바깥은
+     `("... '" + bar) + "'"`(식 + 리터럴)이다. 깊은 식(`<... "..." + $E ...>`)으로 바꾸고 `execute(sql)`처럼 변수에 먼저 만든 SQL도 잡게 해 504/504.
+     추적은 패키지까지 쓴 정적 호출(`java.net.URLDecoder.decode(...)` — `isClassScope`), 컬렉션 넣기/꺼내기(`list.add` → `list.get`, 이터레이터·
+     `Enumeration` — `COLLECTION_*`), 요청 맵·이름 목록(`getParameterMap`·`getParameterNames`·`getHeaderNames`)을 몰라 미탐이 났다. 고친 뒤
+     HIGH 보고 기준 탐지율 100%(272/272, 전: 53.7%), 오탐률 68.5%(159/232). 남은 오탐은 Benchmark의 상수 조건 함정
+     (`(7*42) - num > 200 ? ... : param`, `switch("ABC".charAt(1))`, 리스트 `remove(0)` 뒤 위치 선택, 덮어쓴 대입)이었다 — `ConstantFolder`를 넣어
+     22.8%(53/232). 마지막 53건은 파일마다 있는 내부 클래스 `private class Test`의 `doSomething`이 이름만으로 다른 파일들의 같은 메서드에 이어진 것이라
+     메서드 연결을 보이는 클래스로 좁혀 **탐지율 100%, 오탐률 0%(0/232), 판정 불가 2건(오탐 유도)**. 측정 도구: `BenchmarkEvalTest`(`-Dbench.dir`이 있을 때만 돈다).
+   - **같은 줄·같은 CWE 합치기**(`DuplicateCweMerger`, 연계 추적 뒤·AI 문맥 전): 한 약점을 두 방식으로 보는 규칙 쌍(명령 실행 taint + 실행 호출,
+     SSRF `kisa-ssrf-request` + `kisa-ssrf-dynamic-url`)은 한 메서드에서 끝나는 코드에서 같은 줄 두 건이 되고 추적을 받는 쪽만 판정이 붙어 HIGH·LOW가
+     엇갈렸다. 같은 파일·줄·CWE에 다른 규칙이 여럿이면 한 건만 남긴다 — 남길 규칙은 점검마다 같아야 해서(지문에 규칙 id) 판정 유무가 아니라 규칙만 보고
+     고른다(연계 추적을 받는 규칙 → 규칙 id 순). 남은 건에 추적 판정이 없으면 등급은 묶음에서 가장 높은 것(그러면 AI 판별 대상), 설명 끝에 함께 걸린 규칙을
+     적는다. 같은 규칙이 한 줄에 여럿(`${a}`·`${b}`)이거나 CWE가 없으면 합치지 않는다. 합쳐 빠진 기존 탐지는 `SecureCodeReconciler`가 RESOLVED +
+     비고 "같은 줄·같은 CWE의 … 탐지와 한 건으로 합침"(`retireRule`, 사람이 정한 상태는 유지, "해결" 건수에는 넣지 않음). Benchmark 3,568건 중 460묶음
+     (SSRF 312, 명령 실행 148).
    - Set.of는 JVM마다 순회 순서가 달라, 구문 실행 메서드를 그대로 돌면 같은 코드인데 근거로 고르는 공통 실행 경로가 실행마다 바뀌었다 — 정렬해서 돈다.
 6-1-a. **MyBatis `${}`** — `kisa-sql-injection-mybatis-dollar`. `MybatisDollarTracer`(순수)가 매퍼 XML(`MapperXmlIndex`)과 Java 소스를 이어 `${key}`마다
    값의 출처를 판정하고, `DollarTraceMerger`가 (파일, 줄, 줄 안 순서)로 탐지에 붙인다.
@@ -157,8 +197,17 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
      첫 파라미터 조건·키), 로그인 정보로 볼 메서드 접두어·타입 이름. 판정 로직에는 특정 시스템 이름이 없다. 규칙은 대상 코드에 그 어노테이션이 있을 때만
      적용돼 여러 시스템 항목을 같이 둔다. 지금은 sjinc 프레임워크 `@AddUserInfo` 하나(첫 파라미터가 HttpServletRequest일 때 `paramData`의 login* 키).
      파일이 없으면 빈 규칙(덮어쓰기를 모르면 클라이언트 값 — 위험한 쪽). 규칙 폴더(`rules/`) 밖에 두는 이유는 그 안의 *.yml을 Semgrep이 규칙으로 읽어서다.
+     같은 파일 끝의 `frameworks`(시스템별 프레임워크 구조)는 **판정에 쓰지 않는 기록**이다(아래 "추적 규칙 확인"). 파일은 사람과 서버가 같이 고친다.
    - 추적은 부가 판정이라 실패해도 점검을 실패시키지 않는다. 대신 Semgrep 등급을 그대로 두고 `SecureCodeScanResult.traceNote`로 화면 알림에 올린다
      (추적 실패, 줄 안 개수가 달라 못 맞춘 건수, Java 구문 분석 실패 파일 수).
+6-1-c. **iBatis 2(옛 시스템, 2026-10-07)** — sqlMap의 치환 `$값$`은 Semgrep 규칙 `kisa-sql-injection-ibatis-dollar`(MyBatis `${}` 규칙과 같은 파일 범위·
+   주석 제외, `$` 뒤가 이름으로 시작해야 걸린다)가 잡고, 값 출처는 **같은 엔진**이 판정한다(`DollarTraceMerger.RULE_IDS`에 두 규칙). 매퍼 색인(`MapperXmlIndex`)은
+   루트가 `<sqlMap>`이면 iBatis로 읽는다 — `$이름$`·`#이름#`(`#이름:VARCHAR#`·`#이름,jdbcType=…#`, 속성 경로 `a.b`·반복 `list[]`), 구문 태그에 `statement`·`procedure`,
+   namespace가 없으면 id가 곧 전체 id, 동적 태그 `prepend`(WHERE·AND·OR → 조건 자리, SET → 값 자리), `<isEqual property compareValue>` 안이면 "XML에서 결정".
+   실행 호출은 `queryForList`·`queryForObject`·`queryForMap`·`queryForPaginatedList`·`queryWithRowHandler`(+insert·update·delete)를 `SqlMapClient`·
+   `SqlMapClientTemplate`(`getSqlMapClientTemplate()`)에서 인식한다. 근거·메시지·화면의 대상 식은 파일에 적힌 모양 그대로다(`Dollar.display` — `$sortCol$`).
+   사용자 범위 판정도 같은 기준으로 `#값#`을 본다. Spring 어노테이션이 없는 진입점(Struts Action·서블릿)은 아직 요청 매핑으로 인식하지 못한다 —
+   `request.getParameter`로 직접 꺼낸 값은 클라이언트 값으로 따라가지만, 프레임워크가 요청을 통째로 맵에 옮겨 넘기면 "판정 불가"가 된다.
 6-1-b. **사용자 범위(인가)** — `kisa-authz-client-user-scope`(행안부 "부적절한 인가", CWE-639). **Semgrep 규칙이 아니라 연계 추적 판정이 탐지를 만든다**
    (`UserScopeFindings`). `trace-rules.yml`의 `userScopeKeys`(회사·브랜드·사용자로 데이터를 가르는 SQL 파라미터 키)가 매퍼 SQL의 **조건 자리**(WHERE·ON·HAVING)에
    `#{key}`로 쓰인 곳마다. 값 자리(INSERT VALUES·UPDATE SET·SELECT 목록)는 등록자·수정자 기록이라 뺀다 — CRM은 거의 모든 INSERT가 `#{loginEmpNo}`를
@@ -192,40 +241,88 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
 - **설치·기동 확인:** Semgrep 버전은 `securecode/requirements.txt`(`semgrep==1.178.0`)로 고정한다. `SemgrepRunner.checkOnStartup`(ApplicationReadyEvent, 별도 데몬 스레드)이
   `semgrep --version`을 실행해 없으면·고정 버전과 다르면 WARN 로그에 설치 명령을 남긴다. 기동은 막지 않는다(코드 점검은 부가 기능).
   고정 버전 파일은 `securecode.rules-dir`의 상위 폴더에서 읽는다. 배포 형태(개인 로컬 실행 / 공용 서버)는 아직 정하지 않았고 지금은 개인 로컬 기준이다.
-- **엔티티:** `SecureCodeFinding`(`secure_code_findings`, 유니크 `(app_id, fingerprint)`), `SecureCodeScan`(`secure_code_scans`). 둘 다 앱을 FK로 잡지 않고
-  appId 값만 둔다 — 지워진 앱의 탐지는 조회에서 빠진다.
+- **엔티티:** `SecureCodeFinding`(`secure_code_findings`, 유니크 `(app_id, fingerprint)`), `SecureCodeScan`(`secure_code_scans`), `TraceRuleProposal`
+  (`trace_rule_proposals` — 추적 규칙 변경 한 건과 처리 결과, 아래 "추적 규칙 확인"). 모두 앱을 FK로 잡지 않고 appId 값만 둔다 — 지워진 앱의 탐지는 조회에서 빠진다.
 - **처리여부:** 공통코드 `SC_STATUS` = OPEN(미조치)/RESOLVED(조치완료)/FALSE_POSITIVE(오탐)/ACCEPTED(위험수용). 사람이 OPEN 외로 바꾸면 `statusManual=true`가 되어
   같은 지문이 다시 걸려도·안 걸려도 스캔이 바꾸지 않는다. OPEN으로 되돌리면 다시 스캔을 따른다. 코드가 바뀌면 지문이 바뀌어 새 건이 된다(판단도 다시).
 - **심각도:** HIGH/MEDIUM/LOW뿐이다(Semgrep ERROR/WARNING/INFO, 연계 추적 판정 — CRITICAL은 라이브러리 CVE의 CVSS에만 있다). 그래서 코드 점검 결과
   조회조건은 라이브러리용 `SEVERITY`가 아니라 공통코드 `SC_SEVERITY`(HIGH/MEDIUM/LOW)를 쓴다 — 같은 그룹이면 걸리는 행이 없는 CRITICAL이 보였다.
   값이 같은 문자열이라 뱃지·정렬(`SeverityOrder`)은 그대로다. AI 판별 대상 등급 `ai.securecode.severities`도 기본 HIGH다.
   `SC_STATUS`·`SC_SEVERITY`는 `DataInitializer`가 **그룹이 없을 때만** 매 기동 심는다(사용자 0명일 때만 심는 다른 초기 데이터와 다르다 — 기존 DB에도 들어가야 해서).
-- **API**(`SecureCodeController`, `/api/secure-code`): `POST /scan {appId}`, `GET /scans?appId=`(최신 500건), `GET /findings?appId=&status=`(기본 OPEN, 빈 값=전체),
+- **소스 업로드 점검**(2026-10-07): Git으로 접근할 수 없는 앱(옛날 시스템 등)은 앱 관리에서 소스 출처를 "소스 업로드"(`App.SOURCE_UPLOAD`, 공통코드
+  `APP_SOURCE`)로 두고 코드 점검 화면에서 소스를 올린다(`POST /api/secure-code/scan-upload` multipart `appId`·`file`). 행의 버튼이 둘이다 —
+  **zip**(zip 파일 선택)과 **폴더**(브라우저 폴더 선택 `webkitdirectory`). 폴더는 화면이 점검 대상 파일만 골라(서버 `SOURCE_EXTENSIONS`와 같은 확장자,
+  `node_modules`·`target`·`build`·`.git` 등 아래는 뺌) 공통 `ZipWriter`로 무압축 zip을 만들어 **같은 API**로 보낸다 — 서버의 경로 조작·크기·빈 zip 검사를
+  그대로 받고, 수천 개 파일을 멀티파트로 따로 보낼 때의 Tomcat 파트 수 상한도 피한다. 이름은 `폴더명(폴더).zip`이라 이력에서 구분된다.
+  ZIP64를 쓰지 않아 파일 65,535개·4GB를 넘으면 화면이 거부한다(그땐 zip으로 올린다).
+  - 업로드 앱은 저장소 URL·브랜치가 없다(`AppService`가 지움 — 옛 URL로 clone되지 않게). 기존 DB의 `apps`·`secure_code_scans` `repo_url`·`branch` NOT NULL은
+    `SchemaMigration`이 기동 때 푼다(ddl-auto=update는 제약을 풀지 않는다). **라이브러리 CVE 스캔은 못 한다** — 업로드된 pom.xml로 Maven을 돌리면 플러그인·저장소가
+    서버에서 실행된다(스캔을 등록된 저장소로만 하는 것과 같은 이유). 취약점 조회 화면의 스캔 버튼이 비활성이고 `ScanOrchestrationService`도 거부한다
+    (빈 저장소 값으로 찾으면 Spring Data가 IS NULL 조회를 해 업로드 앱이 잡히는 것도 먼저 막는다).
+  - **업로드 앱만 zip으로, Git 앱은 저장소로만** 점검한다 — 섞으면 경로 기준이 달라져 탐지가 "해결+신규"로 뒤섞인다.
+  - **권한:** 업로드 점검은 `@RequiresProgram("app-mng")` — 점검 버튼(로그인만)보다 높다. 올린 소스가 그 앱의 점검 결과를 대신하므로 엉뚱한 소스를 올리면
+    기존 탐지가 "해결"로 바뀐다. 같은 이유로 **점검할 소스 파일(.java·.jsp·.xml 등)이 하나도 없는 zip은 거부**한다. 화면은 올리기 전에 "안 걸린 기존 탐지는 해결 처리됨"을 확인받는다.
+  - **압축 해제(`SourceArchiveExtractor`, 순수):** 경로 조작(`../`·절대 경로·드라이브 문자 — 최상위 폴더를 벗기기 전 원래 이름으로 검사)이 하나라도 있으면 아무것도
+    풀기 전에 전체 거부, 압축 폭탄은 실제로 쓴 바이트 합(`securecode.upload.max-extracted-bytes`, 기본 2GB)과 파일 수(`securecode.upload.max-entries`, 기본 20만)로 막는다.
+    링크는 만들지 않는다(ZipFile은 일반 파일로 쓴다). 한글 파일명은 UTF-8로 읽다 깨지면 MS949. `__MACOSX/`·`._파일`은 건너뛴다.
+    항목이 전부 한 최상위 폴더 아래면 그 폴더를 벗긴다 — 지문이 저장소 기준 경로라 "myapp/src/…"·"src/…"가 섞이면 재점검 비교가 깨진다. 실행은 하지 않는다(읽기만).
+  - 업로드 크기 상한 `securecode.upload.max-bytes`(기본 500MB, `SecureCodeUploadConfig` — Spring 기본 1MB로는 소스 zip이 전부 거부된다). 넘으면 413과 안내 문구
+    (`UploadSizeExceptionAdvice` — 컨트롤러를 고르기 전 멀티파트 해석 단계의 예외라 컨트롤러·REST 한정 advice로는 안 잡힌다). 크게 넘으면 서버가 연결을 끊을 수 있어 화면은
+    fetch 실패도 "파일이 너무 클 수 있음"으로 안내한다.
+  - 이력(`SecureCodeScan`)은 브랜치 대신 올린 zip 이름(`uploadFileName`)과 내용 SHA-256(`uploadSha256`)을 남긴다. 올린 zip과 푼 폴더는 점검이 끝나면 지운다.
+- **API**(`SecureCodeController`, `/api/secure-code`): `POST /scan {appId}`(Git 앱), `POST /scan-upload`(multipart, 소스 업로드 앱, app-mng 권한), `GET /scans?appId=`(최신 500건), `GET /findings?appId=&status=`(기본 OPEN, 빈 값=전체 — 코드는 넣지 않는다), `GET /findings/{id}/code`(상세보기용 조각·연계 추적 근거 코드 `SecureCodeFindingCode`
+  — 조각이 메서드 단위라 목록에 넣으면 탐지 수천 건에서 응답이 수 MB가 된다),
   `POST /findings/status`(실제로 바뀐 항목만 반영). 화면이 고정 메뉴라 `@RequiresProgram` 없이 로그인만 필요 — 취약점 관리와 같은 기준이다. 누가 바꿨는지는 `statusChangedBy`.
-- **추적 규칙 확인**(`SecureCodeScanService.checkTraceRules` → `TraceRuleDrafter`·`TraceRuleDraftPreview`, 순수): 코드 점검의 연계 추적 단계에서
-  (`${}` 탐지가 있을 때만) 이미 받은 clone으로 이 저장소의 프레임워크 장치를 읽어 `trace-rules.yml`과 비교한다. **다를 때만** 점검 완료 알림
-  (`traceNote`)에 빠지거나 다른 항목과 "반영하면 판정 N건이 바뀜"을 올리고, 근거 주석이 달린 초안 YAML은 서버 로그(WARN)에 남긴다. 같으면 아무것도
-  띄우지 않는다. 설정이 빠지면 그 `${}`가 전부 클라이언트 값(오탐), 세션 값이 아닌 키가 들어가면 위험을 놓치는데 둘 다 조용히 일어나서 넣었다.
-  처음엔 코드 점검 화면에 "초안" 버튼·모달·API로 두었는데, 규칙은 앱이 아니라 프레임워크마다 한 번이면 돼서 누를 일이 드물고(CRM은 "이미 있음"만 나옴)
-  점검 화면 사용자가 아니라 설정 관리자용이라 점검 때 자동 확인으로 바꿨다. **결정론, AI 없음, 소스는 서버 밖으로 나가지 않고 설정 파일도 쓰지 않는다**
-  — 사람이 로그의 초안을 보고 반영·커밋한다. 확인이 실패해도 연계 추적 결과는 그대로 쓴다(로그만). 설정과 다를 때만 판정을 한 번 더 돌려 평소 점검 시간은
-  초안 분석(약 1~2초)만 는다.
-  - 찾는 것: `@Aspect` 클래스의 `@Before`/`@Around` 포인트컷(`@Pointcut` 메서드 이름도 펼침)의 `@annotation(X)` → 어노테이션, `args(request, ..)` → 첫 파라미터 조건.
-    어드바이스 본문에서 우리 메서드 호출을 따라가며(깊이 4) `joinPoint.getArgs()`의 요청 인자 기준 맵 경로(`arg.get("paramData")`, 맵 목록의 행)에 하는
-    `put("key", 값)` → 덮어쓰는 위치·키. **값이 세션에서 온 것만 키로 넣고**, 아닌 것은 "세션 값 아님"으로 따로 보여준다
-    (CRM `regPgmId`는 클라이언트가 보낸 statement 앞 6자리라 여기서 걸렸다 — 손으로 쓴 설정에 잘못 들어가 있던 것을 뺐다).
-    `(T) session.getAttribute(...)`의 T → 로그인 정보 타입, T의 getter(필드 이름으로도 만든다 — Lombok) 카멜 단어 경계 공통 접두어 → 로그인 getter 접두어.
-  - XML AOP(`<aop:config>`)·`HttpServletRequestWrapper` 상속 클래스는 찾지 못해 "직접 확인할 것"으로만 남긴다.
-  - 비교: 항목별 지금 설정 대비 상태(신규/이미 있음/다름/직접 확인), 반영 시 바뀌는 `${}` 판정 수(지금 설정 vs 지금 설정+초안으로 연계 추적을 두 번 돌린 차이).
-    CRM 실측: 지금 설정 기준 알림 없음, 설정 파일이 없다고 치면 "다른 항목 3개(@AddUserInfo → paramData, LoginUserVo, getLogin)·판정 26건이 바뀜".
-- **규칙셋 버전**은 `rules/*.yml`과 함께 `trace-rules.yml` 내용도 해시한다(`RuleSetLoader.load(rulesDir, extraFiles)`) — 추적 규칙이 바뀌면 같은 코드도 판정이 달라져서, 점검 이력에서 그 이유를 추적할 수 있게.
+  추적 규칙 초안은 `TraceRuleProposalController`(`/api/secure-code/trace-rule-proposals`): `GET ?status=`(기본 PENDING, 빈 값=전체, 최신 500건, 로그인만),
+  `POST /apply {ids}`·`POST /dismiss {ids}`(**app-mng 권한** — 반영한 규칙은 모든 앱의 판정을 바꾼다. 업로드 점검과 같은 기준).
+- **추적 규칙 확인**(`TraceRuleService.review` → `TraceRuleDrafter`·`FrameworkProfiler`·`TraceRuleChangePlanner`·`TraceRulesFileEditor`, 2026-10-08 개편):
+  연계 추적 **전에**, 이미 받은 소스로 이 저장소의 프레임워크 장치와 설정 파일을 읽어 `trace-rules.yml` 초안을 만들고 지금 규칙과 비교해 변경(`TraceRuleChange`)을 만든다.
+  새 시스템도 사용자 범위 키 후보를 찾아야 해서, 추적할 탐지가 없어도 소스는 읽는다(예전엔 `${}` 탐지가 있을 때만 확인했다).
+  **결정론, AI 없음, 소스는 서버 밖으로 나가지 않는다.** 확인이 실패해도 점검은 지금 규칙으로 계속한다(알림만).
+  - **나누는 기준 — 잘못 반영했을 때 무엇을 잃는가**(`TraceRuleChange.Type.automatic`):
+    **바로 반영**(파일을 고치고 그 점검의 추적부터 씀, `AUTO_APPLIED`로 기록) — 판정을 엄격하게 하는 변경(기존 장치의 키 중 이 저장소 코드가 **세션 값이 아닌 값**을
+    넣는 것으로 확인된 키 빼기)과 판정에 쓰지 않는 기록(프레임워크 구조). 틀려도 오탐이 늘 뿐이다.
+    **확인 대기**(`PENDING`, 사람이 코드 점검 화면에서 반영) — 새 장치·키 추가, 첫 파라미터 조건 변경, 로그인 정보 타입·getter 접두어 추가. 틀리면 진짜 취약점이
+    조용히 LOW가 된다(CRM `regPgmId` — 클라이언트가 보낸 statement 앞 6자리인데 손으로 쓴 설정에 세션 키로 들어가 있었다). 사용자 범위 키 추가는 엄격한 쪽이지만
+    탐지가 한꺼번에 늘 수 있어 같이 묻는다.
+  - **규칙은 여러 시스템이 같이 쓴다** — 다른 시스템에서 넣은 키를 이 저장소 코드에서 못 찾았다고 빼지 않는다(같은 어노테이션이라도 시스템마다 넣는 키가 다를 수 있다).
+  - 찾는 것(`TraceRuleDrafter`): `@Aspect` 클래스의 `@Before`/`@Around`와 **XML `<aop:config>`의 before·around**(`FrameworkProfiler.xmlAdvices` — bean id → 클래스,
+    컴포넌트 이름이면 첫 글자 대문자, `pointcut-ref` 펼침. after 계열은 요청 값을 못 바꿔 빼고, 어드바이스 메서드를 소스에서 못 찾으면 안내만) 포인트컷의
+    `@annotation(X)` → 어노테이션, `args(request, ..)` → 첫 파라미터 조건. 어드바이스 본문에서 우리 메서드 호출을 따라가며(깊이 4) 요청 인자 기준 맵 경로
+    (`arg.get("paramData")`, 맵 목록의 행)에 하는 `put("key", 값)` → 덮어쓰는 위치·키. **값이 세션에서 온 것만 키로 넣고** 아닌 것은 "세션 값 아님"으로 근거에만 남긴다.
+    `(T) session.getAttribute(...)`의 T → 로그인 정보 타입, T의 getter(필드 이름으로도 — Lombok) 카멜 단어 경계 공통 접두어 → 로그인 getter 접두어.
+    **사용자 범위 키 후보** = 위 장치가 세션 값으로 넣는 키 중 매퍼 SQL 조건 자리(WHERE·ON·HAVING)에 쓰인 것(값 자리만이면 등록자 기록이라 후보가 아니다).
+    `HttpServletRequestWrapper` 상속·위치가 두 단계 이상(`paramData.sub`)인 장치는 설정으로 표현하지 못해 안내만 남긴다.
+  - **프레임워크 구조**(`FrameworkProfiler.profile`): 빌드 파일(pom.xml·build.gradle — Spring Boot 버전, 웹·영속성·AOP·세션·보안 의존성, 아티팩트 이름 전체가 맞을 때만),
+    web.xml(DispatcherServlet·Struts·필터·session-config), Spring XML(`<aop:config>`·`<aop:aspectj-autoproxy>`·`<mvc:annotation-driven>`·`<mvc:interceptors>` 빈·
+    SqlSessionFactoryBean·SqlMapClientFactoryBean), MyBatis/iBatis 설정, application/bootstrap yml·properties(mybatis 설정, 세션 저장소 종류 등 정해 둔 키만 값을 읽음 —
+    비밀값이 섞여 있다), 소스(`@SpringBootApplication`·`@Aspect`·`@EnableAspectJAutoProxy`·인터셉터·필터·요청 래퍼, `addInterceptors`). XML 주석 안은 뺀다.
+    근거에 **줄 번호를 넣지 않는다** — 코드 몇 줄 바뀐 것으로 파일이 다시 쓰이지 않게. 설정 파일을 읽으려고 `MybatisDollarTracer.readSources`가 .java·.xml에 더해
+    `FrameworkProfiler.isConfigFile`(application·bootstrap yml/properties, build.gradle)도 읽는다. 시스템별로 `frameworks.<시스템명>`에 쓴다.
+  - **파일 고치기**(`TraceRulesFileEditor`, 순수): YAML을 통째로 다시 쓰지 않고 바꿀 줄만 고친다 — 주석이 "왜 이 키를 뺐나" 같은 판단 기록이라 지우면 안 된다.
+    고친 곳 위에 `# 날짜 자동 반영|반영 사용자: … — 근거` 주석을 단다. 고친 결과를 다시 읽어 "지금 규칙 + 변경"과 같은지 확인하고 다르면 쓰지 않는다
+    (그래서 `keys`·`loginTypeNames`·`loginMethodPrefixes`는 `[a, b]` 한 줄 모양이어야 한다. `userScopeKeys`는 여러 줄도 된다). `frameworks`는 서버가 쓰는 섹션이라
+    통째로 다시 쓰고 항상 맨 끝에 둔다. 파일 쓰기는 임시 파일 → 바꿔 끼우기, 원래 줄바꿈(CRLF/LF) 유지, 점검과 화면 반영이 동시에 쓰지 않게 한 번에 하나.
+    **서버가 저장소의 파일을 고치므로 사람이 git으로 확인·커밋한다.**
+  - **확인 대기 저장**(`TraceRuleProposal`): 같은 변경(`TraceRuleChange.key` — 근거 줄 번호는 빼서 코드가 밀려도 같다)이 다시 나오면 한 건으로 묶고 마지막 확인 시각만 바꾼다.
+    사람이 무시(`DISMISSED`)한 변경은 다시 묻지 않는다. 같은 앱을 다시 점검했을 때 안 나온 대기 변경은 `OBSOLETE`. 반영할 때는 저장해 둔 변경(JSON)을 그대로 다시
+    적용한다 — 모든 변경은 두 번 적용해도 같아(이미 있는 키 더하기·없는 키 빼기는 그대로), 파일 쓰기 뒤 DB 저장이 실패해 다시 반영해도 규칙이 꼬이지 않는다.
+    하나라도 파일에 못 쓰면 아무것도 반영하지 않는다. 반영한 규칙은 다음 점검부터 쓰인다.
+  - 점검 완료 알림(`traceNote`): 자동으로 고친 판정 규칙(구조 기록 제외), 확인 대기 건수와 "반영하면 판정 N건이 바뀜"(`TraceRuleDraftPreview.changes` — 지금 규칙과
+    대기 변경을 반영한 규칙으로 추적을 한 번 더 돌린 차이, `${}`와 사용자 범위 판정 모두. 새로 생기는 사용자 범위 판정은 위험한 것만 센다). 대기가 있을 때만 한 번 더 돌린다.
+  - 처음(2026-10-02)엔 코드 점검 화면에 "초안" 버튼·모달로 두었다가 "규칙은 프레임워크마다 한 번이면 되고 설정 관리자용"이라 점검 때 확인해 로그에만 초안을 남기게
+    바꿨다(10-06). 새 시스템을 넣을 때마다 로그의 YAML을 손으로 옮겨야 해서, 엄격한 쪽은 자동으로·느슨한 쪽은 화면 승인으로 다시 바꿨다(10-08).
+    화면은 코드 점검의 "추적 규칙 초안"(확인 대기 건수 표시) 모달 — 대기 목록·근거·판정 영향, 반영/무시, "처리된 것도 보기".
+- **규칙셋 버전**은 `rules/*.yml`과 함께 `trace-rules.yml`의 **판정에 쓰는 부분**(`TraceRulesFileEditor.judgmentPart` — `frameworks` 섹션 제외, 줄바꿈 정리)도 해시한다
+  (`RuleSetLoader.load(rulesDir, extraContents)`) — 추적 규칙이 바뀌면 같은 코드도 판정이 달라져서 점검 이력에서 그 이유를 추적할 수 있게. 구조 기록만 바뀌면 버전은 그대로다.
+  점검 중 규칙을 자동으로 고쳤으면 고친 규칙으로 버전을 다시 계산해 이력에 남긴다.
 - **화면:** 사이드바 "시큐어코딩" 구역의 고정 메뉴 **코드 점검**(`secure-code-scan` — 앱별 점검 버튼·마지막 점검·점검 이력)과
   **코드 점검 결과**(`secure-code-mng` — 탐지 그리드, 처리여부 select·비고 저장, 제목 옆 "총 N건"(밑줄·손 모양 커서, 마우스를 올리거나 키보드 초점이 가면 항목별 건수를 공통 그리드(`Grid.render`, 부모를 `.grid-wrap`으로 둬 숨겨진 상태에서 높이 계산을 하지 않게)로 띄움 — 예전엔 제목 아래 한 줄에 모든 항목을 나열해 항목이 많으면 여러 줄로 꺾였다), 상세 모달의 규칙 id·줄 번호·강조 코드 조각과 CWE 링크(규칙 id는 내부 식별자라 그리드 열에 두지 않고 상세에만 — 무슨 약점인지는 항목·CWE 열이 보여준다),
   `${}` 탐지의 "연계 판정" 열(뱃지 색은 등급과 같은 기준, 열에는 판정만 보이고 대상 식·근거는 툴팁, 상세 모달 뱃지에는 매퍼 판정의 대상 식을 붙임 — "서버가 세팅 · ${loginBrndzCd}". 한 줄에 `${}`가 여럿이면
-  탐지도 여럿인데 위치·항목이 같아 어느 행이 어느 값의 판정인지 구분되지 않았다. `SecureCodeFindingView.traceTarget`이 근거 마지막 줄에서 꺼낸다)과 모달의 근거 경로 목록, "AI 판별" 열(취약 (AI) 빨강·확인 필요 (AI) 노랑·
+  탐지도 여럿인데 위치·항목이 같아 어느 행이 어느 값의 판정인지 구분되지 않았다. `SecureCodeFindingView.traceTarget`이 근거 마지막 줄에서 꺼낸다)과 모달의 근거 경로 목록(코드가 붙은 걸음은 밑줄 — 누르면 그 줄 앞뒤 3줄을 펼친다), "AI 판별" 열(취약 (AI) 빨강·확인 필요 (AI) 노랑·
   오탐 의심 (AI) 회색·판별 대기 파랑, 대상이 아니면 빈칸)과 모달의 신뢰도·이유·"참고 의견" 안내).
-  APP·처리여부는 서버에서, 심각도·항목·파일은 받은 목록을 화면에서 거른다. 코드 조각은 전부 textContent로 그린다.
-- **규칙(44개 / 22개 파일, 행안부 7개 분류 중 시간 및 상태를 뺀 6개 — 2026-10-07 인가 후보 규칙 1개 폐기):** 2026-10-02에 아래 기존 규칙에 더해 추가한 것 —
+  APP·처리여부는 서버에서, 심각도·항목·CWE·파일은 받은 목록을 화면에서 거른다. CWE는 번호로 정확히 비교한다("89"·"CWE-89" 모두, 쉼표로 여러 개 — 부분 일치면 89가 CWE-189까지 걸린다). 모달을 열 때 `/findings/{id}/code`로 조각·근거 코드를 받아, 조각은 높이 420px로 묶고 걸린 줄이 보이게 스크롤한다. 코드 조각은 전부 textContent로 그린다.
+- **규칙(45개 / 22개 파일, 행안부 7개 분류 중 시간 및 상태를 뺀 6개 — 2026-10-07 인가 후보 규칙 1개 폐기, iBatis `$값$` 규칙 1개 추가):** 2026-10-02에 아래 기존 규칙에 더해 추가한 것 —
   입력데이터 검증: 경로 조작(요청값→파일 경로 taint ERROR, 다운로드 응답 안의 변수 경로 WARNING — `path-traversal.yml`), XXE(외부 개체를 막는 설정 없이
   만든 XML 파서 WARNING — `xxe.yml`), 오픈 리다이렉트(`open-redirect.yml`), LDAP 삽입·XML(XPath) 삽입·코드 삽입(ScriptEngine·SpEL·`Class.forName`)·
   HTTP 응답분할(`injection.yml`, 앞 셋 ERROR·응답분할 WARNING). **모든 taint 규칙**(기존 명령어 삽입·SSRF·`xss-java` 포함)의 출처에
@@ -331,7 +428,7 @@ AI에게 넘기는 근거도 마찬가지다. OSV에서 뽑은 `knownFixedVersio
   첫 실행(2026-10-06, CRM_BACK·CRM_BATCH 30건)에서 22건이 비밀값 규칙이었고, 값을 못 본 채 거의 다 "취약(high)"을 냈다(규칙을 되풀이한 것뿐).
   그때 저장된 판별은 DB에 남아 있지만 `isReviewCurrent`가 비밀값 규칙이면 숨긴다. 나머지 8건(업로드 원래 파일명 2·`isAdmin` 3·TLS 2·RSA 1024 1)은 대상 그대로.
 - **보내는 것:** 규칙·행안부 항목·CWE·등급·규칙 설명·파일 경로·줄, 코드 문맥(`aiContext`), 연계 추적 판정·근거.
-  **코드 문맥이 없는 탐지는 대기열에 올리지 않고 다음 점검을 기다린다** — 대상 기준을 넓힌 직후 기존 탐지에는 문맥이 없는데, 화면용 조각(앞뒤 5줄)으로 판별하면
+  **코드 문맥이 없는 탐지는 대기열에 올리지 않고 다음 점검을 기다린다** — 대상 기준을 넓힌 직후 기존 탐지에는 문맥이 없는데, 화면용 조각으로 판별하면
   근거가 부족하고 다음 점검에서 문맥이 생기면 입력이 바뀌어 다시 판별(과금)된다. 화면은 이런 건도 "판별 대기"로 보이고 모달에 "코드 문맥이 아직 없으면 다음 코드 점검 뒤"라고 적는다.
   코드는 보내기 직전에 `SecretMasker`로 가린다(되돌릴 원문이 없어 대응표는 버린다). **소스 코드가 AI로 나가는 유일한 곳이다**(사내 정책 예외, 2026-10-06 승인,
   2026-10-07 추가 규칙까지 확대).
@@ -463,17 +560,18 @@ OPEN만)에서도 빠진다.
 | --- | --- |
 | `/css/common-ui.css` | `:root` 변수, `.app-shell`, `.btn`, `.panel-head`, `.page-toolbar`, 코드·원문 블록(`.code-block` — 조치안 pom.xml, 코드 점검 조각. 줄마다 `.code-line > .code-no + .code-text`(flex — 긴 줄이 꺾여도 줄 번호 칸 아래로 안 파고든다), 탐지 줄은 `.hit`, 마우스를 올린 줄은 IDE처럼 줄 전체·줄 번호 강조), 모달(`.modal-backdrop`+`.open` / `.modal` / `.modal-actions`), 모달 안의 라벨|값 상세 표(`.detail-list` — 취약점 관리 상세보기·조치안), 상태 뱃지(`.badge.<코드값 소문자>` — 처리여부·심각도·스캔 결과·점프 폭·영향 분석 상태) 등 페이지 뼈대. 화면 공통 버튼은 항상 우측 상단 — 제목과 한 줄이면 `.panel-head`, 조회조건 영역이 있으면 그 위에 `.page-toolbar` |
 | `/css/grid.css` | `.grid` 공통 모양. 헤더 높이(45px)와 본문 행 높이(32px)를 모든 그리드에서 고정한다 — 화면 `<style>`에서 행 높이를 덮어쓰지 않는다. 헤더는 `position:sticky`라 세로 스크롤 때 고정된다. 행 안의 버튼(취약점 조회 스캔, 취약점 관리 상세보기)은 `.btn.grid-btn` |
-| `/js/grid.js` | (`Grid.copyText`는 그리드 밖에서도 쓰도록 공개한 클립보드 복사 — https가 아니면 execCommand 폴백. 조치안 pom.xml 모달이 쓴다) 컬럼 정의(`COLUMNS`)로 헤더·행·입력 셀까지 만드는 공통 그리드 렌더러. `renderHeader`가 tbody의 첫 안내 행("조회 중입니다...", colspan 자동)도 넣으므로 템플릿의 `<tbody>`는 비워 둔다. 행 데이터는 `getRows`/`getRow`(원본 row + 입력 셀 현재 값, `_rowIndex`/`_isNew`/`_selected`)로 읽고 `onRowClick(tr, row)`도 같은 값을 받는다. select 컬럼에 `display(value, label, row)`를 주면 평소엔 그 결과(뱃지 등)를 보여주고 셀을 누를 때만 select로 바뀐다(취약점 관리 처리여부). 또 table을 `.grid-scroll`로 감싸고 숫자 `width`를 최소 폭으로도 적용해, 화면보다 넓으면 가로 스크롤이 생긴다. `.grid-scroll`의 세로 한도(`max-height`)는 grid.js가 "그 영역 시작 위치부터 화면 아래 끝까지"로 계산해 넣어(헤더·행을 그릴 때, 창 크기 변경 때), 행이 많으면 페이지가 아니라 그리드 본문만 스크롤된다(최소 200px). 화면이 스크롤 영역을 직접 둔 경우(`.grid-wrap`, 취약점 관리)는 감싸지 않는다. **모든 그리드 공통으로** 클릭한 셀에 테두리(`td.cell-current`)를 그리고, 데이터 셀 우클릭 시 공통 메뉴(셀 복사 / 행 복사(탭 구분) / 엑셀 다운로드)를 띄운다 — 값은 화면에 보이는 값(입력 셀은 현재 입력값, select는 옵션 이름)이고 id 없는 컬럼(행 선택·버튼 열)은 행 복사·엑셀에서 빠진다. 입력 셀(에디터) 위에서도 같은 메뉴가 뜨고, 우클릭으로는 입력칸에 커서가 들어가지 않는다(mousedown 기본 동작 차단). 클립보드는 http(비보안 컨텍스트)면 `execCommand` 폴백. 헤더(th)를 드래그앤드롭하면 컬럼 순서가 바뀐다 — 화면이 넘긴 컬럼 배열을 제자리에서 바꾸므로(`moveColumn`) 재조회해도 유지되고 새로고침하면 원래 순서다. **그래서 화면 코드가 컬럼을 순번(`cells[i]`, `COLUMNS[i]`)으로 가정하면 안 된다** — 행 데이터는 항상 `col.id`로 읽는다 |
-| `/js/xlsx-writer.js` | 외부 라이브러리 없는 최소 .xlsx 작성기(무압축 zip + 시트 XML). `XlsxWriter.download(파일명, {sheetName, headers, widths, rows})`. 모든 셀을 문자열로 넣는다 — CSV면 엑셀이 버전 `1.10`을 숫자 1.1로 바꾼다. 헤더는 화면 그리드처럼 항상 가운데 정렬 + 배경 RGB(31,56,100)·흰 굵은 글꼴(`HEADER_FILL`). `loading-overlay.html`이 싣는다 |
+| `/js/grid.js` | **가상 스크롤(`Grid.render`의 `virtual: true`, 행 100개 이상일 때):** 보이는 범위 ± 20행만 tbody에 붙이고 위아래는 높이만 차지하는 빈 칸 행(`tr.grid-spacer`)으로 채운다 — 600행 표가 탭(iframe)을 다시 보일 때 전부 다시 배치되며 버벅였다(코드 점검 결과). 행(tr)은 전부 만들어 `tbody._gridAllRows`에 두고 붙였다 뗐다 해서 입력값이 남고, `getRows`·엑셀·복사·열 이동·현재 행 강조·엔터/방향키 이동(`neighborRow` — 화면 밖 행이면 스크롤해 붙인다)은 전체 행 기준이다. 행 높이 일정(32px)·table 부모가 스크롤 영역이라는 전제라 지금은 코드 점검 결과 그리드만 켠다. 숨겨진 탭에서는 높이가 0이라 계산하지 않고, 다시 보일 때(iframe resize) 맞춘다. (`Grid.copyText`는 그리드 밖에서도 쓰도록 공개한 클립보드 복사 — https가 아니면 execCommand 폴백. 조치안 pom.xml 모달이 쓴다) 컬럼 정의(`COLUMNS`)로 헤더·행·입력 셀까지 만드는 공통 그리드 렌더러. `renderHeader`가 tbody의 첫 안내 행("조회 중입니다...", colspan 자동)도 넣으므로 템플릿의 `<tbody>`는 비워 둔다. 행 데이터는 `getRows`/`getRow`(원본 row + 입력 셀 현재 값, `_rowIndex`/`_isNew`/`_selected`)로 읽고 `onRowClick(tr, row)`도 같은 값을 받는다. select 컬럼에 `display(value, label, row)`를 주면 평소엔 그 결과(뱃지 등)를 보여주고 셀을 누를 때만 select로 바뀐다(취약점 관리 처리여부). 또 table을 `.grid-scroll`로 감싸고 숫자 `width`를 최소 폭으로도 적용해, 화면보다 넓으면 가로 스크롤이 생긴다. `.grid-scroll`의 세로 한도(`max-height`)는 grid.js가 "그 영역 시작 위치부터 화면 아래 끝까지"로 계산해 넣어(헤더·행을 그릴 때, 창 크기 변경 때), 행이 많으면 페이지가 아니라 그리드 본문만 스크롤된다(최소 200px). 화면이 스크롤 영역을 직접 둔 경우(`.grid-wrap`, 취약점 관리)는 감싸지 않는다. **모든 그리드 공통으로** 클릭한 셀에 테두리(`td.cell-current`)를 그리고, 데이터 셀 우클릭 시 공통 메뉴(셀 복사 / 행 복사(탭 구분) / 엑셀 다운로드)를 띄운다 — 값은 화면에 보이는 값(입력 셀은 현재 입력값, select는 옵션 이름)이고 id 없는 컬럼(행 선택·버튼 열)은 행 복사·엑셀에서 빠진다. 입력 셀(에디터) 위에서도 같은 메뉴가 뜨고, 우클릭으로는 입력칸에 커서가 들어가지 않는다(mousedown 기본 동작 차단). 클립보드는 http(비보안 컨텍스트)면 `execCommand` 폴백. 헤더(th)를 드래그앤드롭하면 컬럼 순서가 바뀐다 — 화면이 넘긴 컬럼 배열을 제자리에서 바꾸므로(`moveColumn`) 재조회해도 유지되고 새로고침하면 원래 순서다. **그래서 화면 코드가 컬럼을 순번(`cells[i]`, `COLUMNS[i]`)으로 가정하면 안 된다** — 행 데이터는 항상 `col.id`로 읽는다 |
+| `/js/zip-writer.js` | 외부 라이브러리 없는 무압축 zip 작성기 `ZipWriter.storedBlob([{name, data(Uint8Array)}], type)`. 파일명 UTF-8(표시 비트 켬), ZIP64 없음(65,535개·4GB 넘으면 예외). 엑셀 다운로드(xlsx-writer.js)와 코드 점검 폴더 업로드가 쓴다 — 처음엔 xlsx-writer.js 안에 있었는데 두 번째로 쓰게 되어 뺐다. `loading-overlay.html`이 xlsx-writer.js보다 먼저 싣는다 |
+| `/js/xlsx-writer.js` | 외부 라이브러리 없는 최소 .xlsx 작성기(시트 XML을 `ZipWriter`로 묶음). `XlsxWriter.download(파일명, {sheetName, headers, widths, rows})`. 모든 셀을 문자열로 넣는다 — CSV면 엑셀이 버전 `1.10`을 숫자 1.1로 바꾼다. 헤더는 화면 그리드처럼 항상 가운데 정렬 + 배경 RGB(31,56,100)·흰 굵은 글꼴(`HEADER_FILL`). `loading-overlay.html`이 싣는다 |
 | `/js/modal-drag.js` | 공통 모달(`.modal-backdrop` > `.modal`)을 첫 `h3`(제목줄)로 끌어 옮긴다. `transform`으로만 움직여 닫히면(`.open` 제거) 위치가 초기화되고, 제목줄이 화면 밖으로 못 나가게 막는다. 끌다가 백드롭 위에서 놓으면 생기는 click을 삼켜 "백드롭 클릭 = 닫기"가 오작동하지 않게 한다. `loading-overlay.html`이 싣는다 — **새 모달은 제목을 `h3`로 두기만 하면 된다** |
-| `/js/code-highlight.js` | 외부 라이브러리 없는 코드 조각 구문 강조. `CodeHighlight.lines(text, CodeHighlight.languageOf(path))` → 줄마다 `{type, text}` 토큰. 언어는 확장자로 java·js·markup(xml/html/jsp — SQL 키워드, `#{}`, 위험 표시 `${}`)·config(properties/yml). 색은 `common-ui.css`의 `.code-block .tok-*`(IntelliJ 라이트 테마 색). 화면은 토큰을 textContent로만 넣는다. 코드 점검 결과 상세보기가 쓴다 |
+| `/js/code-highlight.js` | 외부 라이브러리 없는 코드 조각 구문 강조. `CodeHighlight.lines(text, CodeHighlight.languageOf(path))` → 줄마다 `{type, text}` 토큰. 언어는 확장자로 java·js·markup(xml/html/jsp — SQL 키워드, `#{}`, 위험 표시 `${}`)·config(properties/yml). 색은 `common-ui.css`의 `.code-block .tok-*`(IntelliJ 라이트 테마 색, 클래스 이름만 청록 — 검정이면 일반 글자와 구분이 안 됐다). `CodeHighlight.enableUsages(pre)` — 이름(`tok-ident`·`type`·`constant`·`function`, MyBatis `${}`·`#{}`는 안쪽 이름으로)을 누르면 그 블록에서 같은 이름을 모두 칠한다(`.tok-usage`, IntelliJ 사용처 강조). 다시 누르거나 이름이 아닌 곳을 누르면 지우고, 드래그로 고르는 중이면 칠하지 않는다. 화면은 토큰을 textContent로만 넣는다. 코드 점검 결과 상세보기(조각·연계 추적 걸음 코드)가 쓴다 |
 | `/js/com-cd.js` | 공통코드로 select 옵션 채우기(그룹당 1회 캐시) |
 | `/js/tabs.js` | 홈 화면 탭 |
 | `/js/hotkeys.js` | 공통 펑션키 F3 조회 / F4 신규 / F5 삭제 / F9 저장 / F12 초기화. 버튼에 `data-hotkey="F3"`만 붙이면 되고, 버튼 글자 뒤 `[F3]` 표기도 이 파일이 자동으로 붙인다. `loading-overlay.html`이 싣는다 |
-| `/js/search-form.js` | 조회영역 공통 렌더러 `SearchForm.render(container, fields, {onSearch})` → `values()`/`reset()`/`field(id)`/`matches(row)`/`ready`. `matches(row)`는 전체 목록을 받아 조회조건을 화면에서 거르는 화면(프로그램·사용자·공통코드 관리, 취약점 조회)이 쓴다 — text 필드마다 `row[field.id]` 부분 일치(대소문자 무시). 화면은 `<section class="search-row" id="searchArea">`만 두고 label/input 마크업을 직접 쓰지 않는다 |
+| `/js/search-form.js` | 조회영역 공통 렌더러 `SearchForm.render(container, fields, {onSearch})` → `values()`/`reset()`/`field(id)`/`matches(row)`/`ready`. `matches(row)`는 전체 목록을 받아 조회조건을 화면에서 거르는 화면(프로그램·사용자·공통코드 관리, 취약점 조회)이 쓴다 — text 필드마다 `row[field.id]` 부분 일치(대소문자 무시), 필드에 `match(value, keyword)`를 주면 그 함수로 비교한다. 화면은 `<section class="search-row" id="searchArea">`만 두고 label/input 마크업을 직접 쓰지 않는다 |
 | `fragments/page-toolbar.html` | 화면 첫 줄 — 좌상단 프로그램명 + 우측 상단 공통 버튼. 값(`programNm`, `pageButtons`)은 `ViewController`가 넣는다. 버튼은 마크업에 쓰지 않는다(아래 "화면 공통 버튼" 참고) |
 | `/js/page-buttons.js` | `PageButtons.bind({ btnSave: fn })` — 권한 때문에 안 그려진 버튼은 건너뛰고 핸들러를 건다. `loading-overlay.html`이 싣는다 |
-| `fragments/loading-overlay.html` | 전역 스피너 + **CSRF 헤더를 붙이는 공통 fetch 래퍼**(`init.silent: true`면 스피너 없이 — 홈 자동 새로고침 같은 백그라운드 갱신용) + `hotkeys.js`·`page-buttons.js`·`xlsx-writer.js`·`modal-drag.js` 로드 |
+| `fragments/loading-overlay.html` | 전역 스피너 + **CSRF 헤더를 붙이는 공통 fetch 래퍼**(`zip-writer.js`도 싣는다)(`init.silent: true`면 스피너 없이 — 홈 자동 새로고침 같은 백그라운드 갱신용) + `hotkeys.js`·`page-buttons.js`·`xlsx-writer.js`·`modal-drag.js` 로드 |
 
 화면 코드에서 `fetch(...)`에 CSRF 헤더를 붙이는 부분을 찾아도 없다 — `loading-overlay.html`이
 `window.fetch` 자체를 감싸서 전역으로 처리한다.
@@ -530,6 +628,8 @@ OPEN만)에서도 빠진다.
 | `securecode.rules-dir` | 선택. 코드 점검 규칙 폴더(기본 `../securecode/rules`) |
 | `securecode.timeout-seconds` | 선택. 코드 점검 1회 제한시간(기본 600) |
 | `securecode.trace-rules` | 선택. MyBatis `${}` 연계 추적의 시스템별 프레임워크 규칙 파일(기본 `../securecode/trace-rules.yml`) |
+| `securecode.upload.max-bytes` | 선택. 코드 점검 소스 zip 업로드 크기 상한(바이트, 기본 524288000 = 500MB). 이 시스템의 유일한 파일 업로드라 멀티파트 상한 전체가 이 값이다 |
+| `securecode.upload.max-extracted-bytes` / `securecode.upload.max-entries` | 선택. 업로드 zip을 푼 크기 합(기본 2GB)·파일 수(기본 20만) 상한 — 압축 폭탄 방지 |
 | `scan.allowed-repo-hosts` | 앱 등록을 허용할 저장소 호스트 목록(쉼표 구분, 기본 `git.sejung.co.kr`). 다른 호스트를 쓰게 되면 여기서 늘린다 |
 
 AI 배치 실행 로그는 종류별 파일에 이어 쌓인다(gitignore 대상) — 라이브러리 취약점 `backend/ai-assessor.log`, 시큐어코딩 `backend/ai-securecode.log`
@@ -559,7 +659,9 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `SeverityOrderTest` / `VulnerabilityScreenOrderTest` — 심각도 정렬(알파벳순 아님, 모르는 값은 뒤), 취약점 관리 화면 순서(심각도 → CVSS → 시스템명 → CVE ID)
 - `CveSummaryServiceTest` — 설명 요약 대기 판단(CVE ID 단위, 해시 비교, 최신 설명 선택)과 저장 검증
 - `SemgrepReportParserTest` — Semgrep JSON 해석(규칙 id 접두어 제거, 역슬래시 경로, 심각도 변환, 경로 있는 오류만 분석 실패 파일)
-- `SecureCodeSnippetBuilderTest` — 지문(줄 밀림·들여쓰기 무관, 코드가 바뀌면 다름, 같은 코드 두 번은 순번), 앞뒤 5줄 조각, 비밀값 가림, MS949 폴백, 저장소 밖 경로 차단,
+- `DuplicateCweMergerTest` — 같은 줄·같은 CWE 다른 규칙은 추적 규칙 한 건(판정 등급 유지, 설명에 함께 걸린 규칙), 추적 판정이 없으면 묶음 최고 등급·규칙 id 순,
+  같은 규칙 여러 번·다른 줄·CWE 없음은 그대로. `SecureCodeReconcilerTest`에 합쳐 빠진 기존 탐지(비고·사람이 정한 상태 유지·해결 건수 제외)
+- `SecureCodeSnippetBuilderTest` — 지문(줄 밀림·들여쓰기 무관, 코드가 바뀌면 다름, 같은 코드 두 번은 순번), 조각(감싼 메서드·80줄 자름, 매퍼 XML은 감싼 구문, 못 찾으면 앞뒤 5줄), 연계 추적 근거 코드(걸음별 앞뒤 3줄, 동명 파일 고르기), 비밀값 가림, MS949 폴백, 저장소 밖 경로 차단,
   AI 판별 문맥(감싼 메서드 전체, 긴 메서드는 걸린 줄 가운데로 80줄·끝이면 당김, 자바가 아니면 앞뒤 15줄·비밀값 가림)
 - `SecureCodeAiReviewServiceTest` — AI 판별 대상(결정론으로 못 정한 높은 등급만, 비밀값 규칙 제외·남은 판별 숨김), 대기열(지워진 앱·판별 완료 제외), 코드가 바뀌면 옛 판별 숨김·재대기,
   줄 번호만 밀리면 재판별 안 함, 문맥 없으면 조각·비밀값 가림, 판별 값 검증, 처리여부는 그대로
@@ -572,15 +674,29 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
   넣어도 공통 실행 경로로 우회, 키가 매퍼에 없으면 판정 없음·알림용 플래그, 설정 없으면 판정 안 함, 위험한 판정만 탐지·지문 고정, `#{}` 첫 이름 키, 설정 읽기) —
   CRM이 아닌 가상 시스템 설정으로 검증한다
 - `SecureCodeRuleRetirementTest` — 폐기 규칙의 미조치 탐지를 조치완료로 정리(사람이 쓴 비고 유지, 사람이 정한 상태는 그대로), 폐기 규칙이 규칙 폴더에 없음
-- `SecureCodeFindingViewTest` — 매퍼 판정 근거 마지막 줄에서 대상 식 꺼내기(`${}`·`#{}`), 매퍼 판정이 아니면 없음
+- `SecureCodeFindingViewTest` — 매퍼 판정 근거 마지막 줄에서 대상 식 꺼내기(`${}`·`#{}`·iBatis `$값$`·`#값:VARCHAR#`), 매퍼 판정이 아니면 없음
+- `IbatisTraceTest` — sqlMap 읽기(치환·바인딩·표시 원문, 주석 제외, `<isEqual compareValue>` XML 결정, `prepend` WHERE/SET 자리, namespace 없는 id),
+  Spring 없는 옛 코드(`request.getParameter` → 맵 → `getSqlMapClientTemplate().queryForList`)의 `$값$`·사용자 범위 `#값#` 판정
 - `DollarTraceMergerTest` — 판정별 등급 재매김·근거·지문 유지, 한 줄 여러 `${}`는 순서로, 줄 안 개수가 다르면 Semgrep 등급 유지, 다른 규칙은 그대로
 - `SinkTracerTest` — 서비스의 위험 호출을 컨트롤러까지 따라가 판정(요청값 주소 CLIENT, `@Value` 주소·고정 호스트 + 쿼리 SERVER_SET, 원래 파일명 저장 CLIENT,
   UUID 파일명 SERVER_SET, 상수 명령 SERVER_SET), 판정으로 등급 재매김(CLIENT HIGH·서버 LOW), 호출을 못 찾은 탐지·다른 규칙은 그대로, 지문 유지
-- `TraceRuleDrafterTest` — AOP 포인트컷·호출 추적으로 세션 덮어쓰기 후보(세션 값 아닌 키는 따로), 이름 붙은 포인트컷·요청 맵 자체 덮어쓰기, AOP 없음·XML AOP 안내,
-  초안 YAML을 그대로 TraceRules가 읽음, 지금 설정 대비 상태(이미 있음/신규/다름), 반영 시 판정 변화, 점검 완료 알림 문구(설정과 같으면 없음), 카멜 공통 접두어
+- `FrameworkProfilerTest` — 빌드 파일·web.xml·Spring XML·application.yml·소스에서 구조(주석 안 제외, 비밀값 안 남김, 근거에 줄 번호 없음), 같은 저장소면 같은 결과,
+  XML AOP 어드바이스(bean id → 클래스, pointcut-ref 펼침, after 제외)
+- `TraceRuleChangePlannerTest` — 새 시스템은 장치·로그인 정보·범위 키가 확인 대기·구조는 바로 반영, 세션 값 아닌 키는 자동 제외, 이 저장소에서 못 찾은 키는 안 뺌,
+  키 추가·첫 파라미터 조건은 대기, 같은 구조면 변경 없음, 두 단계 위치는 안내만, 두 번 적용해도 같음, JSON 왕복, 줄 번호가 달라도 같은 키
+- `TraceRulesFileEditorTest` — 키 빼기·장치 추가·한 줄/여러 줄 목록 더하기에서 주석 유지·근거 주석, 구조 섹션은 맨 끝에 시스템별로·다시 쓰면 교체, 판정 부분 해시는 구조와 무관,
+  이미 반영된 변경은 그대로, 빈 파일, 예상과 다른 모양이면 실패, 첫 파라미터 조건 바꾸기·없애기, 실제 trace-rules.yml에 써도 규칙 유지
+- `TraceRuleDrafterTest` — AOP 포인트컷·호출 추적으로 세션 덮어쓰기 후보(세션 값 아닌 키는 따로), 이름 붙은 포인트컷·요청 맵 자체 덮어쓰기, AOP 없음 안내, XML AOP 후보·
+  어드바이스 메서드 없음 안내, 사용자 범위 키 후보(조건 자리만),
+  반영 시 판정 변화, 카멜 공통 접두어
 - `GitCredentialResolverTest` — 저장소 주소별 인증 선택(가장 긴 일치, 경로 단위 경계, 대소문자·끝 슬래시 무시, 호스트 항목이 서버 전체 토큰·다른 호스트엔 안 붙음,
   설정 없으면 인증 없음, 빈 사용자 이름은 oauth2, 로그 문자열에 토큰 없음, 잘못된 설정·중복 url-prefix는 기동 실패) / `GitConfigTest` — `git.credentials[n].*` 키가
   실제로 읽힘, 예전 단일 키가 남아 있으면 기동 실패, 설정 없으면 인증 없음
+- `SourceArchiveExtractorTest` — 업로드 zip 압축 해제(최상위 폴더 벗기기·안 벗기기, `../`·절대 경로·드라이브 문자 전체 거부, 풀린 크기·파일 수 상한, MS949 한글 파일명,
+  맥 압축 부산물 건너뜀·소스 0개 집계, zip이 아니면 안내) / `AppServiceTest` — 업로드 앱은 저장소 값을 지우고 검증 생략, Git 앱은 저장소 검증·브랜치 필수, 모르는 출처 거부 /
+  `SchemaMigrationTest` — 메모리 H2에서 NOT NULL 풀기(두 번 돌려도 됨) / `SourceArchiveExtractorBrowserZipTest` — 화면 폴더 업로드가 만드는 zip(zip-writer.js와
+  같은 바이트 배치: 무압축·UTF-8 표시)을 서버가 풀고 폴더 이름을 벗김
+- 화면 JS(grid.js 가상 스크롤 등)는 자동 테스트가 없다 — 가상 스크롤은 jsdom으로 붙는 행 수·전체 행·입력값 유지·신규/삭제·강조를 한 번 확인했지만(배치가 없어 스크롤 위치 계산은 못 봄) 저장소에 테스트로 남기지 않았다.
 - `SecretMaskerTest` — pom 비밀값만 가림(버전·좌표·`${}` 참조는 남김), AI 결과 되돌림, 보낸 뒤 pom이 바뀌면 되돌리지 않음, 비밀값 없으면 원문 그대로
 
 규칙 자체는(사용자 범위 판정은 Semgrep 규칙이 아니라 위 Java 테스트로) `securecode/rules/`의 예제 파일로 `securecode/test_rules.py`(규칙 파일마다 `semgrep --test`)가 검증한다(22개 규칙 파일 통과).

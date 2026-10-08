@@ -1,7 +1,7 @@
 package com.sjinc.securitymonitor.dto.securecode;
 
-import com.sjinc.securitymonitor.service.securecode.DollarTraceMerger;
-import com.sjinc.securitymonitor.service.securecode.UserScopeFindings;
+import com.sjinc.securitymonitor.service.securecode.trace.DollarTraceMerger;
+import com.sjinc.securitymonitor.service.securecode.trace.UserScopeFindings;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -20,6 +20,11 @@ class SecureCodeFindingViewTest {
                 "crd020.xml:55 ${ym.substring(2)} (crd020.selectSms)"))).isEqualTo("${ym.substring(2)}");
         assertThat(SecureCodeFindingView.traceTarget(UserScopeFindings.RULE_ID, List.of(
                 "order.xml:6 #{userId} (order.list)"))).isEqualTo("#{userId}");
+        // iBatis 2
+        assertThat(SecureCodeFindingView.traceTarget(DollarTraceMerger.IBATIS_RULE_ID, List.of(
+                "board.xml:10 $sortCol$ (Board.list)"))).isEqualTo("$sortCol$");
+        assertThat(SecureCodeFindingView.traceTarget(UserScopeFindings.RULE_ID, List.of(
+                "board.xml:7 #compCd:VARCHAR# (Board.list)"))).isEqualTo("#compCd:VARCHAR#");
     }
 
     @Test

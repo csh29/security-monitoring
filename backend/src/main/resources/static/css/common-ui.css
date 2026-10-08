@@ -169,7 +169,8 @@ body{
 .code-block .tok-comment{ color:#8c8c8c; font-style:italic; }
 .code-block .tok-number{ color:#1750eb; }
 .code-block .tok-annotation{ color:#9e880d; }
-.code-block .tok-type{ color:#000000; }
+/* 클래스 이름(String·HttpServletRequest 등). IntelliJ 라이트 테마는 검정이라 일반 글자와 구분이 안 돼 청록으로 둔다. */
+.code-block .tok-type{ color:#0e7c86; }
 .code-block .tok-function{ color:#00627a; }
 .code-block .tok-tag{ color:#0033b3; }
 .code-block .tok-attr{ color:#174ad4; }
@@ -178,8 +179,13 @@ body{
 .code-block .tok-value{ color:#067d17; }
 .code-block .tok-constant{ color:#871094; font-style:italic; }
 .code-block .tok-param{ color:#871094; }
+/* 이름을 누르면 같은 이름을 모두 칠한다(CodeHighlight.enableUsages — IntelliJ의 사용처 강조). */
+.code-block .tok-ident, .code-block .tok-type, .code-block .tok-constant, .code-block .tok-function,
+.code-block .tok-param, .code-block .tok-danger{ cursor:pointer; }
 /* MyBatis ${} — 점검 규칙이 잡는 위험 패턴이라 눈에 띄게. */
 .code-block .tok-danger{ color:#c7254e; font-weight:700; background:var(--accent-soft); border-radius:2px; }
+/* 사용처 강조는 ${} 강조보다 뒤에 둬야 배경이 덮이지 않는다. */
+.code-block .tok-usage{ background:#d9d4fb; border-radius:2px; box-shadow:0 0 0 1px #b8aef5; }
 
 /* 그리드 셀 안의 상태 뱃지. 클래스는 코드값을 소문자로 쓴다 — 처리여부(OPEN/RESOLVED)·심각도는 취약점 관리,
    스캔 결과(RUNNING/SUCCESS/FAILED)는 스캔 이력 화면. */
@@ -214,3 +220,8 @@ body{
 /* 코드 점검 처리여부(공통코드 SC_STATUS). OPEN/RESOLVED는 위의 처리여부 뱃지를 같이 쓴다. */
 .badge.false_positive{ background:#ececf4; color:var(--text-sub); }
 .badge.accepted{ background:#e3ecff; color:#2f5bd3; }
+/* 코드 점검 화면 "추적 규칙 초안" 처리 상태. 확인 대기(PENDING)는 위 pending을 같이 쓴다. 무시·근거 없어짐은 끝난 일이라 회색. */
+.badge.applied{ background:#e6f4ea; color:#2e7d32; }
+.badge.auto_applied{ background:#e6f4ea; color:#2e7d32; }
+.badge.dismissed{ background:#ececf4; color:var(--text-sub); }
+.badge.obsolete{ background:#ececf4; color:var(--text-sub); }

@@ -44,6 +44,7 @@ public class DataInitializer implements CommandLineRunner {
     private static final int INITIAL_PASSWORD_LENGTH = 20;
     private static final String SECURE_CODE_STATUS_GROUP = "SC_STATUS";
     private static final String SECURE_CODE_SEVERITY_GROUP = "SC_SEVERITY";
+    private static final String APP_SOURCE_GROUP = "APP_SOURCE";
 
     private final UserRepository userRepository;
     private final ProgramRepository programRepository;
@@ -62,6 +63,7 @@ public class DataInitializer implements CommandLineRunner {
         // 아래 "DB가 비었을 때 한 번만" 규칙보다 먼저 돈다 — 기능이 생기기 전에 만들어진 DB에도 들어가야 화면 select가 채워진다.
         seedSecureCodeStatusIfAbsent();
         seedSecureCodeSeverityIfAbsent();
+        seedAppSourceIfAbsent();
 
         if (userRepository.count() > 0) return;
 
@@ -258,6 +260,23 @@ public class DataInitializer implements CommandLineRunner {
                     .codeValue(level).codeName(level).sortOrder(sort++).useYn("Y").build());
         }
         log.info("공통코드 {}(코드 점검 심각도)를 추가했습니다.", SECURE_CODE_SEVERITY_GROUP);
+    }
+
+    /**
+     * 앱 소스 출처(공통코드 APP_SOURCE) — 앱 관리 화면의 select. 값은 App.SOURCE_GIT/SOURCE_UPLOAD와 같아야 한다.
+     * 업로드 앱은 zip을 올려 코드 점검만 한다(라이브러리 스캔 불가). SC_STATUS와 같은 이유로 그룹이 없을 때만 심는다.
+     */
+    private void seedAppSourceIfAbsent() {
+        if (comCdGroupRepository.existsById(APP_SOURCE_GROUP)) return;
+
+        comCdGroupRepository.save(ComCdGroup.builder()
+                .codeGroup(APP_SOURCE_GROUP).groupName("앱 소스 출처").sortOrder(7).useYn("Y").build());
+        comCdRepository.save(ComCd.builder().codeGroup(APP_SOURCE_GROUP)
+                .codeValue(App.SOURCE_GIT).codeName("Git").sortOrder(1).useYn("Y").build());
+        comCdRepository.save(ComCd.builder().codeGroup(APP_SOURCE_GROUP)
+                .codeValue(App.SOURCE_UPLOAD).codeName("소스 업로드").sortOrder(2).useYn("Y")
+                .remark("Git으로 접근할 수 없는 앱 — zip을 올려 코드 점검만 한다(라이브러리 스캔 불가)").build());
+        log.info("공통코드 {}(앱 소스 출처)를 추가했습니다.", APP_SOURCE_GROUP);
     }
 
     /** 혼동되기 쉬운 문자(0/O, 1/l/I 등)를 뺀 문자셋에서 무작위로 뽑은 초기 비밀번호. */

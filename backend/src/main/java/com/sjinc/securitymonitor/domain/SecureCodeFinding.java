@@ -89,7 +89,7 @@ public class SecureCodeFinding {
     @Column(length = 1000)
     private String message;
 
-    /** 걸린 줄과 앞뒤 몇 줄. 하드코드된 비밀값 규칙은 값을 가린 뒤 저장한다(DB가 비밀번호 모음이 되지 않게). */
+    /** 걸린 줄을 감싼 메서드(매퍼 XML이면 구문, 못 찾으면 앞뒤 5줄, 최대 80줄). 하드코드된 비밀값 규칙은 값을 가린 뒤 저장한다(DB가 비밀번호 모음이 되지 않게). */
     @Lob
     @Column(columnDefinition = "CLOB")
     private String snippet;
@@ -113,6 +113,14 @@ public class SecureCodeFinding {
      * AI 판별에 보낸(보낼) 코드 문맥 — 걸린 줄을 감싼 메서드(SecureCodeSnippetBuilder.withAiContext). clone은 점검이 끝나면 지워지므로
      * 점검 때 만들어 둔다. AI 판별 대상(결정론으로 못 정한 높은 등급)일 때만 채운다.
      */
+    /**
+     * 연계 추적 근거 걸음마다 그 줄 주변 코드(TraceStepCode 목록 JSON, 근거와 같은 순서) — 상세보기에서 근거를 누르면 펼쳐 본다.
+     * 근거는 다른 파일·메서드를 가리키는데 화면용 조각은 걸린 줄 주변뿐이라 따로 둔다. clone은 점검이 끝나면 지우므로 점검 때 만든다.
+     */
+    @Lob
+    @Column(name = "trace_code", columnDefinition = "CLOB")
+    private String traceCode;
+
     @Lob
     @Column(name = "ai_context", columnDefinition = "CLOB")
     private String aiContext;
@@ -255,6 +263,7 @@ public class SecureCodeFinding {
         // 재점검마다 최신 판정으로 바꾼다 — 우회 경로를 막는 등 연계 코드가 바뀌면 ${} 줄이 그대로여도 판정이 달라진다.
         traceSafety = detected.traceSafety();
         traceEvidence = detected.traceEvidence();
+        traceCode = detected.traceCode();
         // AI 판별 결과는 지우지 않는다 — 입력이 그대로면 다시 보낼 필요가 없고, 바뀌었으면 해시가 달라 숨겨지고 다시 대기가 된다.
         aiContext = detected.aiContext();
         aiContextStartLine = detected.aiContextStartLine();

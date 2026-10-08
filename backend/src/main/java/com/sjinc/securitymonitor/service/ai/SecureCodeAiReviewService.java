@@ -7,7 +7,7 @@ import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewTarget;
 import com.sjinc.securitymonitor.repository.AppRepository;
 import com.sjinc.securitymonitor.repository.SecureCodeFindingRepository;
 import com.sjinc.securitymonitor.service.securecode.SecureCodeSnippetBuilder;
-import com.sjinc.securitymonitor.service.securecode.TraceSafety;
+import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;

@@ -44,11 +44,19 @@ public class SecureCodeScan {
     @Column(name = "system_name", nullable = false)
     private String systemName;
 
-    @Column(name = "repo_url", nullable = false)
+    /** Git 점검만 있다. 업로드 점검은 null이고 아래 upload* 값이 있다. */
+    @Column(name = "repo_url")
     private String repoUrl;
 
-    @Column(nullable = false)
+    @Column
     private String branch;
+
+    /** 업로드 점검에서 올린 zip 이름과 내용 해시 — 어떤 소스로 점검했는지 나중에 맞춰 볼 수 있게(Git의 브랜치 대신). */
+    @Column(name = "upload_file_name")
+    private String uploadFileName;
+
+    @Column(name = "upload_sha256", length = 64)
+    private String uploadSha256;
 
     @Column(name = "requested_by")
     private String requestedBy;
@@ -107,6 +115,22 @@ public class SecureCodeScan {
                 .status(RUNNING)
                 .startedAt(LocalDateTime.now())
                 .build();
+    }
+
+    public static SecureCodeScan startUpload(App app, String requestedBy, String fileName) {
+        return SecureCodeScan.builder()
+                .appId(app.getId())
+                .systemName(app.getSystemName())
+                .uploadFileName(fileName != null && fileName.length() > 255 ? fileName.substring(0, 255) : fileName)
+                .requestedBy(requestedBy)
+                .status(RUNNING)
+                .startedAt(LocalDateTime.now())
+                .build();
+    }
+
+    /** 업로드한 zip의 내용 해시(받는 동안 계산해 점검 시작 뒤에 안다). */
+    public void recordUploadHash(String sha256) {
+        this.uploadSha256 = sha256;
     }
 
     public void succeed(int fileCount, int findingCount, int newCount, int resolvedCount, int failedFileCount,

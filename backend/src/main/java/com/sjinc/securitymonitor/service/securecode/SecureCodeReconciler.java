@@ -20,6 +20,8 @@ import java.util.Set;
  *   <li>기존 OPEN인데 이번에 안 걸림 → RESOLVED. 단 두 경우는 그대로 둔다:
  *     그 파일을 Semgrep이 끝까지 못 봤을 때(못 본 것이지 고친 게 아니다),
  *     그 규칙이 이번 규칙셋에 없을 때(규칙을 지운 것이지 고친 게 아니다).</li>
+ *   <li>이번에 걸렸지만 같은 줄·같은 CWE의 다른 규칙 건으로 합쳐 빠진 것(DuplicateCweMerger) → RESOLVED + 비고에 합친 이유
+ *     ("조치완료"만 보이면 고친 것으로 오해한다). 사람이 정한 상태는 그대로 둔다.</li>
  * </ul>
  */
 public final class SecureCodeReconciler {
@@ -37,6 +39,13 @@ public final class SecureCodeReconciler {
 
     public static Result reconcile(Long appId, List<SecureCodeFinding> existing, List<DetectedFinding> detected,
                                    Set<String> failedFiles, Set<String> activeRuleIds, LocalDateTime now) {
+        return reconcile(appId, existing, detected, failedFiles, activeRuleIds, Map.of(), now);
+    }
+
+    /** @param mergedAway 합쳐져 빠진 탐지의 지문 → 남은 규칙 id(DuplicateCweMerger.Merged) */
+    public static Result reconcile(Long appId, List<SecureCodeFinding> existing, List<DetectedFinding> detected,
+                                   Set<String> failedFiles, Set<String> activeRuleIds, Map<String, String> mergedAway,
+                                   LocalDateTime now) {
         Map<String, SecureCodeFinding> byFingerprint = new HashMap<>();
         existing.forEach(finding -> byFingerprint.put(finding.getFingerprint(), finding));
 
@@ -63,8 +72,15 @@ public final class SecureCodeReconciler {
 
         int resolvedCount = 0;
         for (SecureCodeFinding finding : existing) {
-            if (current.containsKey(finding.getFingerprint())
-                    || failedFiles.contains(finding.getFilePath())
+            if (current.containsKey(finding.getFingerprint())) continue;
+            String keptRule = mergedAway.get(finding.getFingerprint());
+            if (keptRule != null) {
+                if (finding.retireRule("같은 줄·같은 CWE의 " + keptRule + " 탐지와 한 건으로 합침", now)) {
+                    toSave.add(finding);
+                }
+                continue;
+            }
+            if (failedFiles.contains(finding.getFilePath())
                     || !activeRuleIds.contains(finding.getRuleId())) {
                 continue;
             }

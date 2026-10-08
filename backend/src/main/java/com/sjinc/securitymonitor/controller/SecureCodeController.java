@@ -1,26 +1,32 @@
 package com.sjinc.securitymonitor.controller;
 
 import com.sjinc.securitymonitor.domain.SecureCodeScan;
+import com.sjinc.securitymonitor.security.RequiresProgram;
+import com.sjinc.securitymonitor.dto.securecode.SecureCodeFindingCode;
 import com.sjinc.securitymonitor.dto.securecode.SecureCodeFindingView;
 import com.sjinc.securitymonitor.dto.securecode.SecureCodeScanRequest;
 import com.sjinc.securitymonitor.dto.securecode.SecureCodeScanResult;
 import com.sjinc.securitymonitor.dto.securecode.SecureCodeStatusRequest;
 import com.sjinc.securitymonitor.service.securecode.SecureCodeFindingService;
-import com.sjinc.securitymonitor.service.securecode.SecureCodeScanException;
+import com.sjinc.securitymonitor.exception.SecureCodeScanException;
 import com.sjinc.securitymonitor.service.securecode.SecureCodeScanService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.InputStream;
 import java.security.Principal;
 import java.util.List;
 
@@ -46,6 +52,23 @@ public class SecureCodeController {
         return scanService.scan(request.appId(), principal != null ? principal.getName() : null);
     }
 
+    /**
+     * 소스 업로드 앱의 "업로드 점검". zip을 받아 풀고 점검한다(끝날 때까지 기다린다).
+     * 점검 버튼과 달리 앱 관리 권한이 필요하다 — 올린 소스가 그 앱의 점검 결과를 대신하므로, 엉뚱한 소스를 올리면 기존 탐지가 "해결"로 바뀐다.
+     */
+    @RequiresProgram("app-mng")
+    @PostMapping(value = "/scan-upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public SecureCodeScanResult scanUpload(@RequestParam Long appId, @RequestParam("file") MultipartFile file,
+                                           Principal principal) throws Exception {
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("올릴 zip 파일을 선택하세요.");
+        }
+        try (InputStream content = file.getInputStream()) {
+            return scanService.scanUpload(appId, principal != null ? principal.getName() : null,
+                    file.getOriginalFilename(), content);
+        }
+    }
+
     /** appId를 주지 않으면 전체 앱. 최신순으로 최대 500건. */
     @GetMapping("/scans")
     public List<SecureCodeScan> getScans(@RequestParam(required = false) Long appId) {
@@ -57,6 +80,12 @@ public class SecureCodeController {
     public List<SecureCodeFindingView> getFindings(@RequestParam(required = false) Long appId,
                                                    @RequestParam(required = false, defaultValue = "OPEN") String status) {
         return findingService.getFindings(appId, status.isBlank() ? null : status);
+    }
+
+    /** 상세보기를 열 때 한 건의 코드(조각·연계 추적 근거 코드)를 받는다. 목록에는 코드를 넣지 않는다. */
+    @GetMapping("/findings/{id}/code")
+    public SecureCodeFindingCode getFindingCode(@PathVariable Long id) {
+        return findingService.getCode(id);
     }
 
     @PostMapping("/findings/status")

@@ -148,4 +148,19 @@ class SecureCodeReconcilerTest {
         assertThatThrownBy(() -> f1.changeStatusManually("DONE", "admin", T0))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void 같은_줄_다른_규칙으로_합쳐_빠진_기존_탐지는_합친_이유를_남기고_해결한다() {
+        SecureCodeFinding open = existing("f1", "rule-b", "A.java");
+        SecureCodeFinding manual = existing("f2", "rule-b", "B.java");
+        manual.changeStatusManually(SecureCodeFinding.FALSE_POSITIVE, "kim", T0);
+
+        SecureCodeReconciler.Result result = SecureCodeReconciler.reconcile(APP_ID, List.of(open, manual), List.of(),
+                Set.of(), RULES, java.util.Map.of("f1", "rule-a", "f2", "rule-a"), T1);
+
+        assertThat(open.getStatus()).isEqualTo(SecureCodeFinding.RESOLVED);
+        assertThat(open.getRemark()).contains("rule-a").contains("합침");
+        assertThat(manual.getStatus()).isEqualTo(SecureCodeFinding.FALSE_POSITIVE);   // 사람이 정한 상태는 그대로
+        assertThat(result.resolvedCount()).isZero();                                    // "고쳐서 해결" 건수에는 넣지 않는다
+    }
 }

@@ -8,6 +8,7 @@ package com.sjinc.securitymonitor.dto.securecode;
  * @param traceEvidence      그 판정의 근거 경로(한 줄에 한 걸음). traceSafety가 null이면 null
  * @param aiContext          AI 판별에 보낼 코드 문맥(걸린 줄을 감싼 메서드, 길면 걸린 줄 주변). AI 판별 대상이 아니면 null
  * @param aiContextStartLine aiContext 첫 줄의 줄 번호
+ * @param traceCode          연계 추적 근거 걸음마다의 주변 코드(TraceStepCode 목록 JSON, 근거와 같은 순서). 근거가 없거나 코드를 못 붙였으면 null
  */
 public record DetectedFinding(
         String fingerprint,
@@ -25,17 +26,38 @@ public record DetectedFinding(
         String traceSafety,
         String traceEvidence,
         String aiContext,
-        Integer aiContextStartLine
+        Integer aiContextStartLine,
+        String traceCode
 ) {
+    /** 연계 추적 코드 없이 만든다(점검 초기 단계·테스트). */
+    public DetectedFinding(String fingerprint, String ruleId, String kisaCategory, String kisaName, String cwe, String severity,
+                           String filePath, int startLine, int endLine, String message, String snippet, int snippetStartLine,
+                           String traceSafety, String traceEvidence, String aiContext, Integer aiContextStartLine) {
+        this(fingerprint, ruleId, kisaCategory, kisaName, cwe, severity, filePath, startLine, endLine, message, snippet,
+                snippetStartLine, traceSafety, traceEvidence, aiContext, aiContextStartLine, null);
+    }
+
     /** 연계 추적 판정을 붙이고 심각도를 그에 맞게 바꾼 사본. 지문은 그대로라 재점검 비교에 영향이 없다. */
     public DetectedFinding withTrace(String newSeverity, String safety, String evidence) {
         return new DetectedFinding(fingerprint, ruleId, kisaCategory, kisaName, cwe, newSeverity, filePath,
-                startLine, endLine, message, snippet, snippetStartLine, safety, evidence, aiContext, aiContextStartLine);
+                startLine, endLine, message, snippet, snippetStartLine, safety, evidence, aiContext, aiContextStartLine, traceCode);
     }
 
     /** AI 판별용 코드 문맥을 붙인 사본. */
     public DetectedFinding withAiContext(String context, Integer contextStartLine) {
         return new DetectedFinding(fingerprint, ruleId, kisaCategory, kisaName, cwe, severity, filePath,
-                startLine, endLine, message, snippet, snippetStartLine, traceSafety, traceEvidence, context, contextStartLine);
+                startLine, endLine, message, snippet, snippetStartLine, traceSafety, traceEvidence, context, contextStartLine, traceCode);
+    }
+
+    /** 같은 줄·같은 CWE의 다른 규칙 탐지를 합친 사본(DuplicateCweMerger) — 등급과 설명만 바뀐다. 지문은 그대로. */
+    public DetectedFinding withMerged(String newSeverity, String newMessage) {
+        return new DetectedFinding(fingerprint, ruleId, kisaCategory, kisaName, cwe, newSeverity, filePath,
+                startLine, endLine, newMessage, snippet, snippetStartLine, traceSafety, traceEvidence, aiContext, aiContextStartLine, traceCode);
+    }
+
+    /** 연계 추적 근거 걸음마다의 주변 코드(JSON)를 붙인 사본. */
+    public DetectedFinding withTraceCode(String code) {
+        return new DetectedFinding(fingerprint, ruleId, kisaCategory, kisaName, cwe, severity, filePath,
+                startLine, endLine, message, snippet, snippetStartLine, traceSafety, traceEvidence, aiContext, aiContextStartLine, code);
     }
 }

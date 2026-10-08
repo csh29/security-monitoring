@@ -29,12 +29,19 @@
         /* 폭 = 컬럼 합(250+70) + 세로 스크롤바·테두리 여유. 300px에서는 스크롤바 폭만큼 모자라 가로 스크롤이 생겼다 — 가로는 아예 막는다. */
         .count-popover-box{ display:block; width:360px; max-height:320px; overflow-x:hidden; box-shadow:0 8px 24px rgba(25,25,64,.18); }
 
-        /* 코드 조각은 길어서 기본 모달 폭(560px)으로는 줄이 다 꺾인다. */
-        .finding-modal{ max-width:960px; }
+        /* 코드 조각은 길어서 기본 모달 폭(560px)으로는 줄이 다 꺾이고, 메서드 단위 조각·근거 코드를 펼치면 기본 높이(70vh)로는 스크롤이 잦다. */
+        .finding-modal{ max-width:960px; max-height:90vh; }
         .finding-modal .detail-list{ grid-template-columns:110px 1fr; margin-bottom:12px; }
+        /* 조각은 걸린 줄을 감싼 메서드(최대 80줄)라 높이를 묶고, 열 때 걸린 줄이 보이게 스크롤한다(position은 그 계산 기준). */
+        #findingModalCode{ position:relative; max-height:420px; overflow:auto; }
         /* 연계 추적 근거 — 값이 지나온 길을 위에서 아래로. 한 걸음이 길어 줄을 꺾는다. */
         .trace-steps{ margin:6px 0 0; padding-left:20px; font-size:12px; line-height:1.6; color:var(--text-sub); white-space:normal; }
         .trace-steps li{ word-break:break-all; }
+        /* 코드가 붙은 걸음은 눌러서 그 줄 주변 코드를 펼친다(점검 때 저장해 둔 앞뒤 3줄). */
+        .trace-step-link{ color:var(--accent); text-decoration:underline dotted; text-underline-offset:3px; cursor:pointer; }
+        .trace-step-link:hover, .trace-step-link:focus{ text-decoration-style:solid; outline:none; }
+        .trace-steps .code-block{ margin:4px 0 8px; }
+        .trace-hint{ margin-top:4px; font-size:11px; color:var(--text-sub); }
         /* AI 판별 이유 — 몇 문장짜리 설명이라 줄을 꺾는다. */
         .ai-reasoning{ margin:6px 0 0; font-size:12px; line-height:1.6; white-space:pre-wrap; word-break:break-all; }
         .ai-note{ margin-top:4px; font-size:11px; color:var(--text-sub); }
@@ -104,6 +111,8 @@
 <script th:inline="javascript">
     (function () {
         const API_URL = '/api/secure-code/findings';
+        // 조각(메서드 단위)·연계 추적 코드는 목록에 넣지 않고 상세보기를 열 때 한 건씩 받는다.
+        const CODE_URL = function (id) { return '/api/secure-code/findings/' + encodeURIComponent(id) + '/code'; };
         const STATUS_URL = '/api/secure-code/findings/status';
         const APPS_URL = '/api/apps';
         const CWE_URL = 'https://cwe.mitre.org/data/definitions/';
@@ -135,8 +144,9 @@
         }
 
         /**
-         * 코드 조각을 줄 번호와 함께 그린다. 걸린 줄은 강조하고, 파일 종류(확장자)에 맞춰 구문 색을 넣는다(code-highlight.js).
+         * 코드 조각을 줄 번호와 함께 그린다. 걸린 줄(startLine~endLine)은 강조하고, 파일 종류(확장자)에 맞춰 구문 색을 넣는다(code-highlight.js).
          * 코드는 토큰마다 textContent로 넣는다 — 조각 안의 HTML·스크립트가 실행되지 않게 innerHTML을 쓰지 않는다.
+         * code: { snippet, snippetStartLine, filePath, startLine, endLine } — 탐지 조각과 연계 추적 걸음 코드가 같이 쓴다.
          */
         function renderCode(pre, row) {
             pre.replaceChildren();
@@ -144,6 +154,8 @@
                 pre.textContent = '(코드 조각 없음)';
                 return;
             }
+            // 이름을 누르면 같은 이름을 모두 칠한다(IntelliJ처럼) — 값이 어디서 와서 어디로 가는지 눈으로 따라가기 쉽게.
+            CodeHighlight.enableUsages(pre);
             CodeHighlight.lines(row.snippet, CodeHighlight.languageOf(row.filePath)).forEach(function (tokens, i) {
                 const no = (row.snippetStartLine || 1) + i;
                 const line = document.createElement('span');
@@ -187,8 +199,12 @@
             return badge(label, TRACE_BADGE[row.traceSafety] || 'low');
         }
 
-        /** 연계 추적이 없는 탐지(${} 규칙이 아니거나 추적 못 함)는 그 줄을 숨긴다. 근거는 한 걸음씩 textContent로. */
-        function renderTrace(row) {
+        /**
+         * 연계 추적이 없는 탐지(${} 규칙이 아니거나 추적 못 함)는 그 줄을 숨긴다. 근거는 한 걸음씩 textContent로.
+         * traceCode(근거와 같은 순서, 없으면 null)가 있는 걸음은 눌러서 그 줄 주변 코드를 펼친다 — 근거는 다른 파일·메서드를 가리켜
+         * 아래 조각(걸린 줄을 감싼 메서드)에 안 보이는 경우가 많다.
+         */
+        function renderTrace(row, traceCode) {
             const term = document.getElementById('findingModalTraceTerm');
             const dd = document.getElementById('findingModalTrace');
             dd.replaceChildren();
@@ -199,12 +215,51 @@
             dd.appendChild(traceBadge(row, true));
             const steps = document.createElement('ol');
             steps.className = 'trace-steps';
-            (row.traceEvidence || []).forEach(function (step) {
+            let linked = 0;
+            (row.traceEvidence || []).forEach(function (step, i) {
                 const li = document.createElement('li');
-                li.textContent = step;
+                const code = traceCode && traceCode[i];
+                if (!code) {
+                    li.textContent = step;
+                    steps.appendChild(li);
+                    return;
+                }
+                linked++;
+                const text = document.createElement('span');
+                text.className = 'trace-step-link';
+                text.textContent = step;
+                text.tabIndex = 0;
+                text.title = code.path + ':' + code.line;
+                let pre = null;
+                const toggle = function () {
+                    if (pre) {
+                        pre.remove();
+                        pre = null;
+                        return;
+                    }
+                    pre = document.createElement('pre');
+                    pre.className = 'code-block';
+                    renderCode(pre, { snippet: code.code, snippetStartLine: code.startLine, filePath: code.path,
+                        startLine: code.line, endLine: code.line });
+                    li.appendChild(pre);
+                };
+                text.addEventListener('click', toggle);
+                text.addEventListener('keydown', function (e) {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggle();
+                    }
+                });
+                li.appendChild(text);
                 steps.appendChild(li);
             });
             dd.appendChild(steps);
+            if (linked > 0) {
+                const hint = document.createElement('div');
+                hint.className = 'trace-hint';
+                hint.textContent = '밑줄 친 걸음을 누르면 그 줄 주변 코드를 펼칩니다(점검 시점 코드).';
+                dd.appendChild(hint);
+            }
         }
 
         /**
@@ -271,12 +326,30 @@
             document.getElementById('findingModalLocation').textContent =
                 row.filePath + ' (' + row.startLine + (row.endLine !== row.startLine ? '~' + row.endLine : '') + '줄)';
             document.getElementById('findingModalMessage').textContent = row.message || '-';
-            renderTrace(row);
+            renderTrace(row, null);
             renderAi(row);
             document.getElementById('findingModalDetected').textContent =
                 '최초 ' + formatDateTime(row.firstDetectedAt) + ' / 최근 ' + formatDateTime(row.lastDetectedAt);
-            renderCode(document.getElementById('findingModalCode'), row);
+            const pre = document.getElementById('findingModalCode');
+            pre.replaceChildren();
+            pre.textContent = '코드를 불러오는 중…';
             modalBackdrop.classList.add('open');
+            fetch(CODE_URL(row.id))
+                .then(function (res) {
+                    if (!res.ok) throw new Error('코드를 불러오지 못했습니다.');
+                    return res.json();
+                })
+                .then(function (code) {
+                    // 그사이 다른 행을 열었으면 버린다.
+                    if (currentRow !== row) return;
+                    renderCode(pre, code);
+                    const hit = pre.querySelector('.code-line.hit');
+                    if (hit) pre.scrollTop = Math.max(0, hit.offsetTop - pre.clientHeight / 3);
+                    renderTrace(row, code.traceCode);
+                })
+                .catch(function (err) {
+                    if (currentRow === row) pre.textContent = '(' + err.message + ')';
+                });
         }
 
         function closeModal() {
@@ -359,15 +432,28 @@
                 });
         }
 
-        // APP·처리여부는 서버에서, 심각도·항목·파일은 받은 목록을 화면에서 거른다(text 필드는 search.matches).
+        // APP·처리여부는 서버에서, 심각도·항목·CWE·파일은 받은 목록을 화면에서 거른다(text 필드는 search.matches).
         const search = SearchForm.render(document.getElementById('searchArea'), [
             { id: 'appId', label: 'APP', type: 'select', withAll: true, options: loadAppOptions },
             { id: 'status', label: '처리여부', type: 'select', withAll: true, optionsQuery: 'SC_STATUS', defaultValue: 'OPEN' },
             // 코드 점검 등급에는 CRITICAL이 없어 라이브러리용 SEVERITY가 아니라 SC_SEVERITY(HIGH/MEDIUM/LOW)를 쓴다.
             { id: 'severity', label: '심각도', type: 'select', withAll: true, optionsQuery: 'SC_SEVERITY' },
             { id: 'kisaName', label: '항목', type: 'text', width: 140 },
+            // 번호만("89")·접두어 포함("CWE-89") 모두 받고, 쉼표로 여러 개를 준다. 부분 일치면 89가 CWE-189까지 걸려 번호로 정확히 비교한다.
+            { id: 'cwe', label: 'CWE', type: 'text', width: 110, placeholder: '예: 89, 79', match: matchesCwe },
             { id: 'filePath', label: '파일', type: 'text', width: 180 }
         ], { onSearch: searchFindings });
+
+        function cweNumber(text) {
+            const m = /(\d+)/.exec(text || '');
+            return m ? String(Number(m[1])) : null;
+        }
+
+        function matchesCwe(value, keyword) {
+            const target = cweNumber(value);
+            const wanted = keyword.split(',').map(cweNumber).filter(function (n) { return n; });
+            return wanted.length === 0 || wanted.indexOf(target) >= 0;
+        }
 
         // 제목 옆 "총 N건"에 마우스를 올리면 뜨는 항목별 건수 — 탐지 그리드와 같은 공통 그리드로 그린다.
         const COUNT_COLUMNS = [
@@ -399,7 +485,8 @@
             loaded = {};
             rows.forEach(function (f) { loaded[f.id] = { status: f.status, remark: f.remark || '' }; });
             renderSummary(rows);
-            Grid.render(gridBody, COLUMNS, rows, { emptyMessage: '탐지된 항목이 없습니다.' });
+            // 탐지가 수백 건이면 전부 붙인 표는 탭을 다시 열 때 버벅인다 — 보이는 행만 붙인다(셀이 줄바꿈되지 않아 행 높이가 일정하다).
+            Grid.render(gridBody, COLUMNS, rows, { emptyMessage: '탐지된 항목이 없습니다.', virtual: true });
         }
 
         function searchFindings() {
