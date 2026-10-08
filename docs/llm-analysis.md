@@ -291,7 +291,10 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
     `@annotation(X)` → 어노테이션, `args(request, ..)` → 첫 파라미터 조건. 어드바이스 본문에서 우리 메서드 호출을 따라가며(깊이 4) 요청 인자 기준 맵 경로
     (`arg.get("paramData")`, 맵 목록의 행)에 하는 `put("key", 값)` → 덮어쓰는 위치·키. **값이 세션에서 온 것만 키로 넣고** 아닌 것은 "세션 값 아님"으로 근거에만 남긴다.
     `(T) session.getAttribute(...)`의 T → 로그인 정보 타입, T의 getter(필드 이름으로도 — Lombok) 카멜 단어 경계 공통 접두어 → 로그인 getter 접두어.
-    **사용자 범위 키 후보** = 위 장치가 세션 값으로 넣는 키 중 매퍼 SQL 조건 자리(WHERE·ON·HAVING)에 쓰인 것(값 자리만이면 등록자 기록이라 후보가 아니다).
+    **사용자 범위 키 후보** = 위 장치가 세션 값으로 넣는 키와, 서비스·컨트롤러가 로그인 정보로 직접 넣는 키(`param.put("compCd", user.getLoginCompCd())` —
+    값이 세션 `getAttribute`·세션에서 꺼낸 타입의 getter·로그인 getter 접두어로 시작하는 메서드 반환값. `TraceRuleDrafter.loginPuts`) 중 매퍼 SQL 조건 자리
+    (WHERE·ON·HAVING)에 쓰인 것(값 자리만이면 등록자 기록이라 후보가 아니다). 서비스가 넣는 키는 근거에 SQL 위치와 put 줄을 함께 보여준다.
+    지역 변수의 초기값은 따라가지만, 로그인 정보를 우리 메서드의 반환값이나 필드로 옮긴 뒤 넣으면(타입·이름으로 알 수 없을 때) 놓칠 수 있다.
     `HttpServletRequestWrapper` 상속·위치가 두 단계 이상(`paramData.sub`)인 장치는 설정으로 표현하지 못해 안내만 남긴다.
   - **프레임워크 구조**(`FrameworkProfiler.profile`): 빌드 파일(pom.xml·build.gradle — Spring Boot 버전, 웹·영속성·AOP·세션·보안 의존성, 아티팩트 이름 전체가 맞을 때만),
     web.xml(DispatcherServlet·Struts·필터·session-config), Spring XML(`<aop:config>`·`<aop:aspectj-autoproxy>`·`<mvc:annotation-driven>`·`<mvc:interceptors>` 빈·
@@ -687,7 +690,7 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `TraceRulesFileEditorTest` — 키 빼기·장치 추가·한 줄/여러 줄 목록 더하기에서 주석 유지·근거 주석, 구조 섹션은 맨 끝에 시스템별로·다시 쓰면 교체, 판정 부분 해시는 구조와 무관,
   이미 반영된 변경은 그대로, 빈 파일, 예상과 다른 모양이면 실패, 첫 파라미터 조건 바꾸기·없애기, 실제 trace-rules.yml에 써도 규칙 유지
 - `TraceRuleDrafterTest` — AOP 포인트컷·호출 추적으로 세션 덮어쓰기 후보(세션 값 아닌 키는 따로), 이름 붙은 포인트컷·요청 맵 자체 덮어쓰기, AOP 없음 안내, XML AOP 후보·
-  어드바이스 메서드 없음 안내, 사용자 범위 키 후보(조건 자리만),
+  어드바이스 메서드 없음 안내, 사용자 범위 키 후보(조건 자리만, 서비스가 로그인 정보로 넣는 키 — 형 변환 없이 꺼내도 getter 접두어로),
   반영 시 판정 변화, 카멜 공통 접두어
 - `GitCredentialResolverTest` — 저장소 주소별 인증 선택(가장 긴 일치, 경로 단위 경계, 대소문자·끝 슬래시 무시, 호스트 항목이 서버 전체 토큰·다른 호스트엔 안 붙음,
   설정 없으면 인증 없음, 빈 사용자 이름은 oauth2, 로그 문자열에 토큰 없음, 잘못된 설정·중복 url-prefix는 기동 실패) / `GitConfigTest` — `git.credentials[n].*` 키가

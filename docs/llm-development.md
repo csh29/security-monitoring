@@ -80,8 +80,8 @@ py -m pip install -r ../securecode/requirements.txt
   **판정을 느슨하게 하는 변경을 자동 반영 쪽(`TraceRuleChange.Type.automatic`)으로 옮기지 않는다** — 근거가 틀리면 조용히 위험을 놓친다.
   **Semgrep 규칙(`rules/*.yml`)에도 특정 시스템의 어노테이션·클래스 이름을 넣지 않는다** — 한 시스템 구조를 보고 "그 장치가 없으면 탐지"로 만든 규칙은
   다른 시스템에서 전부 오탐이 된다(`kisa-authz-missing-user-scope`를 그래서 폐기했다). 시스템마다 다른 것은 설정(`trace-rules.yml`)으로 받고 판정은 연계 추적으로 한다.
-  새 시스템을 넣을 때는 그 시스템이 회사·사용자 범위에 쓰는 SQL 키를 `userScopeKeys`에 추가한다(초안이 세션 덮어쓰기 키 중 SQL 조건에 쓰인 것을 후보로 내지만,
-  서비스가 로그인 정보로 따로 세팅하는 키는 못 찾는다. 없으면 점검 완료 알림에 "키를 찾지 못함"이 뜬다).
+  새 시스템을 넣을 때는 그 시스템이 회사·사용자 범위에 쓰는 SQL 키를 `userScopeKeys`에 추가한다(초안이 세션 덮어쓰기 키와 서비스가 로그인 정보로
+  넣는 키 중 SQL 조건에 쓰인 것을 후보로 내지만, 로그인 정보를 우리 메서드의 반환값·필드로 옮긴 뒤 넣으면 놓칠 수 있다. 없으면 점검 완료 알림에 "키를 찾지 못함"이 뜬다).
 - 코드 점검 클래스는 `service/securecode` 아래 성격별 하위 패키지에 둔다 — 점검 흐름·결과는 루트, Semgrep 실행·해석은 `semgrep`, 연계 추적 엔진은 `trace`,
   추적 규칙(설정·초안)은 `tracerule`. 판정 값처럼 화면 DTO도 쓰는 타입은 `dto/securecode`, 예외는 `exception`. 한 폴더에 다시 섞지 않는다.
 - 규칙을 없앨 때는 규칙 파일에서 지우고 `SecureCodeRuleRetirement.RETIRED_RULES`에 (규칙 id → 이유)를 추가한다. 재점검은 규칙셋에 없는 규칙의 탐지를

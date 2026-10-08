@@ -1,0 +1,4 @@
+# Claude Code의 PC 전용 설정 — launch.json은 이 PC의 JDK 경로로 서버를 띄우는 실행 설정, settings.local.json은 개인 권한 설정.
+# 팀이 같이 쓸 설정(.claude/settings.json 등)은 커밋할 수 있게 폴더 전체는 제외하지 않는다.
+.claude/launch.json
+.claude/settings.local.json

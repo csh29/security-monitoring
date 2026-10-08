@@ -178,6 +178,43 @@ class TraceRuleDrafterTest {
         assertThat(draft.scopeKeys().get(0).evidence()).isEqualTo("t.xml:2 #{loginCompCd}");
     }
 
+    /** 공통 장치(AOP) 없이 서비스가 세션에서 꺼낸 로그인 정보를 직접 넣는 시스템. */
+    @Test
+    void 서비스가_로그인_정보로_넣는_키도_사용자_범위_키_후보다() {
+        String service = """
+                package f;
+                import java.util.*;
+                class OrderService {
+                    List list(Map param, HttpSession session) {
+                        UserVo user = (UserVo) session.getAttribute("USER");
+                        param.put("compCd", user.getLoginCompCd());
+                        param.put("regId", user.getLoginUserId());
+                        param.put("sort", param.get("sort"));
+                        return sql.selectList("o.list", param);
+                    }
+                    List byUtil(Map param) {
+                        param.put("brandCd", SessionUtil.current().getLoginBrandCd());
+                        return sql.selectList("o.brand", param);
+                    }
+                }
+                """;
+        Map<String, String> src = sources(service, USER_VO);
+        src.put("src/main/resources/mapper/o.xml", """
+                <mapper namespace="o">
+                  <select id="list">SELECT * FROM O WHERE COMP_CD = #{compCd} ORDER BY #{sort}</select>
+                  <insert id="i">INSERT INTO O (REG_ID) VALUES (#{regId})</insert>
+                  <select id="brand">SELECT * FROM O WHERE BRAND_CD = #{brandCd}</select>
+                </mapper>
+                """);
+
+        Draft draft = TraceRuleDrafter.draft(src);
+
+        // regId는 값 자리에만 쓰이고, sort는 로그인 정보가 아니다. brandCd는 형 변환 없이 꺼냈지만 로그인 getter 접두어(getLogin)로 안다.
+        assertThat(draft.scopeKeys()).extracting(Evidenced::value).containsExactly("compCd", "brandCd");
+        assertThat(draft.scopeKeys().get(0).evidence())
+                .startsWith("o.xml:2 #{compCd} ← S0.java:6 param.put(\"compCd\", user.getLoginCompCd())");
+    }
+
     @Test
     void 반영하면_바뀌는_판정을_미리_계산한다() {
         Map<String, String> src = sources(ASPECT, UTIL, USER_VO, """

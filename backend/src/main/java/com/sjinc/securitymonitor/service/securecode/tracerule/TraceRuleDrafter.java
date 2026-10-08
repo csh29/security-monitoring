@@ -46,7 +46,8 @@ import com.sjinc.securitymonitor.service.securecode.trace.MapperXmlIndex;
  *   <li>어드바이스 본문에서 호출을 따라가며 요청 인자(또는 그 안의 {@code get("k")} 맵·맵 목록의 행)에 하는
  *       {@code put("key", 값)} 중 <b>값이 세션에서 온 것</b>만 → 덮어쓰는 키와 위치(container)</li>
  *   <li>{@code (T) session.getAttribute(...)}로 꺼내는 타입 T → 로그인 정보 타입, T의 getter 공통 접두어 → 로그인 getter 접두어</li>
- *   <li>위 장치가 세션 값으로 넣는 키 중 매퍼 SQL의 조건 자리(WHERE·ON·HAVING)에 쓰이는 것 → 사용자 범위 키 후보</li>
+ *   <li>위 장치가 세션 값으로 넣는 키, 그리고 서비스 코드가 로그인 정보로 직접 넣는 키({@code param.put("compCd", user.getLoginCompCd())})
+ *       중 매퍼 SQL의 조건 자리(WHERE·ON·HAVING)에 쓰이는 것 → 사용자 범위 키 후보</li>
  *   <li>설정 파일·소스의 프레임워크 구조(FrameworkProfiler.profile) — 판정에는 쓰지 않는 기록</li>
  * </ul>
  * 세션 값이 아닌 put(예: 구문 id 앞 6자리)은 키에 넣지 않고 "세션 값 아님"으로 따로 보여준다 — 그 키를 덮어쓰기로 등록하면
@@ -59,7 +60,8 @@ public final class TraceRuleDrafter {
     /**
      * 초안 결과.
      *
-     * @param scopeKeys 사용자 범위 키 후보 — 세션 덮어쓰기 장치가 넣는 키 중 매퍼 SQL 조건 자리에 쓰인 것(근거는 그 SQL 위치)
+     * @param scopeKeys 사용자 범위 키 후보 — 세션 덮어쓰기 장치나 서비스 코드가 로그인 정보로 넣는 키 중 매퍼 SQL 조건 자리에 쓰인 것
+     *                  (근거는 그 SQL 위치, 서비스가 넣는 키면 넣는 줄도)
      * @param framework 프레임워크 구조 기록(판정에는 쓰지 않는다)
      */
     public record Draft(List<OverwriteCandidate> overwrites, List<Evidenced> loginTypeNames,
@@ -139,17 +141,44 @@ public final class TraceRuleDrafter {
         if (overwrites.isEmpty()) {
             notes.add("세션 값을 요청 맵에 덮어쓰는 AOP를 찾지 못했습니다. 컨트롤러가 직접 put하는 방식이면 규칙 없이도 연계 추적이 따라갑니다.");
         }
-        return new Draft(overwrites, loginTypes, loginMethodPrefixes(), scopeKeyCandidates(sources, overwrites),
+        List<Evidenced> prefixes = loginMethodPrefixes();
+        return new Draft(overwrites, loginTypes, prefixes, scopeKeyCandidates(sources, overwrites, loginPuts(prefixes)),
                 FrameworkProfiler.profile(sources, java), notes, java.failedFiles());
+    }
+
+    /**
+     * 서비스·컨트롤러가 로그인 정보로 직접 넣는 맵 키({@code param.put("compCd", user.getLoginCompCd())}) → 그 put 줄.
+     * 공통 장치(AOP) 없이 서비스마다 세션에서 꺼내 넣는 시스템은 이것으로만 사용자 범위 키를 찾을 수 있다.
+     * 로그인 정보는 세션에서 꺼낸 값·세션에서 꺼낸 타입의 getter·로그인 getter 접두어(getLogin 등)로 시작하는 메서드의 반환값이다.
+     */
+    private Map<String, Evidenced> loginPuts(List<Evidenced> prefixes) {
+        Map<String, Evidenced> found = new LinkedHashMap<>();
+        for (MethodCallExpr call : java.callsNamed("put")) {
+            if (call.getArguments().size() != 2 || !(unwrap(call.getArgument(0)) instanceof StringLiteralExpr key)) continue;
+            CallableDeclaration<?> method = call.findAncestor(CallableDeclaration.class).orElse(null);
+            if (method == null || !isLoginValue(call.getArgument(1), method, prefixes)) continue;
+            found.putIfAbsent(key.getValue(), new Evidenced(key.getValue(), java.location(call) + " " + abbreviate(call.toString())));
+        }
+        return found;
+    }
+
+    private boolean isLoginValue(Expression expression, CallableDeclaration<?> method, List<Evidenced> prefixes) {
+        if (isSessionValue(expression, method)) return true;
+        // SessionUtil.getLoginUser().getCompCd()처럼 형 변환 없이 꺼내면 타입을 모른다 — 로그인 getter 이름으로 본다.
+        return unwrap(expression) instanceof MethodCallExpr call
+                && prefixes.stream().anyMatch(p -> call.getNameAsString().startsWith(p.value()));
     }
 
     /**
      * 세션 덮어쓰기 장치가 넣는 키 중 매퍼 SQL 조건 자리(WHERE·ON·HAVING)에 쓰인 키. 로그인 정보로 데이터를 가르는 조건이라는 뜻이라
      * 사용자 범위 키 후보가 된다. 값 자리(INSERT VALUES·UPDATE SET)에만 쓰이는 키(등록자 기록)는 후보가 아니다.
      */
-    private static List<Evidenced> scopeKeyCandidates(Map<String, String> sources, List<OverwriteCandidate> overwrites) {
+    private static List<Evidenced> scopeKeyCandidates(Map<String, String> sources, List<OverwriteCandidate> overwrites,
+                                                      Map<String, Evidenced> loginPuts) {
         Set<String> sessionKeys = new LinkedHashSet<>();
         overwrites.forEach(c -> c.keys().forEach(k -> sessionKeys.add(k.value())));
+        Set<String> overwriteKeys = Set.copyOf(sessionKeys);
+        sessionKeys.addAll(loginPuts.keySet());
         if (sessionKeys.isEmpty()) return List.of();
         Map<String, Evidenced> found = new LinkedHashMap<>();
         sources.forEach((path, content) -> {
@@ -167,12 +196,14 @@ public final class TraceRuleDrafter {
             });
             for (MapperXmlIndex.Dollar d : uses) {
                 if (d.condition() && sessionKeys.contains(d.key())) {
-                    found.putIfAbsent(d.key(), new Evidenced(d.key(),
-                            path.substring(path.lastIndexOf('/') + 1) + ":" + d.line() + " " + d.display()));
+                    String sql = path.substring(path.lastIndexOf('/') + 1) + ":" + d.line() + " " + d.display();
+                    // 장치가 넣는 키는 장치 근거가 이미 따로 있다. 서비스가 넣는 키는 어디서 로그인 정보를 넣는지도 같이 보여준다.
+                    found.putIfAbsent(d.key(), new Evidenced(d.key(), overwriteKeys.contains(d.key())
+                            ? sql : sql + " ← " + loginPuts.get(d.key()).evidence()));
                 }
             }
         });
-        // 장치가 넣는 순서대로 — 점검마다 같은 순서여야 같은 초안이다.
+        // 장치가 넣는 순서, 그다음 서비스 코드 순서대로 — 점검마다 같은 순서여야 같은 초안이다.
         List<Evidenced> result = new ArrayList<>();
         sessionKeys.forEach(k -> {
             if (found.containsKey(k)) result.add(found.get(k));
