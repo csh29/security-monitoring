@@ -88,12 +88,18 @@ final class ValueOriginTracer {
      * 외부와 통신하지 않는 JDK 값 객체(날짜·시간·난수·UUID·숫자). 만든 값·꺼낸 값의 출처는 재료(받는 쪽·인자)의 출처다 —
      * 서버가 날짜·난수로 만든 파일명({@code FrameDateUtil.getTimeLocale(...) + new Random().nextInt()})을 "판정 불가"로 두지 않기 위함.
      * RestTemplate·SqlSession처럼 외부에서 값을 가져오는 객체는 넣지 않는다(응답은 서버가 정한 값이 아니다).
+     * String·StringBuilder도 넣는다 — {@code param.getBytes()}·{@code param.charAt(0)}처럼 PROPAGATING_METHODS에 없는 문자열 메서드에서
+     * 추적이 멈춰 판정 불가가 됐다(OWASP Benchmark sqli: 상수를 돌려주는 헬퍼 값을 getBytes()로 바꿔 SQL에 붙임). ClassLoader·Class도
+     * 넣는다 — 클래스패스 자원 위치({@code classLoader.getResource("insecureCmd.sh")})는 서버가 정한 이름으로 찾는다. URL·URI는 넣지 않는다 —
+     * {@code url.openStream()}처럼 원격 내용을 읽는 결과까지 서버 값이 된다(경로 꺼내기 toURI·getPath는 PROPAGATING_METHODS로 따라간다).
      */
     static final Set<String> PURE_VALUE_TYPES = Set.of(
             "Calendar", "GregorianCalendar", "Date", "TimeZone", "SimpleDateFormat", "DateFormat", "DateTimeFormatter",
             "LocalDate", "LocalDateTime", "LocalTime", "ZonedDateTime", "OffsetDateTime", "Instant", "ZoneId", "Duration",
             "Random", "SecureRandom", "ThreadLocalRandom", "UUID", "Integer", "Long", "Double", "BigDecimal", "BigInteger",
-            "Locale", "Optional", "Path", "File");
+            "Locale", "Optional", "Path", "File", "String", "StringBuilder", "StringBuffer", "ClassLoader", "Class");
+    /** JVM이 정하는 클래스 정보(this.getClass(), getClassLoader()) — 클라이언트가 바꿀 수 없다. */
+    static final Set<String> JVM_METADATA_METHODS = Set.of("getClass", "getClassLoader", "getContextClassLoader");
     static final Set<String> REQUEST_GETTERS = Set.of(
             "getParameter", "getParameterValues", "getParameterMap", "getParameterNames", "getHeader", "getHeaders",
             "getHeaderNames", "getQueryString", "getRequestURI", "getRequestURL", "getCookies", "getPathInfo",
@@ -624,13 +630,17 @@ final class ValueOriginTracer {
             return v;
         }
         // 로그인 정보: 세션 속성(Servlet 표준)과 trace-rules.yml의 이름 규칙(loginUserVo.getLoginBrndzCd() 등)
-        String scopeType = scope.map(java::typeNameOf).orElse(null);
+        String scopeType = scope.map(this::scopeTypeOf).orElse(null);
         if (isLoginInfo(name, scopeType)
                 || (name.equals("getAttribute") && scope.map(s -> s.toString().contains("getSession")).orElse(false))) {
             return V.of(TraceSafety.SERVER_SET, location + " 로그인 정보 " + abbreviate(call.toString()));
         }
         if (REQUEST_GETTERS.contains(name) && "HttpServletRequest".equals(scopeType)) {
             return V.of(TraceSafety.CLIENT, location + " 요청 값 " + abbreviate(call.toString()));
+        }
+        // this.getClass().getClassLoader() — 예전엔 "외부 메서드"라 그 클래스 로더로 찾은 명령 경로 전체가 판정 불가였다(Benchmark cmdi).
+        if (JVM_METADATA_METHODS.contains(name) && call.getArguments().isEmpty()) {
+            return V.of(TraceSafety.SERVER_SET, location + " JVM 클래스 정보 " + abbreviate(call.toString()));
         }
         List<MethodDeclaration> callees = java.resolve(call);
         if (!callees.isEmpty()) {
@@ -683,6 +693,24 @@ final class ValueOriginTracer {
             }
         }
         return V.of(TraceSafety.UNKNOWN, location + " 외부 메서드 " + abbreviate(call.toString()));
+    }
+
+    /**
+     * 메서드를 부르는 쪽의 타입. 이름·필드·new는 선언 타입, 호출을 이어 붙인 경우(scr.getTheValue("x").getBytes(),
+     * getClass().getClassLoader().getResource(...))는 우리 메서드의 반환 타입이나 JVM 클래스 정보의 타입 — 예전엔 이어 붙인 호출의 타입을 몰라
+     * 값 타입 규칙(PURE_VALUE_TYPES)·로그인 정보 이름 규칙이 지역 변수로 받았을 때만 적용됐다. 모르면 null.
+     */
+    String scopeTypeOf(Expression scope) {
+        Expression e = unwrap(scope);
+        String type = java.typeNameOf(e);
+        if (type != null || !(e instanceof MethodCallExpr call)) return type;
+        if (JVM_METADATA_METHODS.contains(call.getNameAsString()) && call.getArguments().isEmpty()) {
+            return call.getNameAsString().equals("getClass") ? "Class" : "ClassLoader";
+        }
+        Set<String> returnTypes = new java.util.HashSet<>();
+        for (MethodDeclaration callee : java.resolve(call)) returnTypes.add(JavaSourceIndex.simpleName(callee.getType()));
+        // 같은 이름의 우리 메서드가 여럿이고 반환 타입이 다르면 모르는 것으로 둔다.
+        return returnTypes.size() == 1 ? returnTypes.iterator().next() : null;
     }
 
     V worstOf(List<? extends Expression> expressions, Frame frame, int depth, V whenEmpty) {

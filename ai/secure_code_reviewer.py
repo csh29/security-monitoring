@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import anthropic
@@ -63,6 +63,8 @@ class SecureCodeReviewTarget:
     trace_label: Optional[str]
     trace_evidence: list[str]
     input_hash: str
+    # 탐지 메서드와 함께 보는 다른 메서드들(자바 AiRelatedCode — path, startLine, code, reason). .java만, 비밀값은 자바가 가렸다.
+    related_code: list[dict] = field(default_factory=list)
 
     @staticmethod
     def from_json(data: dict) -> "SecureCodeReviewTarget":
@@ -82,6 +84,7 @@ class SecureCodeReviewTarget:
             trace_label=data.get("traceLabel"),
             trace_evidence=data.get("traceEvidence") or [],
             input_hash=data["inputHash"],
+            related_code=data.get("relatedCode") or [],
         )
 
 
@@ -154,6 +157,13 @@ class SecureCodeReviewerClient:
         else:
             trace = ""
 
+        related = ""
+        for item in target.related_code:
+            body = "\n".join(f"   {item.get('startLine', 1) + i:5d} | {line}"
+                             for i, line in enumerate((item.get("code") or "").split("\n")))
+            related += f"\n--- {item.get('path')} ({item.get('reason')})\n{body}\n"
+        related = f"\n[관련 코드]{related}" if related else ""
+
         return f"""[탐지]
 - 규칙: {target.rule_id}
 - 행안부 분류/항목: {target.kisa_category} / {target.kisa_name}
@@ -164,7 +174,7 @@ class SecureCodeReviewerClient:
 {trace}
 [코드]
 {code}
-"""
+{related}"""
 
 
 def _review_one(reviewer: SecureCodeReviewerClient, backend: "SecureCodeBackendClient",

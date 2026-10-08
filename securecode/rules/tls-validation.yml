@@ -18,15 +18,20 @@ rules:
       - pattern: $X.setHostnameVerifier(($HOST, $SESSION) -> true)
       - pattern: $X.hostnameVerifier(($HOST, $SESSION) -> true)
       - pattern: $X.loadTrustMaterial($STORE, ($CHAIN, $AUTH) -> true)
-      - pattern: NoopHostnameVerifier.INSTANCE
-      - pattern: new NoopHostnameVerifier()
-      - pattern: SSLConnectionSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER
-      - pattern: new AllowAllHostnameVerifier()
+      - pattern: org.apache.http.conn.ssl.NoopHostnameVerifier.INSTANCE
+      - pattern: org.apache.hc.client5.http.conn.ssl.NoopHostnameVerifier.INSTANCE
+      - pattern: new org.apache.http.conn.ssl.NoopHostnameVerifier()
+      - pattern: new org.apache.hc.client5.http.conn.ssl.NoopHostnameVerifier()
+      - pattern: org.apache.http.conn.ssl.SSLConnectionSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER
+      - pattern: new org.apache.http.conn.ssl.AllowAllHostnameVerifier()
       # 모든 인증서를 믿는다(Apache HttpClient·OkHttp).
-      - pattern: new TrustAllStrategy()
-      - pattern: TrustAllStrategy.INSTANCE
-      - pattern: new TrustSelfSignedStrategy()
-      - pattern: InsecureTrustManagerFactory.INSTANCE
+      - pattern: new org.apache.http.conn.ssl.TrustAllStrategy()
+      - pattern: new org.apache.hc.client5.http.ssl.TrustAllStrategy()
+      - pattern: org.apache.http.conn.ssl.TrustAllStrategy.INSTANCE
+      - pattern: org.apache.hc.client5.http.ssl.TrustAllStrategy.INSTANCE
+      - pattern: new org.apache.http.conn.ssl.TrustSelfSignedStrategy()
+      - pattern: new org.apache.hc.client5.http.ssl.TrustSelfSignedStrategy()
+      - pattern: io.netty.handler.ssl.util.InsecureTrustManagerFactory.INSTANCE
     message: "HTTPS 인증서·호스트 이름 검증을 끕니다. 중간자가 통신을 가로챌 수 있습니다. 사설 인증서라면 그 인증서만 트러스트스토어에 넣고 기본 검증을 쓰세요."
     severity: ERROR
     metadata:

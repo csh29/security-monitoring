@@ -34,13 +34,13 @@ rules:
     languages: [java]
     patterns:
       - pattern-either:
-          - pattern: (MessageDigest $MD).digest($P.getBytes(...))
-          - pattern: (MessageDigest $MD).digest($P.getBytes())
-          - pattern: (MessageDigest $MD).update($P.getBytes(...))
-          - pattern: (MessageDigest $MD).update($P.getBytes())
-          - pattern: DigestUtils.$F($P)
+          - pattern: (java.security.MessageDigest $MD).digest($P.getBytes(...))
+          - pattern: (java.security.MessageDigest $MD).digest($P.getBytes())
+          - pattern: (java.security.MessageDigest $MD).update($P.getBytes(...))
+          - pattern: (java.security.MessageDigest $MD).update($P.getBytes())
+          - pattern: org.springframework.util.DigestUtils.$F($P)
           - pattern: org.apache.commons.codec.digest.DigestUtils.$F($P)
-          - pattern: Hashing.sha256().hashString($P, ...)
+          - pattern: com.google.common.hash.Hashing.sha256().hashString($P, ...)
       - metavariable-regex:
           metavariable: $P
           regex: (?i).*(password|passwd|pwd|passcode|비밀번호).*

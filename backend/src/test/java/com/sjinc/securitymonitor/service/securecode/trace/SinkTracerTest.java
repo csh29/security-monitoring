@@ -257,6 +257,49 @@ class SinkTracerTest {
         assertThat(v).singleElement().extracting(SinkTracer.SinkVerdict::safety).isEqualTo(TraceSafety.SERVER_SET);
     }
 
+    /**
+     * OWASP Benchmark 함정 모양 — 이름은 요청값 같지만 상수를 돌려주는 헬퍼(getTheValue)를 문자열 메서드(getBytes)로 바꿔 SQL에 붙이고,
+     * 명령은 this.getClass().getClassLoader()로 찾은 클래스패스 파일. 예전엔 getBytes()·getClassLoader()를 "외부 메서드"로 보고 판정 불가였다.
+     */
+    @Test
+    void 문자열_메서드와_JVM_클래스_정보도_출처를_따라간다() {
+        String helper = """
+                package p;
+                public class SeparateRequest {
+                    private HttpServletRequest request;
+                    public SeparateRequest(HttpServletRequest request) { this.request = request; }
+                    public String getTheValue(String p) { return "bar"; }
+                    public String getTheParameter(String p) { return request.getParameter(p); }
+                }
+                """;
+        String servlet = """
+                package p;
+                public class Trap extends HttpServlet {
+                    public void doPost(HttpServletRequest request, HttpServletResponse response) throws IOException {
+                        SeparateRequest scr = new SeparateRequest(request);
+                        String safe = new String(Base64.decodeBase64(Base64.encodeBase64(scr.getTheValue("x").getBytes())));
+                        statement.execute("SELECT * FROM U WHERE P='" + safe + "'");
+                        String bad = new String(scr.getTheParameter("x").getBytes());
+                        statement.execute("SELECT * FROM U WHERE P='" + bad + "'");
+                        java.net.URL url = this.getClass().getClassLoader().getResource("cmd.sh");
+                        String cmd = new java.io.File(url.toURI().getPath()).getAbsolutePath();
+                        Runtime.getRuntime().exec(cmd);
+                    }
+                }
+                """;
+        Map<String, String> sources = new LinkedHashMap<>();
+        sources.put("src/main/java/p/SeparateRequest.java", helper);
+        sources.put("src/main/java/p/Trap.java", servlet);
+        String path = "src/main/java/p/Trap.java";
+
+        List<SinkTracer.SinkVerdict> verdicts = new SinkTracer(JavaSourceIndex.fromSources(sources), TraceRules.empty()).trace(List.of(
+                finding("kisa-sql-injection-java-concat", 6, path), finding("kisa-sql-injection-java-concat", 8, path),
+                finding("kisa-os-command-exec", 11, path)));
+
+        assertThat(verdicts).extracting(SinkTracer.SinkVerdict::safety)
+                .containsExactly(TraceSafety.SERVER_SET, TraceSafety.CLIENT, TraceSafety.SERVER_SET);
+    }
+
     /** OWASP Benchmark cmdi(BenchmarkTest00007) 모양 — 명령은 상수 배열, 환경 변수 배열에 요청 헤더. 예전엔 배열 초기화를 몰라 판정 불가였다. */
     @Test
     void 배열로_넘긴_명령_인자도_원소의_출처로_판정한다() {
@@ -286,6 +329,28 @@ class SinkTracerTest {
 
         assertThat(verdicts).extracting(SinkTracer.SinkVerdict::safety)
                 .containsExactly(TraceSafety.CLIENT, TraceSafety.SERVER_SET, TraceSafety.CLIENT);
+    }
+
+    /** 규칙은 패키지까지 쓴 클래스(java.nio.file.Paths)도 잡는다 — 추적도 그 호출을 찾아야 판정이 빠지지 않는다. */
+    @Test
+    void 패키지까지_쓴_파일_호출도_찾아_판정한다() {
+        String servlet = """
+                package p;
+                public class DownServlet extends HttpServlet {
+                    public void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
+                        response.setHeader("Content-Disposition", "attachment");
+                        String name = request.getParameter("name");
+                        java.nio.file.Path p = java.nio.file.Paths.get(name);
+                        java.io.InputStream in = java.nio.file.Files.newInputStream(java.nio.file.Path.of("/static/logo.png"));
+                    }
+                }
+                """;
+        String path = "src/main/java/p/DownServlet.java";
+
+        List<SinkTracer.SinkVerdict> verdicts = new SinkTracer(JavaSourceIndex.fromSources(Map.of(path, servlet)), TraceRules.empty()).trace(List.of(
+                finding("kisa-path-traversal-download", 6, path), finding("kisa-path-traversal-download", 7, path)));
+
+        assertThat(verdicts).extracting(SinkTracer.SinkVerdict::safety).containsExactly(TraceSafety.CLIENT, TraceSafety.SERVER_SET);
     }
 
     private static Map<String, SinkTracer.SinkVerdict> trace(DetectedFinding... findings) {

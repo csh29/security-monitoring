@@ -44,9 +44,10 @@ rules:
           - pattern: return <... $E.getMessage() ...>;
           - pattern: return <... $E.toString() ...>;
           - pattern: $B.body(<... $E.getMessage() ...>)
-          - pattern: new ResponseEntity<$R>(<... $E.getMessage() ...>, ...)
-          - pattern: new ResponseEntity<>(<... $E.getMessage() ...>, ...)
-          - pattern: (HttpServletResponse $RESP).sendError($CODE, <... $E.getMessage() ...>)
+          - pattern: new org.springframework.http.ResponseEntity<$R>(<... $E.getMessage() ...>, ...)
+          - pattern: new org.springframework.http.ResponseEntity<>(<... $E.getMessage() ...>, ...)
+          - pattern: (javax.servlet.http.HttpServletResponse $RESP).sendError($CODE, <... $E.getMessage() ...>)
+          - pattern: (jakarta.servlet.http.HttpServletResponse $RESP).sendError($CODE, <... $E.getMessage() ...>)
           - pattern: $W.print(<... $E.getMessage() ...>)
           - pattern: $W.println(<... $E.getMessage() ...>)
           - pattern: $W.write(<... $E.getMessage() ...>)

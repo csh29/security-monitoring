@@ -432,13 +432,13 @@
                 });
         }
 
-        // APP·처리여부는 서버에서, 심각도·항목·CWE·파일은 받은 목록을 화면에서 거른다(text 필드는 search.matches).
+        // APP·처리여부는 서버에서, 심각도(여러 값)·CWE·파일은 받은 목록을 화면에서 거른다(search.matches).
         const search = SearchForm.render(document.getElementById('searchArea'), [
             { id: 'appId', label: 'APP', type: 'select', withAll: true, options: loadAppOptions },
-            { id: 'status', label: '처리여부', type: 'select', withAll: true, optionsQuery: 'SC_STATUS', defaultValue: 'OPEN' },
+            { id: 'status', label: '처리여부', type: 'select', withAll: true, optionsQuery: 'SC_STATUS', defaultValue: 'OPEN', width: 100 },
             // 코드 점검 등급에는 CRITICAL이 없어 라이브러리용 SEVERITY가 아니라 SC_SEVERITY(HIGH/MEDIUM/LOW)를 쓴다.
-            { id: 'severity', label: '심각도', type: 'select', withAll: true, optionsQuery: 'SC_SEVERITY' },
-            { id: 'kisaName', label: '항목', type: 'text', width: 140 },
+            // HIGH+MEDIUM처럼 여러 등급을 같이 보는 일이 많아 여러 값 고르기(안 고르면 전체). 거르기는 search.matches가 한다.
+            { id: 'severity', label: '심각도', type: 'multiselect', optionsQuery: 'SC_SEVERITY', width: 100 },
             // 번호만("89")·접두어 포함("CWE-89") 모두 받고, 쉼표로 여러 개를 준다. 부분 일치면 89가 CWE-189까지 걸려 번호로 정확히 비교한다.
             { id: 'cwe', label: 'CWE', type: 'text', width: 110, placeholder: '예: 89, 79', match: matchesCwe },
             { id: 'filePath', label: '파일', type: 'text', width: 180 }
@@ -478,10 +478,7 @@
         }
 
         function renderRows(findings) {
-            const severity = search.values().severity;
-            const rows = (findings || [])
-                .filter(search.matches)
-                .filter(function (row) { return !severity || row.severity === severity; });
+            const rows = (findings || []).filter(search.matches);
             loaded = {};
             rows.forEach(function (f) { loaded[f.id] = { status: f.status, remark: f.remark || '' }; });
             renderSummary(rows);

@@ -7,25 +7,26 @@ rules:
     languages: [java]
     patterns:
       - pattern-either:
-          - pattern: DocumentBuilderFactory.newInstance()
-          - pattern: SAXParserFactory.newInstance()
-          - pattern: XMLInputFactory.newInstance()
-          - pattern: XMLInputFactory.newFactory()
-          - pattern: TransformerFactory.newInstance()
-          - pattern: SchemaFactory.newInstance(...)
-          - pattern: new SAXReader()
-          - pattern: new SAXBuilder()
+          - pattern: javax.xml.parsers.DocumentBuilderFactory.newInstance()
+          - pattern: javax.xml.parsers.SAXParserFactory.newInstance()
+          - pattern: javax.xml.stream.XMLInputFactory.newInstance()
+          - pattern: javax.xml.stream.XMLInputFactory.newFactory()
+          - pattern: javax.xml.transform.TransformerFactory.newInstance()
+          - pattern: javax.xml.validation.SchemaFactory.newInstance(...)
+          - pattern: new org.dom4j.io.SAXReader()
+          - pattern: new org.jdom2.input.SAXBuilder()
+          - pattern: new org.jdom.input.SAXBuilder()
       # DOCTYPE 자체를 금지하거나 외부 DTD·스키마 접근을 비우면 안전하다.
       - pattern-not-inside: |
           $RET $M(...) { ... $F.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true); ... }
       - pattern-not-inside: |
-          $RET $M(...) { ... $F.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, ""); ... }
+          $RET $M(...) { ... $F.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, ""); ... }
       - pattern-not-inside: |
-          $RET $M(...) { ... $F.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, ""); ... }
+          $RET $M(...) { ... $F.setProperty(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, ""); ... }
       - pattern-not-inside: |
-          $RET $M(...) { ... $F.setProperty(XMLInputFactory.SUPPORT_DTD, false); ... }
+          $RET $M(...) { ... $F.setProperty(javax.xml.stream.XMLInputFactory.SUPPORT_DTD, false); ... }
       - pattern-not-inside: |
-          $RET $M(...) { ... $F.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true); ... }
+          $RET $M(...) { ... $F.setFeature(javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING, true); ... }
     message: "XML 파서가 외부 개체(DTD·ENTITY)를 허용하는 기본값입니다. 외부 XML을 읽으면 서버 파일 유출·SSRF가 가능합니다. setFeature(\"http://apache.org/xml/features/disallow-doctype-decl\", true)로 DOCTYPE을 막으세요."
     severity: WARNING
     metadata:

@@ -6,7 +6,8 @@ rules:
     languages: [java]
     mode: taint
     pattern-sources:
-      - pattern: (HttpServletRequest $REQ).$GET(...)
+      - pattern: (javax.servlet.http.HttpServletRequest $REQ).$GET(...)
+      - pattern: (jakarta.servlet.http.HttpServletRequest $REQ).$GET(...)
       - patterns:
           - pattern-either:
               - pattern-inside: |
@@ -33,10 +34,11 @@ rules:
               metavariable: $PREFIX
               regex: '^("https?://[^"/]+/|"/[^/\\"]|[A-Z][A-Z0-9_.]*\s*\+\s*"/)'
     pattern-sinks:
-      - pattern: (HttpServletResponse $RESP).sendRedirect(...)
-      - pattern: new RedirectView(...)
-      - pattern: new ModelAndView("redirect:" + $X, ...)
-      - pattern: new ModelAndView("redirect:" + $X)
+      - pattern: (javax.servlet.http.HttpServletResponse $RESP).sendRedirect(...)
+      - pattern: (jakarta.servlet.http.HttpServletResponse $RESP).sendRedirect(...)
+      - pattern: new org.springframework.web.servlet.view.RedirectView(...)
+      - pattern: new org.springframework.web.servlet.ModelAndView("redirect:" + $X, ...)
+      - pattern: new org.springframework.web.servlet.ModelAndView("redirect:" + $X)
       - patterns:
           - pattern-inside: return "redirect:" + $X;
           - pattern: $X

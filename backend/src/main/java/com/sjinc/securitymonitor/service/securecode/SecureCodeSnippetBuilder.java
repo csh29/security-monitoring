@@ -5,9 +5,14 @@ import com.github.javaparser.ParseResult;
 import com.github.javaparser.ParserConfiguration;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.CallableDeclaration;
+import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.body.TypeDeclaration;
+import com.github.javaparser.ast.expr.MethodCallExpr;
+import com.sjinc.securitymonitor.dto.securecode.AiRelatedCode;
 import com.sjinc.securitymonitor.dto.securecode.DetectedFinding;
 import com.sjinc.securitymonitor.dto.securecode.SemgrepMatch;
 import com.sjinc.securitymonitor.dto.securecode.TraceStepCode;
+import com.sjinc.securitymonitor.service.securecode.trace.JavaSourceIndex;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -22,6 +27,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -60,6 +66,14 @@ public class SecureCodeSnippetBuilder {
      * 그 메서드 안에 있다), 수백 줄짜리 서비스 메서드는 이 길이만큼 걸린 줄 주변만 보낸다 — 보내는 코드를 판별에 필요한 만큼으로 줄인다.
      */
     static final int AI_CONTEXT_MAX_LINES = 80;
+
+    /** AI 판별 관련 코드(aiRelatedCode) — 메서드당 줄 수, 개수, 합계 줄 수. 입력 토큰이 탐지 메서드의 몇 배로 늘지 않게. */
+    static final int RELATED_MAX_LINES = 40;
+    static final int RELATED_MAX_ITEMS = 8;
+    static final int RELATED_MAX_TOTAL_LINES = 240;
+    /** 코드 안 비밀값 대입(password = "…", API_KEY = "…") — 이런 줄이 있는 메서드는 관련 코드로 보내지 않는다. */
+    private static final Pattern SECRET_ASSIGNMENT = Pattern.compile(
+            "(?i)[\\w.]*(?:password|passwd|pwd|secret|api_?key|access_?key|private_?key|token|credential)\\w*\\s*[=:,(]\\s*\"[^\"]+\"");
 
     /** 감싼 메서드가 없을 때(자바가 아닌 파일, 구문 오류, 필드 초기화식) 걸린 줄 앞뒤로 보낼 줄 수. */
     static final int AI_CONTEXT_LINES = 15;
@@ -131,6 +145,80 @@ public class SecureCodeSnippetBuilder {
         int to = Math.min(lines.size(), range[1]);
         String context = String.join("\n", mask(slice(lines, from, to), isSecretRule(finding.ruleId())));
         return finding.withAiContext(context, from);
+    }
+
+    /**
+     * AI 판별에 탐지 메서드와 함께 보낼 다른 메서드들(2026-10-08). 메서드 하나만 보낼 때 AI가 값이 정해지는 다른 파일을 추측으로 채워 틀렸다
+     * (OWASP Benchmark — 이름은 요청값 같지만 상수를 돌려주는 헬퍼를 "요청 파라미터"로 보고 확신도 high로 취약 판별). 순서대로:
+     * <ol>
+     *   <li>연계 추적 경로의 걸음이 있는 메서드(값이 지나온 컨트롤러·서비스)</li>
+     *   <li>탐지 메서드가 부르는 우리 메서드(한 단계 — 값을 만드는 헬퍼)</li>
+     * </ol>
+     * <b>.java 메서드만</b> 보낸다 — properties·yml·xml 설정은 보내지 않는다. 비밀번호·키·토큰을 문자열로 대입하는 메서드는 통째로 뺀다
+     * (가려서 보내는 대신 아예 안 보낸다 — 키 값을 담은 코드는 판별 근거로도 필요 없다). 보내기 직전 SecretMasker로 한 번 더 가린다.
+     * 메서드당 RELATED_MAX_LINES 줄, 모두 합쳐 RELATED_MAX_ITEMS개·RELATED_MAX_TOTAL_LINES 줄까지.
+     *
+     * @param pathsByFileName 파일 이름 → 저장소 기준 경로들(연계 추적 근거는 파일 이름만 적는다)
+     */
+    public List<AiRelatedCode> aiRelatedCode(DetectedFinding finding, JavaSourceIndex java,
+                                             Map<String, List<String>> pathsByFileName) throws IOException {
+        if (finding.aiContext() == null || finding.aiContextStartLine() == null) return List.of();
+        int mainFrom = finding.aiContextStartLine();
+        int mainTo = mainFrom + finding.aiContext().split("\n", -1).length - 1;
+        Map<String, AiRelatedCode> related = new LinkedHashMap<>();
+        int[] total = {0};
+
+        if (finding.traceEvidence() != null) {
+            for (String step : finding.traceEvidence().split("\n")) {
+                Matcher m = STEP_LOCATION.matcher(step);
+                if (!m.find()) continue;
+                String path = pickPath(m.group(1), finding.filePath(), pathsByFileName);
+                if (path == null || !path.endsWith(".java")) continue;
+                List<String> lines = readLines(path);
+                int line = Integer.parseInt(m.group(2));
+                int[] range = enclosingCallable(path, lines, line, line);
+                if (range == null) continue;
+                addRelated(related, total, path, lines, range, mainOverlap(finding, path, range, mainFrom, mainTo),
+                        "연계 추적 경로: " + step.strip());
+            }
+        }
+        if (java != null) {
+            Optional<CallableDeclaration<?>> method = java.callableAt(finding.filePath(), finding.startLine());
+            if (method.isPresent()) {
+                for (MethodCallExpr call : method.get().findAll(MethodCallExpr.class)) {
+                    for (MethodDeclaration callee : java.resolve(call)) {
+                        String path = java.pathOf(callee);
+                        if (path == null || callee.getRange().isEmpty() || callee == method.get()) continue;
+                        int[] range = {callee.getRange().get().begin.line, callee.getRange().get().end.line};
+                        String owner = callee.findAncestor(TypeDeclaration.class)
+                                .map(t -> ((TypeDeclaration<?>) t).getNameAsString()).orElse("?");
+                        addRelated(related, total, path, readLines(path), range, mainOverlap(finding, path, range, mainFrom, mainTo),
+                                "탐지 메서드가 부르는 " + owner + "." + callee.getNameAsString() + "()");
+                    }
+                }
+            }
+        }
+        return new ArrayList<>(related.values());
+    }
+
+    private static boolean mainOverlap(DetectedFinding finding, String path, int[] range, int mainFrom, int mainTo) {
+        return path.equals(finding.filePath()) && range[0] <= mainTo && range[1] >= mainFrom;
+    }
+
+    private void addRelated(Map<String, AiRelatedCode> related, int[] total, String path, List<String> lines, int[] range,
+                            boolean overlapsMain, String reason) {
+        String key = path + ":" + range[0];
+        if (overlapsMain || related.containsKey(key) || related.size() >= RELATED_MAX_ITEMS || lines.isEmpty()) return;
+        if (path.startsWith("src/test/") || path.contains("/src/test/")) return;
+        int to = Math.min(range[1], range[0] + RELATED_MAX_LINES - 1);
+        to = Math.min(to, range[0] + (RELATED_MAX_TOTAL_LINES - total[0]) - 1);
+        if (to < range[0]) return;
+        List<String> body = slice(lines, range[0], range[1]);
+        if (body.stream().anyMatch(l -> SECRET_ASSIGNMENT.matcher(l).find() || CONFIG_SECRET_LINE.matcher(l).find())) return;
+        List<String> code = new ArrayList<>(slice(lines, range[0], to));
+        if (to < range[1]) code.add("    // … (이하 " + (range[1] - to) + "줄 생략)");
+        total[0] += code.size();
+        related.put(key, new AiRelatedCode(path, range[0], String.join("\n", code), reason));
     }
 
     /**

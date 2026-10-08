@@ -6,19 +6,17 @@ rules:
     languages: [java]
     mode: taint
     pattern-sources:
-      - pattern: (MultipartFile $F).getOriginalFilename()
-      - pattern: (Part $P).getSubmittedFileName()
+      - pattern: (org.springframework.web.multipart.MultipartFile $F).getOriginalFilename()
+      - pattern: (javax.servlet.http.Part $P).getSubmittedFileName()
+      - pattern: (jakarta.servlet.http.Part $P).getSubmittedFileName()
     pattern-sanitizers:
-      - pattern: FilenameUtils.getName(...)
-      - pattern: FilenameUtils.getExtension(...)
       - pattern: org.apache.commons.io.FilenameUtils.getName(...)
       - pattern: org.apache.commons.io.FilenameUtils.getExtension(...)
     pattern-sinks:
-      - pattern: new File(...)
       - pattern: new java.io.File(...)
-      - pattern: new FileOutputStream(...)
-      - pattern: Paths.get(...)
-      - pattern: Path.of(...)
+      - pattern: new java.io.FileOutputStream(...)
+      - pattern: java.nio.file.Paths.get(...)
+      - pattern: java.nio.file.Path.of(...)
       - pattern: ($PATH).resolve(...)
     message: "업로드한 파일의 원래 이름을 저장 경로에 그대로 씁니다(경로 조작·실행 파일 업로드). 저장 이름은 서버가 만들고(UUID 등), 원래 이름은 DB에만 저장하세요."
     severity: ERROR
@@ -32,11 +30,12 @@ rules:
   - id: kisa-file-upload-save
     languages: [java]
     pattern-either:
-      - pattern: (MultipartFile $F).transferTo(...)
-      - pattern: Files.copy((MultipartFile $F).getInputStream(), ...)
-      - pattern: FileCopyUtils.copy((MultipartFile $F).getBytes(), ...)
-      - pattern: FileCopyUtils.copy((MultipartFile $F).getInputStream(), ...)
-      - pattern: (Part $P).write(...)
+      - pattern: (org.springframework.web.multipart.MultipartFile $F).transferTo(...)
+      - pattern: java.nio.file.Files.copy((org.springframework.web.multipart.MultipartFile $F).getInputStream(), ...)
+      - pattern: org.springframework.util.FileCopyUtils.copy((org.springframework.web.multipart.MultipartFile $F).getBytes(), ...)
+      - pattern: org.springframework.util.FileCopyUtils.copy((org.springframework.web.multipart.MultipartFile $F).getInputStream(), ...)
+      - pattern: (javax.servlet.http.Part $P).write(...)
+      - pattern: (jakarta.servlet.http.Part $P).write(...)
     message: "업로드 파일을 저장합니다. 확장자 허용 목록(jsp·jspx·exe 등 차단), 크기 제한, 웹 루트 밖 저장, 서버가 만든 파일명을 쓰는지 확인하세요."
     severity: WARNING
     metadata:

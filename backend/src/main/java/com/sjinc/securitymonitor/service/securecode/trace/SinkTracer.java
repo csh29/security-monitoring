@@ -162,11 +162,17 @@ public final class SinkTracer {
             return List.copyOf(c.getArguments());
         }
         if (node instanceof MethodCallExpr m && !m.getArguments().isEmpty()
-                && ((m.getNameAsString().equals("get") && m.getScope().map(s -> s.toString().equals("Paths")).orElse(false))
-                || (m.getNameAsString().equals("newInputStream") && m.getScope().map(s -> s.toString().equals("Files")).orElse(false)))) {
+                && ((m.getNameAsString().equals("get") && m.getScope().map(s -> isClass(s, "Paths")).orElse(false))
+                || (m.getNameAsString().equals("newInputStream") && m.getScope().map(s -> isClass(s, "Files")).orElse(false)))) {
             return m.getNameAsString().equals("get") ? List.copyOf(m.getArguments()) : List.of(m.getArgument(0));
         }
         return null;
+    }
+
+    /** 받는 쪽이 그 클래스인가 — 짧은 이름(Paths)과 패키지까지 쓴 이름(java.nio.file.Paths) 모두. 규칙도 두 모양을 다 잡는다. */
+    private static boolean isClass(Expression scope, String simpleName) {
+        String text = scope.toString();
+        return text.equals(simpleName) || text.endsWith("." + simpleName);
     }
 
     /**

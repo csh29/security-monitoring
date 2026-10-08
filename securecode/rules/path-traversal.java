@@ -59,4 +59,13 @@ class PathTraversalTest {
         // ok: kisa-path-traversal-download
         InputStream in = new FileInputStream(path);
     }
+
+    // 패키지까지 쓴 클래스(import 없이) — OWASP Benchmark 모양.
+    void qualified(HttpServletRequest request) throws Exception {
+        String fileName = "/testfiles/" + request.getParameter("f");
+        // ruleid: kisa-path-traversal-request
+        java.io.FileOutputStream fos = new java.io.FileOutputStream(new java.io.FileInputStream(fileName).getFD());
+        // ruleid: kisa-path-traversal-request
+        java.nio.file.Path p = java.nio.file.Paths.get(fileName);
+    }
 }

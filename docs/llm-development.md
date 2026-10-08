@@ -58,6 +58,14 @@ py test_rules.py
 - taint 규칙의 출처에는 `HttpServletRequest` 값과 Spring 요청 파라미터(`@RequestParam`·`@PathVariable`·`@RequestHeader`·`@RequestBody`)를 함께 둔다.
   사내 시스템은 `@RequestBody Map`으로 받아 `param.get("x")`로 꺼내는 경우가 대부분이라, request만 보면 거의 걸리지 않는다.
   한 파일 안 여러 규칙은 YAML 앵커(`pattern-sources: &request-sources` / `*request-sources`)로 같은 출처를 쓴다(`injection.yml`).
+- **규칙의 클래스 이름은 패키지까지 쓴다**(`new java.io.FileInputStream(...)`, `(java.io.PrintWriter $W)`, `org.owasp.esapi.ESAPI.encoder()...`).
+  Semgrep은 패키지까지 쓴 패턴을 import(단일·`*`)로 들여온 짧은 이름과 코드에 패키지까지 쓴 이름 **모두**에 맞춘다. 짧은 패턴(`new FileInputStream(...)`)은
+  코드가 `new java.io.FileInputStream(...)`이라 쓰면 놓친다 — 실행 지점이면 미탐, 이스케이프면 오탐이 된다(OWASP Benchmark가 이렇게 쓴다).
+  - 예외: `java.lang`(`Runtime`·`ProcessBuilder`·`Math`·`Class`)은 import 없이 쓰므로 패키지까지 쓴 패턴이 짧은 이름을 못 잡는다 — **두 모양을 다** 쓴다.
+  - 패키지가 둘 이상인 클래스는 모두 쓴다 — 서블릿은 `javax.servlet`·`jakarta.servlet`, HttpClient는 4(`org.apache.http`)·5(`org.apache.hc.client5`).
+  - 어노테이션(`@RequestParam` 등)은 짧은 이름으로 둔다(패키지까지 써서 다는 코드가 사실상 없다).
+  - 예제 파일(`*.java`)에도 실제 코드처럼 import를 단다. import 없는 짧은 이름은 패키지까지 쓴 패턴에 걸리지 않는다.
+  - 연계 추적(`SinkTracer`)이 호출을 이름으로 찾는 곳도 두 모양을 다 알아야 한다(`isClass` — `Paths`·`java.nio.file.Paths`).
 
 Semgrep은 `securecode/requirements.txt`로 버전을 고정한다. 올릴 때는 그 파일을 바꾸고, 규칙 테스트와 실제 앱 점검 건수가 그대로인지 확인한다
 (엔진 버전이 바뀌면 같은 규칙이라도 탐지가 달라질 수 있다 — 점검 이력에 엔진 버전이 남는다).
@@ -209,7 +217,8 @@ DB 스키마 변경, 대량 삭제, 외부로 나가는 호출(Git push, 외부 
 | `/api/ai/**`는 `X-Internal-Token` 헤더로 자체 인증 | 세션 없는 파이썬 배치 전용 경로 |
 | 초기 관리자 비밀번호는 기동 시 무작위 생성 후 로그로만 노출 | 소스에 평문 비밀번호를 두지 않기 위함 |
 | 화면(`/program/{*path}`)도 Program 권한을 검사 | API만 막으면 "메뉴엔 없는데 주소로는 열린다"가 되어 접근 제어 기준이 화면과 API에서 갈린다 |
-| AI로 저장소 원문을 보낼 때는 `SecretMasker`로 가린다 | fix-plan의 pom.xml과 코드 점검 AI 판별의 코드 문맥 둘. 비밀번호·토큰·계정 든 URL이 Claude API로 나가고, 돌아온 pom이 DB·화면에 다시 저장된다. **새로 원문을 AI 입력에 넣으면 같은 방식으로 가리고 (결과에 원문이 돌아오면) 되돌린다.** 소스 코드는 AI로 보내지 않는다(사내 정책) — **예외는 코드 점검 AI 판별 하나**(2026-10-06 승인, 2026-10-07·10-08 확대): 결정론으로 못 정한 높은 등급 탐지, 추가 규칙(난수·취약한 해시·솔트 없는 해시·XXE, MEDIUM) 탐지, 연계 추적이 판정 불가로 남긴 탐지(등급 무관)(비밀값 규칙 제외)의, 걸린 줄을 감싼 메서드(최대 80줄)만 보낸다. 범위(대상 등급·문맥 길이)를 넓히려면 다시 승인을 받는다 |
+| AI로 저장소 원문을 보낼 때는 `SecretMasker`로 가린다 | fix-plan의 pom.xml과 코드 점검 AI 판별의 코드 문맥 둘. 비밀번호·토큰·계정 든 URL이 Claude API로 나가고, 돌아온 pom이 DB·화면에 다시 저장된다. **새로 원문을 AI 입력에 넣으면 같은 방식으로 가리고 (결과에 원문이 돌아오면) 되돌린다.** 소스 코드는 AI로 보내지 않는다(사내 정책) — **예외는 코드 점검 AI 판별 하나**(2026-10-06 승인, 2026-10-07·10-08 확대): 결정론으로 못 정한 높은 등급 탐지, 추가 규칙(난수·취약한 해시·솔트 없는 해시·XXE, MEDIUM) 탐지, 연계 추적이 판정 불가로 남긴 탐지(등급 무관)(비밀값 규칙 제외)의, 걸린 줄을 감싼 메서드(최대 80줄)와, 2026-10-08부터 관련 코드(연계 추적 경로의 메서드·탐지 메서드가 부르는 우리 메서드 — .java만, 메서드당 40줄·합계 240줄,
+비밀번호·키·토큰을 대입하는 메서드와 properties·yml·xml 설정 파일은 보내지 않음)만 보낸다. 범위(대상 등급·문맥 길이)를 넓히려면 다시 승인을 받는다 |
 | 역할(`role`)은 공통코드 `ROLE` 그룹 값만 허용 | 임의 문자열이 저장되면 `User.roles(...)`에서 터져 **그 계정의 로그인만 나중에 깨진다** |
 
 ### 시크릿

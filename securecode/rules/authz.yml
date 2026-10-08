@@ -12,8 +12,10 @@ rules:
     languages: [java]
     patterns:
       - pattern-either:
-          - pattern: (HttpServletRequest $REQ).getParameter("$KEY")
-          - pattern: (HttpServletRequest $REQ).getHeader("$KEY")
+          - pattern: (javax.servlet.http.HttpServletRequest $REQ).getParameter("$KEY")
+          - pattern: (jakarta.servlet.http.HttpServletRequest $REQ).getParameter("$KEY")
+          - pattern: (javax.servlet.http.HttpServletRequest $REQ).getHeader("$KEY")
+          - pattern: (jakarta.servlet.http.HttpServletRequest $REQ).getHeader("$KEY")
           - pattern: ($MAP).get("$KEY")
       - metavariable-regex:
           metavariable: $KEY

@@ -3,6 +3,7 @@ package com.sjinc.securitymonitor.service.securecode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sjinc.securitymonitor.domain.App;
 import com.sjinc.securitymonitor.domain.SecureCodeScan;
+import com.sjinc.securitymonitor.dto.securecode.AiRelatedCode;
 import com.sjinc.securitymonitor.dto.securecode.DetectedFinding;
 import com.sjinc.securitymonitor.dto.securecode.SecureCodeApplyResult;
 import com.sjinc.securitymonitor.dto.securecode.SecureCodeScanResult;
@@ -232,7 +233,7 @@ public class SecureCodeScanService {
         if (!merged.mergedAway().isEmpty()) {
             log.info("[{}] 같은 줄·같은 CWE 탐지 {}건을 합침", app.getSystemName(), merged.mergedAway().size());
         }
-        detected = attachAiContext(app, snippetBuilder, merged.findings());
+        detected = attachAiContext(app, projectDir, snippetBuilder, trace.java(), merged.findings());
         detected = attachTraceCode(app, projectDir, snippetBuilder, detected);
 
         // 사용자 범위 판정은 Semgrep 규칙이 아니라 판정이 만드는 탐지라 규칙셋에 없다. 이번에 판정을 했을 때만 활성 규칙에 넣는다 —
@@ -262,7 +263,8 @@ public class SecureCodeScanService {
      * userScopeJudged는 사용자 범위 판정을 끝까지 했는가 — 했을 때만 그 판정의 기존 탐지를 해결 처리할 수 있다.
      * rulesChanged는 이번 점검이 추적 규칙 파일을 고쳤는가(TraceRuleService.review) — 고쳤으면 규칙셋 버전을 다시 계산한다.
      */
-    private record TraceOutcome(List<DetectedFinding> findings, String note, boolean userScopeJudged, boolean rulesChanged) {
+    private record TraceOutcome(List<DetectedFinding> findings, String note, boolean userScopeJudged, boolean rulesChanged,
+                                JavaSourceIndex java) {
     }
 
     /** 점검 중 추적 규칙을 고쳤으면 이력의 규칙셋 버전도 고친 규칙 기준으로 — 같은 코드라도 판정이 달라진 이유를 이력에서 찾을 수 있게. */
@@ -302,7 +304,7 @@ public class SecureCodeScanService {
         } catch (Exception e) {
             log.warn("[{}] 연계 추적용 소스 읽기 실패 — Semgrep 등급 그대로 저장", app.getSystemName(), e);
             return new TraceOutcome(detected, "연계 추적에 실패해 탐지는 Semgrep 등급 그대로 두었고 사용자 범위(인가) 판정은 하지 못했습니다. "
-                    + "서버 로그를 확인하세요.", false, false);
+                    + "서버 로그를 확인하세요.", false, false, null);
         }
         List<String> notes = new ArrayList<>();
         TraceRuleService.Review review = traceRuleService.review(app, sources, java, traceRules);
@@ -371,7 +373,7 @@ public class SecureCodeScanService {
         }
         String pendingNote = pendingRuleNote(app, sources, java, review, result);
         if (pendingNote != null) notes.add(pendingNote);
-        return new TraceOutcome(findings, notes.isEmpty() ? null : String.join("\n", notes), userScopeJudged, review.rulesChanged());
+        return new TraceOutcome(findings, notes.isEmpty() ? null : String.join("\n", notes), userScopeJudged, review.rulesChanged(), java);
     }
 
     /**
@@ -400,11 +402,8 @@ public class SecureCodeScanService {
                                                   List<DetectedFinding> findings) {
         if (findings.stream().allMatch(f -> f.traceEvidence() == null)) return findings;
         Map<String, List<String>> pathsByFileName;
-        try (Stream<Path> files = Files.walk(projectDir)) {
-            pathsByFileName = files.filter(Files::isRegularFile)
-                    .map(f -> projectDir.relativize(f).toString().replace('\\', '/'))
-                    .filter(f -> !f.startsWith(".git/") && (f.endsWith(".java") || f.endsWith(".xml")))
-                    .collect(Collectors.groupingBy(f -> f.substring(f.lastIndexOf('/') + 1)));
+        try {
+            pathsByFileName = sourcePathsByFileName(projectDir);
         } catch (IOException e) {
             log.warn("[{}] 연계 추적 코드를 붙이지 못했습니다(소스 목록 실패): {}", app.getSystemName(), e.toString());
             return findings;
@@ -433,27 +432,55 @@ public class SecureCodeScanService {
      * AI 판별 대상(결정론으로 못 정한 높은 등급)에 보낼 코드 문맥을 붙인다. 등급은 연계 추적이 다시 매긴 뒤라야 정해져서 추적 뒤에 한다.
      * clone이 지워지기 전에만 만들 수 있다. 부가 기능이라 실패해도 점검을 실패시키지 않는다 — 문맥이 없으면 화면용 조각을 보낸다.
      */
-    private List<DetectedFinding> attachAiContext(App app, SecureCodeSnippetBuilder snippetBuilder, List<DetectedFinding> findings) {
+    private List<DetectedFinding> attachAiContext(App app, Path projectDir, SecureCodeSnippetBuilder snippetBuilder,
+                                                  JavaSourceIndex java, List<DetectedFinding> findings) {
         List<DetectedFinding> result = new ArrayList<>(findings.size());
         int attached = 0;
+        int withRelated = 0;
+        Map<String, List<String>> pathsByFileName = null;
         for (DetectedFinding f : findings) {
             if (!aiReviewService.isTarget(f.ruleId(), f.severity(), f.traceSafety())) {
                 result.add(f);
                 continue;
             }
+            DetectedFinding withContext;
             try {
-                result.add(snippetBuilder.withAiContext(f));
+                withContext = snippetBuilder.withAiContext(f);
                 attached++;
             } catch (Exception e) {
                 log.warn("[{}] AI 판별용 코드 문맥을 만들지 못했습니다({}:{}) — 화면용 조각을 보냅니다: {}",
                         app.getSystemName(), f.filePath(), f.startLine(), e.toString());
                 result.add(f);
+                continue;
             }
+            // 값이 정해지는 다른 메서드(연계 추적 경로·탐지 메서드가 부르는 헬퍼)도 같이 — 부가 문맥이라 실패해도 메서드만 보낸다.
+            try {
+                if (pathsByFileName == null) pathsByFileName = sourcePathsByFileName(projectDir);
+                List<AiRelatedCode> related = snippetBuilder.aiRelatedCode(withContext, java, pathsByFileName);
+                if (!related.isEmpty()) {
+                    withContext = withContext.withAiRelated(objectMapper.writeValueAsString(related));
+                    withRelated++;
+                }
+            } catch (Exception e) {
+                log.warn("[{}] AI 판별용 관련 코드를 만들지 못했습니다({}:{}) — 탐지 메서드만 보냅니다: {}",
+                        app.getSystemName(), f.filePath(), f.startLine(), e.toString());
+            }
+            result.add(withContext);
         }
         if (attached > 0) {
-            log.info("[{}] AI 판별 대상 {}건에 코드 문맥을 붙임", app.getSystemName(), attached);
+            log.info("[{}] AI 판별 대상 {}건에 코드 문맥을 붙임(관련 코드 {}건)", app.getSystemName(), attached, withRelated);
         }
         return result;
+    }
+
+    /** 저장소의 .java·.xml 파일 이름 → 경로들. 연계 추적 근거는 파일 이름만 적어서 경로로 되돌릴 때 쓴다. */
+    private static Map<String, List<String>> sourcePathsByFileName(Path projectDir) throws IOException {
+        try (Stream<Path> files = Files.walk(projectDir)) {
+            return files.filter(Files::isRegularFile)
+                    .map(f -> projectDir.relativize(f).toString().replace('\\', '/'))
+                    .filter(f -> !f.startsWith(".git/") && (f.endsWith(".java") || f.endsWith(".xml")))
+                    .collect(Collectors.groupingBy(f -> f.substring(f.lastIndexOf('/') + 1)));
+        }
     }
 
     /**

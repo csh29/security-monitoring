@@ -129,6 +129,14 @@ public class SecureCodeFinding {
     private Integer aiContextStartLine;
 
     /**
+     * AI 판별에 코드 문맥과 함께 보낸(보낼) 다른 메서드들 — AiRelatedCode 목록 JSON(SecureCodeSnippetBuilder.aiRelatedCode). 연계 추적 경로와
+     * 탐지 메서드가 부르는 우리 메서드이고 .java만이다(설정 파일·비밀값 대입이 있는 메서드는 넣지 않는다). 입력 해시에 들어간다.
+     */
+    @Lob
+    @Column(name = "ai_related_context", columnDefinition = "CLOB")
+    private String aiRelatedContext;
+
+    /**
      * AI 판별 결과(VULNERABLE/NOT_VULNERABLE/UNCERTAIN). 화면에 참고로만 보여주고 처리여부는 바꾸지 않는다 — 오탐 처리는 사람이 한다.
      * 판별에 쓴 입력(코드 문맥·연계 추적 근거)의 해시를 aiInputHash에 같이 둔다. 재점검으로 입력이 바뀌면 해시가 달라져
      * 그 판별은 화면에서 숨기고 다시 대기가 된다(SecureCodeAiReviewService).
@@ -267,6 +275,7 @@ public class SecureCodeFinding {
         // AI 판별 결과는 지우지 않는다 — 입력이 그대로면 다시 보낼 필요가 없고, 바뀌었으면 해시가 달라 숨겨지고 다시 대기가 된다.
         aiContext = detected.aiContext();
         aiContextStartLine = detected.aiContextStartLine();
+        aiRelatedContext = detected.aiRelated();
         lastDetectedAt = now;
     }
 }

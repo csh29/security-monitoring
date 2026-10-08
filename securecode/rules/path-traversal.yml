@@ -8,7 +8,8 @@ rules:
     languages: [java]
     mode: taint
     pattern-sources:
-      - pattern: (HttpServletRequest $REQ).$GET(...)
+      - pattern: (javax.servlet.http.HttpServletRequest $REQ).$GET(...)
+      - pattern: (jakarta.servlet.http.HttpServletRequest $REQ).$GET(...)
       - patterns:
           - pattern-either:
               - pattern-inside: |
@@ -27,22 +28,20 @@ rules:
           - pattern: $P
     pattern-sanitizers:
       # 경로 부분을 떼고 파일 이름만 남긴다.
-      - pattern: FilenameUtils.getName(...)
       - pattern: org.apache.commons.io.FilenameUtils.getName(...)
-      - pattern: (Path $X).getFileName()
+      - pattern: (java.nio.file.Path $X).getFileName()
     pattern-sinks:
-      - pattern: new File(...)
       - pattern: new java.io.File(...)
-      - pattern: new FileInputStream(...)
-      - pattern: new FileOutputStream(...)
-      - pattern: new FileReader(...)
-      - pattern: new FileWriter(...)
-      - pattern: new RandomAccessFile(...)
-      - pattern: Paths.get(...)
-      - pattern: Path.of(...)
-      - pattern: (Path $BASE).resolve(...)
-      - pattern: new FileSystemResource(...)
-      - pattern: new UrlResource(...)
+      - pattern: new java.io.FileInputStream(...)
+      - pattern: new java.io.FileOutputStream(...)
+      - pattern: new java.io.FileReader(...)
+      - pattern: new java.io.FileWriter(...)
+      - pattern: new java.io.RandomAccessFile(...)
+      - pattern: java.nio.file.Paths.get(...)
+      - pattern: java.nio.file.Path.of(...)
+      - pattern: (java.nio.file.Path $BASE).resolve(...)
+      - pattern: new org.springframework.core.io.FileSystemResource(...)
+      - pattern: new org.springframework.core.io.UrlResource(...)
     message: "요청값이 파일 경로에 그대로 들어갑니다(../ 로 다른 파일 접근). 파일은 서버가 정한 키(ID)로 찾고, 경로를 받아야 하면 정규화 후 허용 폴더 안인지 검사하세요(getCanonicalPath().startsWith(기준폴더))."
     severity: ERROR
     metadata:
@@ -62,13 +61,13 @@ rules:
             ...
           }
       - pattern-either:
-          - pattern: new File($X, ...)
-          - pattern: new FileInputStream($X)
-          - pattern: Paths.get($X, ...)
-          - pattern: Files.newInputStream($X, ...)
-      - pattern-not: new File("...", ...)
-      - pattern-not: new FileInputStream("...")
-      - pattern-not: Paths.get("...", ...)
+          - pattern: new java.io.File($X, ...)
+          - pattern: new java.io.FileInputStream($X)
+          - pattern: java.nio.file.Paths.get($X, ...)
+          - pattern: java.nio.file.Files.newInputStream($X, ...)
+      - pattern-not: new java.io.File("...", ...)
+      - pattern-not: new java.io.FileInputStream("...")
+      - pattern-not: java.nio.file.Paths.get("...", ...)
     message: "파일 다운로드에서 변수로 만든 경로를 엽니다. 경로가 요청값에서 오지 않는지, 온다면 정규화 후 허용 폴더 안인지 검사하는지 확인하세요."
     severity: WARNING
     metadata:

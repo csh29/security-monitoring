@@ -6,8 +6,9 @@ rules:
     patterns:
       - pattern-either:
           - pattern: $X.getCanonicalHostName()
-          - pattern: (InetAddress $X).getHostName()
-          - pattern: (HttpServletRequest $R).getRemoteHost()
+          - pattern: (java.net.InetAddress $X).getHostName()
+          - pattern: (javax.servlet.http.HttpServletRequest $R).getRemoteHost()
+          - pattern: (jakarta.servlet.http.HttpServletRequest $R).getRemoteHost()
       - pattern-either:
           - pattern-inside: $H.equals(...)
           - pattern-inside: $H.equalsIgnoreCase(...)

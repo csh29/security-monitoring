@@ -8,8 +8,8 @@ rules:
     languages: [java]
     patterns:
       - pattern-either:
-          - pattern: (ObjectInputStream $IN).readObject()
-          - pattern: (ObjectInputStream $IN).readUnshared()
+          - pattern: (java.io.ObjectInputStream $IN).readObject()
+          - pattern: (java.io.ObjectInputStream $IN).readUnshared()
       - pattern-not-inside: |
           $RET $M(...) { ... $IN.setObjectInputFilter(...); ... }
     message: "자바 직렬화 객체를 읽습니다. 외부에서 온 데이터면 읽는 순간 임의 코드가 실행될 수 있습니다. JSON 등 데이터 형식으로 바꾸거나 ObjectInputFilter로 허용 클래스를 제한하세요."
@@ -23,9 +23,10 @@ rules:
   - id: kisa-deserialization-polymorphic
     languages: [java]
     pattern-either:
-      - pattern: new XMLDecoder(...)
-      - pattern: (ObjectMapper $M).enableDefaultTyping(...)
-      - pattern: (ObjectMapper $M).activateDefaultTyping(...)
+      - pattern: new java.beans.XMLDecoder(...)
+      - pattern: (com.fasterxml.jackson.databind.ObjectMapper $M).enableDefaultTyping(...)
+      - pattern: (org.codehaus.jackson.map.ObjectMapper $M).enableDefaultTyping(...)
+      - pattern: (com.fasterxml.jackson.databind.ObjectMapper $M).activateDefaultTyping(...)
       - pattern: |
           @JsonTypeInfo(use = JsonTypeInfo.Id.CLASS, ...)
           class $C { ... }
@@ -33,7 +34,7 @@ rules:
           @JsonTypeInfo(use = Id.CLASS, ...)
           class $C { ... }
       - patterns:
-          - pattern: (XStream $X).fromXML(...)
+          - pattern: (com.thoughtworks.xstream.XStream $X).fromXML(...)
           - pattern-not-inside: |
               $RET $M(...) { ... $X.allowTypes(...); ... }
           - pattern-not-inside: |

@@ -5,7 +5,8 @@ rules:
     languages: [java]
     mode: taint
     pattern-sources:
-      - pattern: (HttpServletRequest $REQ).$GET(...)
+      - pattern: (javax.servlet.http.HttpServletRequest $REQ).$GET(...)
+      - pattern: (jakarta.servlet.http.HttpServletRequest $REQ).$GET(...)
       # Spring 요청 파라미터도 클라이언트 값이다(@RequestBody Map이면 param.get("x")로 꺼내도 오염이 따라간다).
       - patterns:
           - pattern-either:
@@ -32,13 +33,11 @@ rules:
               regex: '^("https?://[^"/]+/|[A-Z][A-Z0-9_.]*\s*\+\s*"/)'
     pattern-sinks:
       - pattern: new java.net.URL(...)
-      - pattern: new URL(...)
       - pattern: java.net.URI.create(...)
-      - pattern: URI.create(...)
-      - pattern: (RestTemplate $RT).$M(...)
-      - pattern: (WebClient $WC).$M(...).uri(...)
-      - pattern: HttpRequest.newBuilder(...)
-      - pattern: (HttpRequest.Builder $B).uri(...)
+      - pattern: (org.springframework.web.client.RestTemplate $RT).$M(...)
+      - pattern: (org.springframework.web.reactive.function.client.WebClient $WC).$M(...).uri(...)
+      - pattern: java.net.http.HttpRequest.newBuilder(...)
+      - pattern: (java.net.http.HttpRequest.Builder $B).uri(...)
     message: "요청값으로 만든 주소로 서버가 외부 요청을 보냅니다. 호출 대상 호스트를 허용 목록으로 검증하고, 내부망·루프백·메타데이터 주소를 막으세요."
     severity: ERROR
     metadata:
@@ -52,16 +51,14 @@ rules:
     patterns:
       - pattern-either:
           - pattern: new java.net.URL($U)
-          - pattern: new URL($U)
           # 메서드 이름 조건은 RestTemplate 쪽에만 둔다 — 바깥에 두면 $M이 없는 URL 패턴까지 조건에 걸려 new URL(변수)를 놓친다(실제로 그랬다).
           - patterns:
-              - pattern: (RestTemplate $RT).$M($U, ...)
+              - pattern: (org.springframework.web.client.RestTemplate $RT).$M($U, ...)
               - metavariable-regex:
                   metavariable: $M
                   regex: ^(getForObject|getForEntity|postForObject|postForEntity|postForLocation|exchange|execute|put|delete|patchForObject|headForHeaders|optionsForAllow)$
       - pattern-not: new java.net.URL("...")
-      - pattern-not: new URL("...")
-      - pattern-not: (RestTemplate $RT).$M("...", ...)
+      - pattern-not: (org.springframework.web.client.RestTemplate $RT).$M("...", ...)
       # 앞부분이 고정 호스트인 연결은 호출 대상이 바뀌지 않는다(kisa-ssrf-request의 sanitizer와 같은 기준).
       - metavariable-regex:
           metavariable: $U

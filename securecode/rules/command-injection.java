@@ -31,4 +31,14 @@ class CommandInjectionTest {
         // ok: kisa-os-command-exec
         new ProcessBuilder("git", "status").start();
     }
+
+    // java.lang도 패키지까지 써서 부를 수 있다.
+    void qualified(String cmd, java.util.List<String> args) throws Exception {
+        // ruleid: kisa-os-command-exec
+        java.lang.Runtime.getRuntime().exec(cmd);
+        // ruleid: kisa-os-command-exec
+        new java.lang.ProcessBuilder(args).start();
+        // ok: kisa-os-command-exec
+        java.lang.Runtime.getRuntime().exec("hostname");
+    }
 }

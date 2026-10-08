@@ -130,6 +130,29 @@ public final class JavaSourceIndex {
         return List.of();
     }
 
+    /** 노드가 있는 파일의 저장소 기준 경로. 모르면 null. */
+    public String pathOf(Node node) {
+        return node.findCompilationUnit().map(paths::get).orElse(null);
+    }
+
+    /** 그 파일의 그 줄을 감싼 가장 안쪽 메서드·생성자(AI 판별 관련 코드 — 탐지 메서드가 부르는 메서드를 찾을 때). */
+    public Optional<CallableDeclaration<?>> callableAt(String path, int line) {
+        for (Map.Entry<CompilationUnit, String> entry : paths.entrySet()) {
+            if (!entry.getValue().equals(path)) continue;
+            CallableDeclaration<?> best = null;
+            for (CallableDeclaration<?> callable : entry.getKey().findAll(CallableDeclaration.class)) {
+                if (callable.getRange().isEmpty()) continue;
+                int from = callable.getRange().get().begin.line, to = callable.getRange().get().end.line;
+                if (from <= line && line <= to && (best == null
+                        || to - from < best.getRange().get().end.line - best.getRange().get().begin.line)) {
+                    best = callable;
+                }
+            }
+            return Optional.ofNullable(best);
+        }
+        return Optional.empty();
+    }
+
     /** 우리 소스의 모든 클래스·인터페이스. */
     public List<ClassOrInterfaceDeclaration> allClasses() {
         return classesByName.values().stream().flatMap(List::stream).toList();

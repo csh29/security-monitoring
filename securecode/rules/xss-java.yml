@@ -6,7 +6,8 @@ rules:
     languages: [java]
     mode: taint
     pattern-sources:
-      - pattern: (HttpServletRequest $REQ).$GET(...)
+      - pattern: (javax.servlet.http.HttpServletRequest $REQ).$GET(...)
+      - pattern: (jakarta.servlet.http.HttpServletRequest $REQ).$GET(...)
       # Spring 요청 파라미터도 클라이언트 값이다(@RequestBody Map이면 param.get("x")로 꺼내도 오염이 따라간다).
       - patterns:
           - pattern-either:
@@ -24,15 +25,17 @@ rules:
                   $RET $M(..., @RequestBody $T $P, ...) { ... }
           - pattern: $P
     pattern-sanitizers:
-      - pattern: HtmlUtils.htmlEscape(...)
-      - pattern: StringEscapeUtils.escapeHtml4(...)
-      - pattern: StringEscapeUtils.escapeHtml(...)
-      - pattern: Encode.forHtml(...)
-      - pattern: ESAPI.encoder().encodeForHTML(...)
+      - pattern: org.springframework.web.util.HtmlUtils.htmlEscape(...)
+      - pattern: org.apache.commons.lang3.StringEscapeUtils.escapeHtml4(...)
+      - pattern: org.apache.commons.text.StringEscapeUtils.escapeHtml4(...)
+      - pattern: org.apache.commons.lang.StringEscapeUtils.escapeHtml(...)
+      - pattern: org.owasp.encoder.Encode.forHtml(...)
+      - pattern: org.owasp.esapi.ESAPI.encoder().encodeForHTML(...)
     pattern-sinks:
-      - pattern: (PrintWriter $W).$PRINT(...)
+      - pattern: (java.io.PrintWriter $W).$PRINT(...)
       - pattern: ($RESP).getWriter().$PRINT(...)
-      - pattern: (ServletOutputStream $OS).$PRINT(...)
+      - pattern: (javax.servlet.ServletOutputStream $OS).$PRINT(...)
+      - pattern: (jakarta.servlet.ServletOutputStream $OS).$PRINT(...)
     message: "요청값을 이스케이프 없이 응답에 직접 씁니다. HtmlUtils.htmlEscape 등으로 이스케이프하거나 템플릿(th:text)으로 출력하세요."
     severity: ERROR
     metadata:

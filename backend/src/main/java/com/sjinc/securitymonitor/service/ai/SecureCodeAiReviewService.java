@@ -4,10 +4,13 @@ import com.sjinc.securitymonitor.domain.App;
 import com.sjinc.securitymonitor.domain.SecureCodeFinding;
 import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewRequest;
 import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewTarget;
+import com.sjinc.securitymonitor.dto.securecode.AiRelatedCode;
 import com.sjinc.securitymonitor.repository.AppRepository;
 import com.sjinc.securitymonitor.repository.SecureCodeFindingRepository;
 import com.sjinc.securitymonitor.service.securecode.SecureCodeSnippetBuilder;
 import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -53,6 +56,9 @@ public class SecureCodeAiReviewService {
 
     /** 판별 이유는 몇 문장을 요청한다. 이보다 길면 코드를 다시 옮겨 적는 등 엉뚱한 응답이라 저장하지 않는다(컬럼 길이와 같다). */
     static final int MAX_REASONING_LENGTH = 2000;
+
+    /** 저장된 관련 코드(JSON) 읽기 — toTarget이 정적이라 주입받지 않고 기본 설정을 쓴다(레코드 읽기뿐이다). */
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private final SecureCodeFindingRepository findingRepository;
     private final AppRepository appRepository;
@@ -144,11 +150,27 @@ public class SecureCodeAiReviewService {
         String code = raw == null ? null : SecretMasker.mask(raw).text();
         String traceLabel = traceLabel(f.getTraceSafety());
         List<String> evidence = f.getTraceEvidence() == null ? List.of() : List.of(f.getTraceEvidence().split("\n"));
+        List<AiRelatedCode> related = relatedCode(f);
+        // 관련 코드는 있을 때만 해시에 넣는다 — 넣는 방식이 바뀌기 전에 판별한 탐지가(관련 코드가 없으면) 다시 대기가 되지 않게.
+        String relatedText = related.stream().map(r -> r.path() + ":" + r.startLine() + "\n" + r.code()).collect(Collectors.joining("\u0001"));
         String hash = sha256(String.join("\u0000", f.getRuleId(), f.getFilePath(), code == null ? "" : code,
-                traceLabel == null ? "" : traceLabel, String.join("\n", evidence)));
+                traceLabel == null ? "" : traceLabel, String.join("\n", evidence)) + (relatedText.isEmpty() ? "" : "\u0000" + relatedText));
         return new SecureCodeReviewTarget(f.getId(), f.getRuleId(), f.getKisaCategory(), f.getKisaName(), f.getCwe(),
                 f.getSeverity(), f.getMessage(), f.getFilePath(), nz(f.getStartLine()), nz(f.getEndLine()),
-                code, codeStart, traceLabel, evidence, hash);
+                code, codeStart, traceLabel, evidence, related, hash);
+    }
+
+    /** 점검 때 저장한 관련 코드(JSON)를 읽고 비밀값을 가린다. 못 읽으면 없는 것으로(탐지 메서드만 보낸다). */
+    private static List<AiRelatedCode> relatedCode(SecureCodeFinding f) {
+        if (f.getAiRelatedContext() == null || f.getAiRelatedContext().isBlank()) return List.of();
+        try {
+            List<AiRelatedCode> stored = JSON.readValue(f.getAiRelatedContext(), new TypeReference<List<AiRelatedCode>>() { });
+            return stored.stream()
+                    .map(r -> new AiRelatedCode(r.path(), r.startLine(), SecretMasker.mask(r.code()).text(), r.reason()))
+                    .toList();
+        } catch (Exception e) {
+            return List.of();
+        }
     }
 
     /** 예전 값·모르는 값이면 이름 그대로(SecureCodeFindingView와 같은 기준). */

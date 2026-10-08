@@ -174,6 +174,15 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
      (`(7*42) - num > 200 ? ... : param`, `switch("ABC".charAt(1))`, 리스트 `remove(0)` 뒤 위치 선택, 덮어쓴 대입)이었다 — `ConstantFolder`를 넣어
      22.8%(53/232). 마지막 53건은 파일마다 있는 내부 클래스 `private class Test`의 `doSomething`이 이름만으로 다른 파일들의 같은 메서드에 이어진 것이라
      메서드 연결을 보이는 클래스로 좁혀 **탐지율 100%, 오탐률 0%(0/232), 판정 불가 2건(오탐 유도)**. 측정 도구: `BenchmarkEvalTest`(`-Dbench.dir`이 있을 때만 돈다).
+   - **OWASP Benchmark cmdi + sqli 실행 줄 판정(2026-10-08, 755건 = 실제 취약 398 + 오탐 유도 357):** 고치기 전 판정 불가 37건(cmdi 35·sqli 2, 전부 오탐 유도) —
+     AI 판별에 보냈더니 20건을 "취약"(그중 10건 확신도 high)으로 틀렸다(메서드 하나만 봐서 상수를 돌려주는 헬퍼·리스트 위치 계산을 못 봄). 엔진은 배열 초기화
+     (`{cmd}`·배열 원소 대입), 문자열 메서드(`param.getBytes()` — String·StringBuilder를 `PURE_VALUE_TYPES`에), JVM 클래스 정보(`this.getClass().getClassLoader()` —
+     `JVM_METADATA_METHODS`, ClassLoader·Class도 값 타입), 이어 붙인 호출의 받는 쪽 타입(`scopeTypeOf` — 우리 메서드의 반환 타입)을 몰라 멈췄다. 고친 뒤 **755/755 정답 일치,
+     판정 불가 0, 놓친 취약 0**. URL·URI는 값 타입에 넣지 않았다(`openStream()`처럼 원격 내용을 읽는 결과까지 서버 값이 된다).
+   - **규칙 패턴의 클래스 이름(2026-10-08):** 규칙이 짧은 이름(`new FileInputStream(...)`, `ESAPI.encoder()...`)이라 패키지까지 쓴 코드
+     (Benchmark `new java.io.FileInputStream(fileName)`)를 못 알아봐 경로 조작은 놓치고, `org.owasp.esapi.ESAPI...encodeForHTML`로 이스케이프한 출력은 XSS로 잘못 걸었다
+     (BenchmarkTest00363). Java 규칙 15개 파일의 클래스 이름을 패키지까지 쓴 이름으로 바꿨다 — import한 짧은 이름도 그대로 잡힌다(`java.lang`만 두 모양,
+     서블릿은 javax·jakarta 둘 다). `SinkTracer`의 `Paths.get`·`Files.newInputStream` 찾기도 패키지까지 쓴 호출을 안다(`isClass`).
    - **같은 줄·같은 CWE 합치기**(`DuplicateCweMerger`, 연계 추적 뒤·AI 문맥 전): 한 약점을 두 방식으로 보는 규칙 쌍(명령 실행 taint + 실행 호출,
      SSRF `kisa-ssrf-request` + `kisa-ssrf-dynamic-url`)은 한 메서드에서 끝나는 코드에서 같은 줄 두 건이 되고 추적을 받는 쪽만 판정이 붙어 HIGH·LOW가
      엇갈렸다. 같은 파일·줄·CWE에 다른 규칙이 여럿이면 한 건만 남긴다 — 남길 규칙은 점검마다 같아야 해서(지문에 규칙 id) 판정 유무가 아니라 규칙만 보고
@@ -236,6 +245,12 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
    `SecureCodeSnippetBuilder.withAiContext`로 걸린 줄을 감싼 가장 안쪽 메서드·생성자(JavaParser, 파일 하나만)를 `aiContext`로 붙인다. 메서드가
    `AI_CONTEXT_MAX_LINES`(80줄)보다 길면 걸린 줄이 가운데 오게 자르고(메서드 끝에 닿으면 앞으로 당김), 자바가 아니거나 구문 분석 실패·메서드 밖이면
    걸린 줄 앞뒤 15줄. 비밀값 규칙은 조각과 같은 기준으로 가린다. clone이 지워지기 전에만 만들 수 있어 점검 때 저장한다. 실패해도 점검은 계속(화면용 조각을 보낸다)
+   **관련 코드**(2026-10-08, `SecureCodeSnippetBuilder.aiRelatedCode` → `SecureCodeFinding.aiRelatedContext`, `AiRelatedCode` 목록 JSON): 탐지 메서드만 보내니 AI가
+   값이 정해지는 다른 파일을 이름으로 추측해 틀렸다(Benchmark — `scr.getTheValue(...)`가 상수 `"bar"`를 돌려주는데 "요청 파라미터"로 보고 확신도 high로 취약).
+   그래서 연계 추적 경로의 걸음이 있는 메서드와, 탐지 메서드가 부르는 우리 메서드(한 단계, `JavaSourceIndex.callableAt`·`resolve`)를 같이 보낸다.
+   **.java 메서드만**(properties·yml·xml 설정은 안 보냄), 테스트 소스 제외, 비밀번호·키·토큰을 문자열로 대입하는 메서드는 통째로 뺀다(`SECRET_ASSIGNMENT`·설정 비밀값 줄),
+   메서드당 40줄·최대 8개·합계 240줄, 보내기 직전 `SecretMasker`로 한 번 더 가린다. 입력 해시에 들어가(있을 때만 — 예전 판별이 괜히 재대기가 되지 않게) 관련 코드가 바뀌면
+   다시 판별한다. 배치는 `[관련 코드]` 절로 받고, 프롬프트는 "이름이 아니라 본문의 실제 동작으로 출처를 본다"를 지시한다. 실패해도 탐지 메서드만 보낸다.
 7. `SecureCodeReconciler`(순수) → `SecureCodeFindingService.applyScan`(트랜잭션) — 새 지문은 OPEN, 있던 지문은 위치·조각 갱신(스캔이 해결한 건은 다시 OPEN),
    이번에 안 걸린 OPEN은 RESOLVED. **단 분석 실패 파일의 탐지와, 이번 규칙셋에 없는 규칙의 탐지는 해결 처리하지 않는다**
 8. 이력 SUCCESS(파일·탐지·신규·해결·분석 실패 수, 엔진·규칙셋 버전) / 실패면 FAILED. 성공하면 `triggerAiReviewIfNeeded` — 자동 실행 스위치(`AI_CONFIG`/`AUTO_TRIGGER`)가
@@ -331,7 +346,7 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
   `${}` 탐지의 "연계 판정" 열(뱃지 색은 등급과 같은 기준, 열에는 판정만 보이고 대상 식·근거는 툴팁, 상세 모달 뱃지에는 매퍼 판정의 대상 식을 붙임 — "서버가 세팅 · ${loginBrndzCd}". 한 줄에 `${}`가 여럿이면
   탐지도 여럿인데 위치·항목이 같아 어느 행이 어느 값의 판정인지 구분되지 않았다. `SecureCodeFindingView.traceTarget`이 근거 마지막 줄에서 꺼낸다)과 모달의 근거 경로 목록(코드가 붙은 걸음은 밑줄 — 누르면 그 줄 앞뒤 3줄을 펼친다), "AI 판별" 열(취약 (AI) 빨강·확인 필요 (AI) 노랑·
   오탐 의심 (AI) 회색·판별 대기 파랑, 대상이 아니면 빈칸)과 모달의 신뢰도·이유·"참고 의견" 안내).
-  APP·처리여부는 서버에서, 심각도·항목·CWE·파일은 받은 목록을 화면에서 거른다. CWE는 번호로 정확히 비교한다("89"·"CWE-89" 모두, 쉼표로 여러 개 — 부분 일치면 89가 CWE-189까지 걸린다). 모달을 열 때 `/findings/{id}/code`로 조각·근거 코드를 받아, 조각은 높이 420px로 묶고 걸린 줄이 보이게 스크롤한다. 코드 조각은 전부 textContent로 그린다.
+  APP·처리여부는 서버에서, 심각도(여러 값 고르기 — HIGH+MEDIUM처럼)·CWE·파일은 받은 목록을 화면에서 거른다(`search.matches`, 2026-10-08 항목 조건은 뺐다 — 항목별 건수는 "총 N건" 팝업으로 본다). CWE는 번호로 정확히 비교한다("89"·"CWE-89" 모두, 쉼표로 여러 개 — 부분 일치면 89가 CWE-189까지 걸린다). 모달을 열 때 `/findings/{id}/code`로 조각·근거 코드를 받아, 조각은 높이 420px로 묶고 걸린 줄이 보이게 스크롤한다. 코드 조각은 전부 textContent로 그린다.
 - **규칙(45개 / 22개 파일, 행안부 7개 분류 중 시간 및 상태를 뺀 6개 — 2026-10-07 인가 후보 규칙 1개 폐기, iBatis `$값$` 규칙 1개 추가):** 2026-10-02에 아래 기존 규칙에 더해 추가한 것 —
   입력데이터 검증: 경로 조작(요청값→파일 경로 taint ERROR, 다운로드 응답 안의 변수 경로 WARNING — `path-traversal.yml`), XXE(외부 개체를 막는 설정 없이
   만든 XML 파서 WARNING — `xxe.yml`), 오픈 리다이렉트(`open-redirect.yml`), LDAP 삽입·XML(XPath) 삽입·코드 삽입(ScriptEngine·SpEL·`Class.forName`)·
@@ -580,7 +595,7 @@ OPEN만)에서도 빠진다.
 | `/js/com-cd.js` | 공통코드로 select 옵션 채우기(그룹당 1회 캐시) |
 | `/js/tabs.js` | 홈 화면 탭 |
 | `/js/hotkeys.js` | 공통 펑션키 F3 조회 / F4 신규 / F5 삭제 / F9 저장 / F12 초기화. 버튼에 `data-hotkey="F3"`만 붙이면 되고, 버튼 글자 뒤 `[F3]` 표기도 이 파일이 자동으로 붙인다. `loading-overlay.html`이 싣는다 |
-| `/js/search-form.js` | 조회영역 공통 렌더러 `SearchForm.render(container, fields, {onSearch})` → `values()`/`reset()`/`field(id)`/`matches(row)`/`ready`. `matches(row)`는 전체 목록을 받아 조회조건을 화면에서 거르는 화면(프로그램·사용자·공통코드 관리, 취약점 조회)이 쓴다 — text 필드마다 `row[field.id]` 부분 일치(대소문자 무시), 필드에 `match(value, keyword)`를 주면 그 함수로 비교한다. 화면은 `<section class="search-row" id="searchArea">`만 두고 label/input 마크업을 직접 쓰지 않는다 |
+| `/js/search-form.js` | 조회영역 공통 렌더러 `SearchForm.render(container, fields, {onSearch})` → `values()`/`reset()`/`field(id)`/`matches(row)`/`ready`. 필드 타입은 text·select·multiselect(2026-10-08 — select 모양 상자를 누르면 체크박스 목록, 값은 고른 값 배열·안 고르면 전체, `matches`가 행 값이 고른 값 중 하나인지 본다. 코드 점검 결과의 심각도가 처음 쓴다). `matches(row)`는 전체 목록을 받아 조회조건을 화면에서 거르는 화면(프로그램·사용자·공통코드 관리, 취약점 조회)이 쓴다 — text 필드마다 `row[field.id]` 부분 일치(대소문자 무시), 필드에 `match(value, keyword)`를 주면 그 함수로 비교한다. 화면은 `<section class="search-row" id="searchArea">`만 두고 label/input 마크업을 직접 쓰지 않는다 |
 | `fragments/page-toolbar.html` | 화면 첫 줄 — 좌상단 프로그램명 + 우측 상단 공통 버튼. 값(`programNm`, `pageButtons`)은 `ViewController`가 넣는다. 버튼은 마크업에 쓰지 않는다(아래 "화면 공통 버튼" 참고) |
 | `/js/page-buttons.js` | `PageButtons.bind({ btnSave: fn })` — 권한 때문에 안 그려진 버튼은 건너뛰고 핸들러를 건다. `loading-overlay.html`이 싣는다 |
 | `fragments/loading-overlay.html` | 전역 스피너 + **CSRF 헤더를 붙이는 공통 fetch 래퍼**(`zip-writer.js`도 싣는다)(`init.silent: true`면 스피너 없이 — 홈 자동 새로고침 같은 백그라운드 갱신용) + `hotkeys.js`·`page-buttons.js`·`xlsx-writer.js`·`modal-drag.js` 로드 |
@@ -674,8 +689,9 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `DuplicateCweMergerTest` — 같은 줄·같은 CWE 다른 규칙은 추적 규칙 한 건(판정 등급 유지, 설명에 함께 걸린 규칙), 추적 판정이 없으면 묶음 최고 등급·규칙 id 순,
   같은 규칙 여러 번·다른 줄·CWE 없음은 그대로. `SecureCodeReconcilerTest`에 합쳐 빠진 기존 탐지(비고·사람이 정한 상태 유지·해결 건수 제외)
 - `SecureCodeSnippetBuilderTest` — 지문(줄 밀림·들여쓰기 무관, 코드가 바뀌면 다름, 같은 코드 두 번은 순번), 조각(감싼 메서드·80줄 자름, 매퍼 XML은 감싼 구문, 못 찾으면 앞뒤 5줄), 연계 추적 근거 코드(걸음별 앞뒤 3줄, 동명 파일 고르기), 비밀값 가림, MS949 폴백, 저장소 밖 경로 차단,
-  AI 판별 문맥(감싼 메서드 전체, 긴 메서드는 걸린 줄 가운데로 80줄·끝이면 당김, 자바가 아니면 앞뒤 15줄·비밀값 가림)
-- `SecureCodeAiReviewServiceTest` — AI 판별 대상(결정론으로 못 정한 높은 등급, 판정 불가는 등급 무관, 비밀값 규칙 제외·남은 판별 숨김), 대기열(지워진 앱·판별 완료 제외), 코드가 바뀌면 옛 판별 숨김·재대기,
+  AI 판별 문맥(감싼 메서드 전체, 긴 메서드는 걸린 줄 가운데로 80줄·끝이면 당김, 자바가 아니면 앞뒤 15줄·비밀값 가림),
+  AI 관련 코드(부르는 헬퍼·추적 경로 메서드, .java만, 키 대입 메서드·설정 파일·탐지 메서드 자신 제외)
+- `SecureCodeAiReviewServiceTest` — AI 판별 대상(결정론으로 못 정한 높은 등급, 판정 불가는 등급 무관, 비밀값 규칙 제외·남은 판별 숨김), 관련 코드(비밀값 가림·입력 해시 반영), 대기열(지워진 앱·판별 완료 제외), 코드가 바뀌면 옛 판별 숨김·재대기,
   줄 번호만 밀리면 재판별 안 함, 문맥 없으면 조각·비밀값 가림, 판별 값 검증, 처리여부는 그대로
 - `SecureCodeReconcilerTest` — 재점검 비교(신규·유지·해결, 분석 실패 파일·빠진 규칙은 해결 안 함, 수동 상태 유지, 재발견 시 OPEN)
 - `RuleSetLoaderTest` — 규칙 id·규칙셋 버전, 규칙 0개·폴더 없음은 실패, 실제 규칙 폴더 읽기
@@ -691,7 +707,8 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
   Spring 없는 옛 코드(`request.getParameter` → 맵 → `getSqlMapClientTemplate().queryForList`)의 `$값$`·사용자 범위 `#값#` 판정
 - `DollarTraceMergerTest` — 판정별 등급 재매김·근거·지문 유지, 한 줄 여러 `${}`는 순서로, 줄 안 개수가 다르면 Semgrep 등급 유지, 다른 규칙은 그대로
 - `SinkTracerTest` — 서비스의 위험 호출을 컨트롤러까지 따라가 판정(요청값 주소 CLIENT, `@Value` 주소·고정 호스트 + 쿼리 SERVER_SET, 원래 파일명 저장 CLIENT,
-  UUID 파일명 SERVER_SET, 상수 명령 SERVER_SET), 판정으로 등급 재매김(CLIENT HIGH·서버 LOW), 호출을 못 찾은 탐지·다른 규칙은 그대로, 지문 유지
+  UUID 파일명 SERVER_SET, 상수 명령 SERVER_SET), 판정으로 등급 재매김(CLIENT HIGH·서버 LOW), 호출을 못 찾은 탐지·다른 규칙은 그대로, 지문 유지,
+  배열 인자(초기화·원소 대입), Benchmark 함정 모양(상수 헬퍼 + getBytes, getClass().getClassLoader()로 찾은 명령은 서버 값·요청값 헬퍼는 클라이언트 값)
 - `FrameworkProfilerTest` — 빌드 파일·web.xml·Spring XML·application.yml·소스에서 구조(주석 안 제외, 비밀값 안 남김, 근거에 줄 번호 없음), 같은 저장소면 같은 결과,
   XML AOP 어드바이스(bean id → 클래스, pointcut-ref 펼침, after 제외)
 - `TraceRuleChangePlannerTest` — 새 시스템은 장치·로그인 정보·범위 키가 확인 대기·구조는 바로 반영, 세션 값 아닌 키는 자동 제외, 이 저장소에서 못 찾은 키는 안 뺌,

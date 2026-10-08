@@ -158,6 +158,24 @@ class SecureCodeAiReviewServiceTest {
     }
 
     @Test
+    void 관련_코드를_같이_보내고_비밀값을_가리며_입력_해시에_넣는다() {
+        DetectedFinding base = detected("a", "HIGH", null, "ctx");
+        String related = "[{\"path\":\"p/H.java\",\"startLine\":3,\"code\":\"String u = \\\"jdbc:mysql://h/db?password=hunter2\\\";\\nreturn \\\"bar\\\";\",\"reason\":\"탐지 메서드가 부르는 H.v()\"}]";
+        SecureCodeFinding without = finding(1L, base);
+        SecureCodeFinding with = finding(1L, base.withAiRelated(related));
+
+        SecureCodeReviewTarget target = SecureCodeAiReviewService.toTarget(with);
+
+        assertThat(target.relatedCode()).singleElement().satisfies(r -> {
+            assertThat(r.path()).isEqualTo("p/H.java");
+            assertThat(r.code()).contains("return \"bar\";").doesNotContain("hunter2");
+        });
+        // 관련 코드가 바뀌면 다시 판별 대기가 되도록 해시가 달라진다. 관련 코드가 없으면 예전과 같은 해시(기존 판별 유지).
+        assertThat(target.inputHash()).isNotEqualTo(SecureCodeAiReviewService.toTarget(without).inputHash());
+        assertThat(SecureCodeAiReviewService.toTarget(without).relatedCode()).isEmpty();
+    }
+
+    @Test
     void 판별_값을_검증하고_저장한다() {
         SecureCodeFinding f = finding(1L, detected("a", "HIGH", null, "ctx"));
         when(findingRepository.findById(7L)).thenReturn(Optional.of(f));

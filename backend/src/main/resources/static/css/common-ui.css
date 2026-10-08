@@ -110,6 +110,27 @@ body{
     padding:5px 10px; border:1px solid var(--line); border-radius:3px;
     font-size:12.5px; font-family:inherit; color:var(--text);
 }
+/* 조회영역 여러 값 고르기(SearchForm type 'multiselect'). 상자는 위 select와 같은 모양(오른쪽 화살표만 직접 그린다),
+   누르면 아래로 체크박스 목록이 뜬다. 고른 이름이 길면 상자 폭에서 말줄임 — 전체 목록은 툴팁. */
+/* 옵션은 label이라 위 .search-field label(굵게)보다 우선하도록 .multi-select 아래로 지정한다. */
+.multi-select{ position:relative; }
+.multi-select-box{
+    display:block; padding:5px 26px 5px 10px; border:1px solid var(--line); border-radius:3px; background:#fff;
+    font-size:12.5px; font-family:inherit; color:var(--text); text-align:left; cursor:pointer;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; position:relative;
+}
+.multi-select-box::after{
+    content:""; position:absolute; right:10px; top:50%; margin-top:-2px;
+    border:4px solid transparent; border-top-color:var(--text-sub);
+}
+.multi-select-panel{
+    position:absolute; top:100%; left:0; z-index:30; min-width:100%; margin-top:2px; padding:4px 0;
+    background:#fff; border:1px solid var(--line); border-radius:3px; box-shadow:0 6px 16px rgba(25,25,64,.15);
+    max-height:240px; overflow-y:auto;
+}
+.multi-select .multi-select-option{ display:flex; align-items:center; gap:6px; padding:5px 10px; font-size:12.5px; color:var(--text);
+    font-weight:400; white-space:nowrap; cursor:pointer; }
+.multi-select .multi-select-option:hover{ background:var(--bg); }
 
 /* 모달(취약점 관리 상세보기, 상단바 비밀번호 변경). 백드롭에 .open을 붙이면 뜬다.
    화면마다 모달 뼈대를 따로 적던 것을 두 번째 모달이 생기면서 여기로 올렸다. */

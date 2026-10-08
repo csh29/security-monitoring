@@ -129,6 +129,77 @@ class SecureCodeSnippetBuilderTest {
         assertThat(detected).allSatisfy(d -> assertThat(d.snippet()).isEmpty());
     }
 
+    /**
+     * AI 관련 코드 — 탐지 메서드가 부르는 헬퍼와 연계 추적 경로의 메서드를 .java만 같이 보낸다. 비밀값을 문자열로 대입하는 메서드와
+     * 설정 파일은 보내지 않는다(이름은 요청값 같지만 상수를 돌려주는 헬퍼를 AI가 못 봐서 틀렸다 — OWASP Benchmark).
+     */
+    @Test
+    void AI_관련_코드는_부르는_헬퍼와_추적_경로_메서드를_java만_보낸다() throws Exception {
+        String trap = """
+                package p;
+                public class Trap {
+                    public void doPost(HttpServletRequest request) {
+                        String v = new Helper().getTheValue("x");
+                        String key = new Keys().apiKey();
+                        statement.execute("SELECT * FROM U WHERE P='" + v + "'");
+                    }
+                }
+                """;
+        String helper = """
+                package p;
+                public class Helper {
+                    public String getTheValue(String p) {
+                        return "bar";
+                    }
+                }
+                """;
+        String keys = """
+                package p;
+                public class Keys {
+                    public String apiKey() {
+                        String apiKey = "sk-live-123456";
+                        return apiKey;
+                    }
+                }
+                """;
+        String controller = """
+                package p;
+                public class Ctl {
+                    public void handle() {
+                        new Trap().doPost(null);
+                    }
+                }
+                """;
+        Map<String, String> sources = new java.util.LinkedHashMap<>();
+        sources.put("src/main/java/p/Trap.java", trap);
+        sources.put("src/main/java/p/Helper.java", helper);
+        sources.put("src/main/java/p/Keys.java", keys);
+        sources.put("src/main/java/p/Ctl.java", controller);
+        sources.put("src/main/resources/application.properties", "db.password=hunter2\n");
+        for (Map.Entry<String, String> e : sources.entrySet()) {
+            Path file = dir.resolve(e.getKey());
+            Files.createDirectories(file.getParent());
+            Files.writeString(file, e.getValue(), StandardCharsets.UTF_8);
+        }
+        SecureCodeSnippetBuilder builder = new SecureCodeSnippetBuilder(dir);
+        DetectedFinding f = builder.withAiContext(builder.build(List.of(match("kisa-sql-injection-java-concat", "src/main/java/p/Trap.java", 6, 6))).get(0))
+                .withTrace("MEDIUM", "UNKNOWN", "Ctl.java:4 new Trap().doPost(null)\napplication.properties:1 db.password\nTrap.java:6 statement.execute(...)");
+        Map<String, List<String>> pathsByFileName = Map.of(
+                "Ctl.java", List.of("src/main/java/p/Ctl.java"), "Trap.java", List.of("src/main/java/p/Trap.java"),
+                "application.properties", List.of("src/main/resources/application.properties"));
+
+        List<com.sjinc.securitymonitor.dto.securecode.AiRelatedCode> related = builder.aiRelatedCode(f,
+                com.sjinc.securitymonitor.service.securecode.trace.JavaSourceIndex.fromSources(sources), pathsByFileName);
+
+        // 추적 경로의 컨트롤러 메서드, 탐지 메서드가 부르는 헬퍼. 탐지 메서드 자신(이미 [코드])·설정 파일·키를 대입하는 메서드는 빠진다.
+        assertThat(related).extracting(com.sjinc.securitymonitor.dto.securecode.AiRelatedCode::path)
+                .containsExactly("src/main/java/p/Ctl.java", "src/main/java/p/Helper.java");
+        assertThat(related.get(1).code()).contains("return \"bar\";");
+        assertThat(related.get(1).startLine()).isEqualTo(3);
+        assertThat(related.get(1).reason()).contains("Helper.getTheValue()");
+        assertThat(related).noneMatch(r -> r.code().contains("sk-live") || r.code().contains("hunter2"));
+    }
+
     private DetectedFinding withAiContext(String content, SemgrepMatch m) throws Exception {
         Path file = dir.resolve(m.filePath());
         Files.createDirectories(file.getParent());

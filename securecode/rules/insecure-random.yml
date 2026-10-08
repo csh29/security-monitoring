@@ -6,6 +6,7 @@ rules:
     pattern-either:
       - pattern: new java.util.Random(...)
       - pattern: Math.random()
+      - pattern: java.lang.Math.random()
       - pattern: java.util.concurrent.ThreadLocalRandom.current()
       - pattern: org.apache.commons.lang3.RandomStringUtils.$M(...)
     paths:
