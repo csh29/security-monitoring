@@ -1,12 +1,12 @@
 package com.sjinc.securitymonitor.service.securecode;
 
 import com.sjinc.securitymonitor.dto.securecode.DetectedFinding;
+import com.sjinc.securitymonitor.service.securecode.trace.DollarTraceMerger;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import com.sjinc.securitymonitor.service.securecode.trace.DollarTraceMerger;
 
 class DuplicateCweMergerTest {
 

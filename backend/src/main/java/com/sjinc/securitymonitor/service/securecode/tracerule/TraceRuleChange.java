@@ -2,6 +2,7 @@ package com.sjinc.securitymonitor.service.securecode.tracerule;
 
 import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules.FrameworkFact;
 import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules.SessionOverwrite;
+import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules.SystemRules;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -17,7 +18,8 @@ import java.util.Set;
  * 같은 변경을 다시 반영해도 규칙이 꼬이지 않게.
  *
  * @param type               변경 종류
- * @param system             초안을 만든 시스템(앱의 시스템명). 새 세션 덮어쓰기 항목의 이름·프레임워크 구조의 키
+ * @param system             초안을 만든 시스템(앱의 시스템명). 새 세션 덮어쓰기 항목의 이름, 프레임워크 구조의 키, 그리고 로그인 정보 이름·
+ *                           사용자 범위 키를 넣는 시스템 항목(systems.시스템명 — 다른 시스템에는 적용되지 않는다)
  * @param annotation         세션 덮어쓰기 항목의 어노테이션(세션 덮어쓰기 변경만)
  * @param container          세션 덮어쓰기 항목의 덮어쓰는 위치(null이면 요청 맵 자체)
  * @param requiredFirstParam 첫 파라미터 조건(ADD_OVERWRITE·SET_FIRST_PARAM만, null이면 조건 없음)
@@ -80,7 +82,8 @@ public record TraceRuleChange(Type type, String system, String annotation, Strin
     public String key() {
         return switch (type) {
             case SET_FRAMEWORK -> type + "|" + system;
-            case ADD_LOGIN_TYPE, ADD_LOGIN_PREFIX, ADD_SCOPE_KEY -> type + "|" + String.join(",", values);
+            // 시스템 항목에 넣는 변경이라 시스템마다 다른 변경이다 — 한 시스템에서 무시해도 다른 시스템에서는 다시 묻는다.
+            case ADD_LOGIN_TYPE, ADD_LOGIN_PREFIX, ADD_SCOPE_KEY -> type + "|" + system + "|" + String.join(",", values);
             case SET_FIRST_PARAM -> type + "|" + annotation + "|" + container + "|" + requiredFirstParam;
             default -> type + "|" + annotation + "|" + container + "|" + String.join(",", values.stream().sorted().toList());
         };
@@ -95,7 +98,7 @@ public record TraceRuleChange(Type type, String system, String annotation, Strin
             case ADD_OVERWRITE_KEYS -> target + " 키 추가 " + values;
             case REMOVE_OVERWRITE_KEYS -> target + " 키 제외 " + values + " — 세션 값이 아님";
             case SET_FIRST_PARAM -> target + " 첫 파라미터 조건 → " + (requiredFirstParam == null ? "없음" : requiredFirstParam);
-            case ADD_LOGIN_TYPE, ADD_LOGIN_PREFIX, ADD_SCOPE_KEY -> String.join(", ", values);
+            case ADD_LOGIN_TYPE, ADD_LOGIN_PREFIX, ADD_SCOPE_KEY -> String.join(", ", values) + " (" + system + "에만)";
             case SET_FRAMEWORK -> system + " 구조 " + facts.size() + "항목";
         };
     }
@@ -106,9 +109,10 @@ public record TraceRuleChange(Type type, String system, String annotation, Strin
             case ADD_OVERWRITE, ADD_OVERWRITE_KEYS -> "이 장치가 붙은 요청에서 위 키를 세션 값(안전)으로 판정합니다. 세션 값이 아닌 키가 섞이면 위험을 놓칩니다.";
             case REMOVE_OVERWRITE_KEYS -> "위 키를 클라이언트 값으로 판정합니다(더 엄격). 코드가 세션 값이 아닌 값을 넣는 것을 확인해 자동 반영했습니다.";
             case SET_FIRST_PARAM -> "이 장치를 적용할 요청 매핑의 조건이 바뀝니다. 조건이 없어지면 더 많은 요청을 안전으로 판정합니다.";
-            case ADD_LOGIN_TYPE -> "이 이름이 들어간 타입의 객체에서 꺼낸 값을 로그인 정보(안전)로 판정합니다.";
-            case ADD_LOGIN_PREFIX -> "이 이름으로 시작하는 메서드의 반환값을 로그인 정보(안전)로 판정합니다.";
-            case ADD_SCOPE_KEY -> "이 키가 SQL 조건에 쓰인 곳마다 사용자 범위(인가) 판정을 합니다. 탐지가 늘어날 수 있습니다.";
+            case ADD_LOGIN_TYPE -> "이 시스템에서 이 이름이 들어간 타입의 객체에서 꺼낸 값을 로그인 정보(안전)로 판정합니다.";
+            case ADD_LOGIN_PREFIX -> "이 시스템에서 이 이름으로 시작하는 메서드의 반환값을 로그인 정보(안전)로 판정합니다.";
+            case ADD_SCOPE_KEY -> "이 시스템에서 이 키가 SQL 조건에 쓰인 곳마다 값이 클라이언트에서 오는지 판정합니다(세션 값으로 보는 설정이 아닙니다)."
+                    + " 화면마다 따로 판정해 클라이언트 값이 들어가는 곳만 탐지하므로 탐지가 늘어날 수 있습니다.";
             case SET_FRAMEWORK -> "기록만 합니다(판정에 쓰지 않음).";
         };
     }
@@ -145,13 +149,26 @@ public record TraceRuleChange(Type type, String system, String annotation, Strin
                 overwrites.set(at, new SessionOverwrite(o.name(), o.annotation(), o.container(), requiredFirstParam, o.keys()));
                 yield with(rules, overwrites);
             }
-            case ADD_LOGIN_TYPE -> new TraceRules(rules.sessionOverwrites(), rules.loginMethodPrefixes(),
-                    union(rules.loginTypeNames(), values), rules.userScopeKeys(), rules.frameworks());
-            case ADD_LOGIN_PREFIX -> new TraceRules(rules.sessionOverwrites(), union(rules.loginMethodPrefixes(), values),
-                    rules.loginTypeNames(), rules.userScopeKeys(), rules.frameworks());
-            case ADD_SCOPE_KEY -> new TraceRules(rules.sessionOverwrites(), rules.loginMethodPrefixes(),
-                    rules.loginTypeNames(), union(rules.userScopeKeys(), values), rules.frameworks());
+            case ADD_LOGIN_TYPE, ADD_LOGIN_PREFIX, ADD_SCOPE_KEY -> {
+                // 공통에 이미 있으면 그대로 — 시스템 항목에 같은 것을 또 넣지 않는다.
+                if (common(rules).containsAll(values)) yield rules;
+                SystemRules own = rules.systems().getOrDefault(system, SystemRules.empty());
+                yield rules.withSystem(system, switch (type) {
+                    case ADD_LOGIN_TYPE -> new SystemRules(own.loginMethodPrefixes(), union(own.loginTypeNames(), values), own.userScopeKeys());
+                    case ADD_LOGIN_PREFIX -> new SystemRules(union(own.loginMethodPrefixes(), values), own.loginTypeNames(), own.userScopeKeys());
+                    default -> new SystemRules(own.loginMethodPrefixes(), own.loginTypeNames(), union(own.userScopeKeys(), values));
+                });
+            }
             case SET_FRAMEWORK -> rules.withFramework(system, facts);
+        };
+    }
+
+    /** 이 변경 종류의 공통 목록. */
+    private Set<String> common(TraceRules rules) {
+        return switch (type) {
+            case ADD_LOGIN_TYPE -> rules.loginTypeNames();
+            case ADD_LOGIN_PREFIX -> rules.loginMethodPrefixes();
+            default -> rules.userScopeKeys();
         };
     }
 
@@ -174,8 +191,7 @@ public record TraceRuleChange(Type type, String system, String annotation, Strin
     }
 
     private static TraceRules with(TraceRules rules, List<SessionOverwrite> overwrites) {
-        return new TraceRules(overwrites, rules.loginMethodPrefixes(), rules.loginTypeNames(), rules.userScopeKeys(),
-                rules.frameworks());
+        return rules.withCommon(overwrites, rules.loginMethodPrefixes(), rules.loginTypeNames(), rules.userScopeKeys());
     }
 
     private static Set<String> union(Set<String> base, List<String> add) {

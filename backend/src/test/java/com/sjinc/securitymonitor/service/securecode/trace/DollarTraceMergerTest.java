@@ -1,13 +1,13 @@
 package com.sjinc.securitymonitor.service.securecode.trace;
 
 import com.sjinc.securitymonitor.dto.securecode.DetectedFinding;
+import com.sjinc.securitymonitor.dto.securecode.DollarVerdict;
+import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import com.sjinc.securitymonitor.dto.securecode.DollarVerdict;
-import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
 
 class DollarTraceMergerTest {
 

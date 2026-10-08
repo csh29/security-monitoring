@@ -4,6 +4,9 @@ import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.body.CallableDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.Parameter;
+import com.github.javaparser.ast.expr.ArrayAccessExpr;
+import com.github.javaparser.ast.expr.ArrayCreationExpr;
+import com.github.javaparser.ast.expr.ArrayInitializerExpr;
 import com.github.javaparser.ast.expr.AssignExpr;
 import com.github.javaparser.ast.expr.BinaryExpr;
 import com.github.javaparser.ast.expr.CastExpr;
@@ -475,6 +478,16 @@ final class ValueOriginTracer {
         if (e.isArrayAccessExpr()) {
             return valueOf(e.asArrayAccessExpr().getName(), frame, depth + 1);
         }
+        // 배열 초기화({cmd}, new String[]{a, b})는 원소 중 가장 나쁜 출처다. 원소 없이 만든 배열(new String[n])은 빈 값이고,
+        // 나중에 넣는 원소(arr[0] = x)는 지역 변수 쪽에서 대입으로 따로 모은다(valueOfName). 예전엔 "해석하지 못한 식"이라
+        // exec(args, argsEnv)의 환경 변수에 요청 헤더가 들어가도 판정 불가였다(OWASP Benchmark cmdi).
+        if (e instanceof ArrayInitializerExpr initializer) {
+            return worstOf(initializer.getValues(), frame, depth, V.of(TraceSafety.SERVER_SET, java.location(e) + " 빈 배열"));
+        }
+        if (e instanceof ArrayCreationExpr creation) {
+            return creation.getInitializer().map(init -> valueOf(init, frame, depth + 1))
+                    .orElseGet(() -> V.of(TraceSafety.SERVER_SET, java.location(e) + " 빈 배열 " + abbreviate(creation.toString())));
+        }
         // 문자열·경로·주소를 조립하는 생성자는 인자들의 출처를 그대로 갖는다(new File(dir, name)의 name이 요청값이면 요청값).
         if (e instanceof ObjectCreationExpr creation && (ASSEMBLING_TYPES.contains(creation.getType().getNameAsString())
                 || PURE_VALUE_TYPES.contains(creation.getType().getNameAsString()))) {
@@ -538,6 +551,11 @@ final class ValueOriginTracer {
                     .ifPresent(sources::add);
             for (AssignExpr assign : local.callable().findAll(AssignExpr.class)) {
                 if (assign.getTarget() instanceof NameExpr target && target.getNameAsString().equals(id)) sources.add(assign);
+                // 배열 원소 대입(args[1] = param)도 이 배열의 값이다.
+                if (assign.getTarget() instanceof ArrayAccessExpr element && unwrap(element.getName()) instanceof NameExpr target
+                        && target.getNameAsString().equals(id)) {
+                    sources.add(assign);
+                }
             }
             if (collection) {
                 sources.addAll(collectionWrites(local.callable(), id));
@@ -822,7 +840,9 @@ final class ValueOriginTracer {
      */
     static boolean isOverwritten(Expression source, List<Expression> sources, NameExpr at, String id) {
         for (Expression other : sources) {
+            // 변수 자체에 대입한 것만 앞의 값을 덮는다 — 배열 원소 대입(arr[0] = x)은 나머지 원소를 그대로 둔다.
             if (other == source || !(other instanceof AssignExpr assign) || assign.getOperator() != AssignExpr.Operator.ASSIGN
+                    || !(assign.getTarget() instanceof NameExpr)
                     || !(assign.getParentNode().orElse(null) instanceof ExpressionStmt stmt)
                     || !(stmt.getParentNode().orElse(null) instanceof BlockStmt block)) {
                 continue;

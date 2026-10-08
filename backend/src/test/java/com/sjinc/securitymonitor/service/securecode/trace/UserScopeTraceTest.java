@@ -1,6 +1,10 @@
 package com.sjinc.securitymonitor.service.securecode.trace;
 
 import com.sjinc.securitymonitor.dto.securecode.DetectedFinding;
+import com.sjinc.securitymonitor.dto.securecode.DollarVerdict;
+import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
+import com.sjinc.securitymonitor.service.securecode.SecureCodeSnippetBuilder;
+import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -13,10 +17,6 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import com.sjinc.securitymonitor.dto.securecode.DollarVerdict;
-import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
-import com.sjinc.securitymonitor.service.securecode.SecureCodeSnippetBuilder;
-import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules;
 
 /** 사용자 범위 키(#{})의 값 출처 판정(MybatisDollarTracer.scopeVerdicts)과 그 판정으로 만든 탐지(UserScopeFindings). */
 class UserScopeTraceTest {

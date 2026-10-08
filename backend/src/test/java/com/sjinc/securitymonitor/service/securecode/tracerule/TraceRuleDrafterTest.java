@@ -1,5 +1,7 @@
 package com.sjinc.securitymonitor.service.securecode.tracerule;
 
+import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
+import com.sjinc.securitymonitor.service.securecode.trace.MybatisDollarTracer;
 import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRuleDrafter.Draft;
 import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRuleDrafter.Evidenced;
 import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRuleDrafter.OverwriteCandidate;
@@ -11,8 +13,6 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
-import com.sjinc.securitymonitor.service.securecode.trace.MybatisDollarTracer;
 
 class TraceRuleDrafterTest {
 

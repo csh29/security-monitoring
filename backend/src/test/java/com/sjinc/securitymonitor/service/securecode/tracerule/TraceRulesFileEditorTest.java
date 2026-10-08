@@ -66,16 +66,57 @@ class TraceRulesFileEditorTest {
         assertThat(edited).contains("  # 2026-10-08 자동 반영 — NEW_SYS 점검 초안. 근거:", "  #   compCd ← Util.java:10");
     }
 
+    /** 로그인 정보 이름·범위 키는 공통이 아니라 초안을 만든 시스템 항목에 — 다른 시스템에 적용되지 않게. */
     @Test
-    void 한_줄_목록과_여러_줄_목록에_더한다() {
+    void 로그인_이름과_범위_키는_시스템_항목에_더한다() {
         String edited = TraceRulesFileEditor.apply(FILE, List.of(
                 change(Type.ADD_LOGIN_TYPE, null, null, null, "MemberSession"),
-                change(Type.ADD_SCOPE_KEY, null, null, null, "loginBrndzCd")), STAMP);
+                change(Type.ADD_SCOPE_KEY, null, null, null, "compCd")), STAMP);
 
         TraceRules rules = TraceRules.parse(edited);
-        assertThat(rules.loginTypeNames()).containsExactly("LoginUser", "MemberSession");
-        assertThat(rules.userScopeKeys()).containsExactly("loginCompCd", "loginBrndzCd");
-        assertThat(edited).contains("loginTypeNames: [LoginUser, MemberSession]", "  - loginBrndzCd");
+        assertThat(rules.loginTypeNames()).containsExactly("LoginUser");
+        assertThat(rules.userScopeKeys()).containsExactly("loginCompCd");
+        assertThat(rules.systems().get("NEW_SYS").loginTypeNames()).containsExactly("MemberSession");
+        assertThat(rules.systems().get("NEW_SYS").userScopeKeys()).containsExactly("compCd");
+        assertThat(rules.forSystem("NEW_SYS").userScopeKeys()).containsExactly("loginCompCd", "compCd");
+        assertThat(rules.forSystem("OTHER").userScopeKeys()).containsExactly("loginCompCd");
+        assertThat(edited).contains("systems:\n  \"NEW_SYS\":\n    loginTypeNames:\n",
+                "    userScopeKeys:\n      # 2026-10-08 자동 반영: [compCd] 추가 — UserAspect.java:5 @Before(...)\n      - compCd\n");
+        // 공통 목록 다음, frameworks 앞에 둔다.
+        assertThat(edited.indexOf("systems:")).isGreaterThan(edited.indexOf("userScopeKeys:"));
+    }
+
+    @Test
+    void 이미_있는_시스템_항목의_여러_줄_목록과_한_줄_목록에_더한다() {
+        String withSystem = FILE + """
+
+                systems:
+                  "NEW_SYS":
+                    userScopeKeys:
+                      # 손으로 넣은 키
+                      - brandCd
+                    loginMethodPrefixes: [getMember]
+                  "ERP":
+                    userScopeKeys:
+                      - erpCompCd
+                """;
+
+        String edited = TraceRulesFileEditor.apply(withSystem, List.of(
+                change(Type.ADD_SCOPE_KEY, null, null, null, "compCd"),
+                change(Type.ADD_LOGIN_PREFIX, null, null, null, "getSession")), STAMP);
+
+        TraceRules rules = TraceRules.parse(edited);
+        assertThat(rules.systems().get("NEW_SYS").userScopeKeys()).containsExactly("brandCd", "compCd");
+        assertThat(rules.systems().get("NEW_SYS").loginMethodPrefixes()).containsExactly("getMember", "getSession");
+        assertThat(rules.systems().get("ERP").userScopeKeys()).containsExactly("erpCompCd");
+        assertThat(edited).contains("      # 손으로 넣은 키");
+    }
+
+    @Test
+    void 공통에_이미_있는_키는_시스템_항목에_또_넣지_않는다() {
+        String edited = TraceRulesFileEditor.apply(FILE, List.of(change(Type.ADD_SCOPE_KEY, null, null, null, "loginCompCd")), STAMP);
+
+        assertThat(edited).isEqualTo(FILE);
     }
 
     @Test
@@ -93,7 +134,9 @@ class TraceRulesFileEditorTest {
         assertThat(rules.frameworks().get("ERP")).isEqualTo(v1);
         assertThat(twice.split("\nframeworks:", -1)).hasSize(2); // 섹션이 하나뿐
         assertThat(twice.indexOf("frameworks:")).isGreaterThan(twice.indexOf("userScopeKeys:"));
-        assertThat(rules.loginMethodPrefixes()).containsExactly("getLogin", "getMember");
+        assertThat(rules.systems().get("NEW_SYS").loginMethodPrefixes()).containsExactly("getMember");
+        // 시스템 항목은 frameworks 앞에 둔다(frameworks는 항상 맨 끝).
+        assertThat(twice.indexOf("systems:")).isLessThan(twice.indexOf("frameworks:"));
     }
 
     /** 구조 기록만 바뀌었는데 규칙셋 버전이 바뀌면 점검 이력에서 "판정 기준이 바뀌었다"로 잘못 읽힌다. */
@@ -107,13 +150,6 @@ class TraceRulesFileEditorTest {
     }
 
     @Test
-    void 이미_반영된_변경은_파일을_바꾸지_않는다() {
-        String edited = TraceRulesFileEditor.apply(FILE, List.of(change(Type.ADD_SCOPE_KEY, null, null, null, "loginCompCd")), STAMP);
-
-        assertThat(edited).isEqualTo(FILE);
-    }
-
-    @Test
     void 파일이_없으면_섹션을_만든다() {
         String edited = TraceRulesFileEditor.apply("", List.of(
                 change(Type.ADD_OVERWRITE, "AddUser", "paramData", null, "compCd"),
@@ -121,7 +157,7 @@ class TraceRulesFileEditorTest {
 
         TraceRules rules = TraceRules.parse(edited);
         assertThat(rules.sessionOverwrites()).singleElement().satisfies(o -> assertThat(o.keys()).containsExactly("compCd"));
-        assertThat(rules.userScopeKeys()).containsExactly("compCd");
+        assertThat(rules.forSystem("NEW_SYS").userScopeKeys()).containsExactly("compCd");
     }
 
     @Test

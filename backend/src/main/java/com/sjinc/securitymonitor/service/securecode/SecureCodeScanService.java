@@ -306,11 +306,11 @@ public class SecureCodeScanService {
         }
         List<String> notes = new ArrayList<>();
         TraceRuleService.Review review = traceRuleService.review(app, sources, java, traceRules);
-        traceRules = review.rules();
+        traceRules = review.effective();
         if (review.note() != null) notes.add(review.note());
         boolean hasScope = !traceRules.userScopeKeys().isEmpty();
         if (!hasScope) {
-            notes.add("trace-rules.yml에 userScopeKeys(사용자 범위 키)가 없어 사용자 범위(인가) 판정을 하지 않았습니다. "
+            notes.add("trace-rules.yml에 이 시스템의 사용자 범위 키(공통 userScopeKeys·systems." + app.getSystemName() + ")가 없어 사용자 범위(인가) 판정을 하지 않았습니다. "
                     + "회사·사용자로 데이터를 가르는 SQL 파라미터 키를 추가하세요.");
         }
         if (!java.failedFiles().isEmpty()) {
@@ -350,7 +350,7 @@ public class SecureCodeScanService {
                     if (!result.scopeKeysUsed()) {
                         // 키가 설정돼 있어도 이 시스템이 다른 이름을 쓰면 아무것도 안 걸린다 — "문제 없음"과 구분되게 알린다.
                         notes.add("이 저장소의 매퍼 SQL에서 사용자 범위 키(" + String.join(", ", traceRules.userScopeKeys())
-                                + ")를 찾지 못했습니다. 이 시스템이 회사·사용자 범위에 쓰는 키를 trace-rules.yml userScopeKeys에 추가하세요.");
+                                + ")를 찾지 못했습니다. 이 시스템이 회사·사용자 범위에 쓰는 키를 추가하세요(코드 점검 화면 [추적 규칙 초안] 또는 trace-rules.yml systems." + app.getSystemName() + ").");
                     }
                 } catch (Exception e) {
                     log.warn("[{}] 사용자 범위 탐지 만들기 실패", app.getSystemName(), e);
@@ -383,7 +383,7 @@ public class SecureCodeScanService {
         if (review.pending().isEmpty()) return null;
         int changes;
         try {
-            MybatisDollarTracer.Result before = current != null ? current : MybatisDollarTracer.trace(sources, java, review.rules());
+            MybatisDollarTracer.Result before = current != null ? current : MybatisDollarTracer.trace(sources, java, review.effective());
             changes = TraceRuleDraftPreview.changes(before, MybatisDollarTracer.trace(sources, java, review.withPending())).size();
         } catch (Exception e) {
             log.warn("[{}] 추적 규칙 대기 변경의 판정 영향을 계산하지 못했습니다", app.getSystemName(), e);

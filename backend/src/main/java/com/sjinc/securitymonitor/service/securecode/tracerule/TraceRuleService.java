@@ -59,18 +59,24 @@ public class TraceRuleService {
     /**
      * 점검 한 번의 규칙 확인 결과.
      *
-     * @param rules        이번 점검의 연계 추적에 쓸 규칙(바로 반영한 변경까지 들어간 것)
+     * @param rules        파일의 규칙 전체(바로 반영한 변경까지 들어간 것) — 추적에는 이 시스템 기준으로 합친 effective()를 쓴다
+     * @param system       점검한 앱의 시스템명
      * @param pending      확인 대기 중인 이 저장소의 변경(사람이 무시한 것은 빼고)
      * @param note         점검 완료 알림에 붙일 문구(없으면 null). 대기 변경의 판정 영향 수는 추적 뒤에 붙인다(pendingNote)
      * @param rulesChanged 이번 점검에서 파일을 고쳤는가 — 고쳤으면 규칙셋 버전을 다시 계산한다
      */
-    public record Review(TraceRules rules, List<TraceRuleChange> pending, String note, boolean rulesChanged) {
+    public record Review(TraceRules rules, String system, List<TraceRuleChange> pending, String note, boolean rulesChanged) {
 
-        /** 대기 변경을 모두 반영했다고 친 규칙 — 반영하면 판정이 몇 건 바뀌는지 미리 계산할 때 쓴다. */
+        /** 이번 점검의 연계 추적에 쓸 규칙 — 공통 + 이 시스템 항목. */
+        public TraceRules effective() {
+            return rules.forSystem(system);
+        }
+
+        /** 대기 변경을 모두 반영했다고 친 규칙(이 시스템 기준) — 반영하면 판정이 몇 건 바뀌는지 미리 계산할 때 쓴다. */
         public TraceRules withPending() {
             TraceRules result = rules;
             for (TraceRuleChange change : pending) result = change.applyTo(result);
-            return result;
+            return result.forSystem(system);
         }
     }
 
@@ -100,7 +106,7 @@ public class TraceRuleService {
             plan = TraceRuleChangePlanner.plan(current, draft, app.getSystemName());
         } catch (Exception e) {
             log.warn("[{}] 추적 규칙 초안을 만들지 못했습니다(지금 규칙으로 계속)", app.getSystemName(), e);
-            return new Review(current, List.of(), "추적 규칙 초안을 만들지 못했습니다. 서버 로그를 확인하세요.", false);
+            return new Review(current, app.getSystemName(), List.of(), "추적 규칙 초안을 만들지 못했습니다. 서버 로그를 확인하세요.", false);
         }
         plan.notes().forEach(n -> log.info("[{}] 추적 규칙 확인: {}", app.getSystemName(), n));
 
@@ -126,7 +132,7 @@ public class TraceRuleService {
             }
         }
         List<TraceRuleChange> pending = savePending(app, review);
-        return new Review(rules, pending, notes.isEmpty() ? null : String.join("\n", notes), changed);
+        return new Review(rules, app.getSystemName(), pending, notes.isEmpty() ? null : String.join("\n", notes), changed);
     }
 
     /** 점검 완료 알림에 붙일 확인 대기 안내. 대기가 없으면 null. */

@@ -1,5 +1,8 @@
 package com.sjinc.securitymonitor.service.securecode.trace;
 
+import com.sjinc.securitymonitor.dto.securecode.DollarVerdict;
+import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
+import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
@@ -8,9 +11,6 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import com.sjinc.securitymonitor.dto.securecode.DollarVerdict;
-import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
-import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules;
 
 class MybatisDollarTracerTest {
 

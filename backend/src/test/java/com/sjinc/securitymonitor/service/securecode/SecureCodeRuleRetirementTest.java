@@ -3,6 +3,8 @@ package com.sjinc.securitymonitor.service.securecode;
 import com.sjinc.securitymonitor.domain.SecureCodeFinding;
 import com.sjinc.securitymonitor.dto.securecode.DetectedFinding;
 import com.sjinc.securitymonitor.repository.SecureCodeFindingRepository;
+import com.sjinc.securitymonitor.service.securecode.semgrep.RuleSetLoader;
+import com.sjinc.securitymonitor.service.securecode.trace.UserScopeFindings;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
@@ -13,8 +15,6 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
-import com.sjinc.securitymonitor.service.securecode.semgrep.RuleSetLoader;
-import com.sjinc.securitymonitor.service.securecode.trace.UserScopeFindings;
 
 class SecureCodeRuleRetirementTest {
 

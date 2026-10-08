@@ -1,5 +1,6 @@
 package com.sjinc.securitymonitor.service.securecode.semgrep;
 
+import com.sjinc.securitymonitor.exception.SecureCodeScanException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -8,7 +9,6 @@ import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import com.sjinc.securitymonitor.exception.SecureCodeScanException;
 
 class RuleSetLoaderTest {
 

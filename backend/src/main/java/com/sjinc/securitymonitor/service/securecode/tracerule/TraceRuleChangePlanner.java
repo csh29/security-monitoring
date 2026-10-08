@@ -79,18 +79,20 @@ public final class TraceRuleChangePlanner {
                         "코드: " + String.join(" / ", c.evidence()))));
             }
         }
+        // 로그인 정보 이름·사용자 범위 키는 공통 + 이 시스템 항목 기준으로 이미 있는지 본다(다른 시스템 항목은 이 시스템에 적용되지 않는다).
+        TraceRules effective = current.forSystem(system);
         for (Evidenced e : draft.loginTypeNames()) {
-            if (current.loginTypeNames().stream().noneMatch(e.value()::contains)) {
+            if (effective.loginTypeNames().stream().noneMatch(e.value()::contains)) {
                 put(changes, single(Type.ADD_LOGIN_TYPE, system, e));
             }
         }
         for (Evidenced e : draft.loginMethodPrefixes()) {
-            if (current.loginMethodPrefixes().stream().noneMatch(e.value()::startsWith)) {
+            if (effective.loginMethodPrefixes().stream().noneMatch(e.value()::startsWith)) {
                 put(changes, single(Type.ADD_LOGIN_PREFIX, system, e));
             }
         }
         for (Evidenced e : draft.scopeKeys()) {
-            if (!current.userScopeKeys().contains(e.value())) {
+            if (!effective.userScopeKeys().contains(e.value())) {
                 put(changes, single(Type.ADD_SCOPE_KEY, system, e));
             }
         }

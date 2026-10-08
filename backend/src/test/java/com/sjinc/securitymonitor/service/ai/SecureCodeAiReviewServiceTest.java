@@ -82,6 +82,15 @@ class SecureCodeAiReviewServiceTest {
         assertThat(service.isTarget(RULE, null, null)).isFalse();
     }
 
+    /** 판정 불가는 MEDIUM이라 예전엔 기본 기준(HIGH)에 안 걸려 AI도 엔진도 보지 않은 채 남았다. */
+    @Test
+    void 연계_추적이_판정_불가로_남긴_탐지는_등급과_무관하게_대상이다() {
+        assertThat(service.isTarget("kisa-os-command-exec", "MEDIUM", "UNKNOWN")).isTrue();
+        assertThat(service.isTarget("kisa-os-command-exec", "LOW", "UNKNOWN")).isTrue();
+        // 비밀값 규칙은 판정 불가여도 보내지 않는다(값이 가려져 근거가 없다).
+        assertThat(service.isTarget("kisa-hardcoded-secret-java", "MEDIUM", "UNKNOWN")).isFalse();
+    }
+
     @Test
     void 비밀값_규칙은_값이_가려져_판단할_근거가_없어_대상이_아니고_남은_판별도_숨긴다() {
         assertThat(service.isTarget("kisa-hardcoded-secret-config", "HIGH", null)).isFalse();

@@ -35,7 +35,9 @@ import java.util.stream.Stream;
  *
  * <p>판별은 화면에 참고로만 보여준다. 처리여부(오탐 등)는 사람이 정한다 — 연계 추적이 안전으로 판정해도 자동 오탐 처리를 하지 않는 것과 같은 이유.
  *
- * <p>소스 코드가 AI로 나가는 유일한 곳이다(사내 정책 예외, 2026-10-06 승인 — 2026-10-07 추가 규칙까지 범위 확대). 걸린 줄을 감싼 메서드(최대 80줄)만 보내고,
+ * <p>연계 추적이 판정 불가로 남긴 탐지는 등급과 무관하게 대상이다(2026-10-08 확대 — 엔진이 못 정한 것을 AI가 보는 취지).
+ *
+ * <p>소스 코드가 AI로 나가는 유일한 곳이다(사내 정책 예외, 2026-10-06 승인 — 2026-10-07 추가 규칙, 2026-10-08 판정 불가 전체까지 범위 확대). 걸린 줄을 감싼 메서드(최대 80줄)만 보내고,
  * 보내기 직전에 비밀값을 가린다(SecretMasker — fix-plan의 pom.xml과 같은 방식). 결과는 판별·이유뿐이라 되돌릴 원문이 없다.
  */
 @Service
@@ -64,13 +66,16 @@ public class SecureCodeAiReviewService {
     private List<String> extraRules;
 
     /**
-     * AI 판별 대상인가 — 비밀값 규칙이 아니고, 등급이 기준 안이거나 추가 규칙이고, 결정론(연계 추적)으로 정하지 못했다. 처리여부와 무관하다
+     * AI 판별 대상인가 — 비밀값 규칙이 아니고, 결정론(연계 추적)으로 정하지 못했으며, 다음 중 하나다: 등급이 기준 안, 추가 규칙,
+     * 또는 <b>연계 추적이 끝까지 따라가다 판정 불가로 남긴 것</b>(등급 무관). 판정 불가는 등급이 MEDIUM이라 예전엔 기본 기준(HIGH)에 걸리지 않아
+     * AI도 엔진도 보지 않은 채 남았다(OWASP Benchmark cmdi — exec(args, argsEnv)의 환경 변수에 요청 헤더). 처리여부와 무관하다
      * (점검 중 코드 문맥을 만들 때는 아직 처리여부를 모른다). 대기열은 여기에 OPEN 조건을 더한다.
      */
     public boolean isTarget(String ruleId, String severity, String traceSafety) {
-        return !SecureCodeSnippetBuilder.isSecretRule(ruleId)
-                && ((severity != null && severities.contains(severity)) || (ruleId != null && extraRules.contains(ruleId.trim())))
-                && (traceSafety == null || TraceSafety.UNKNOWN.name().equals(traceSafety));
+        if (SecureCodeSnippetBuilder.isSecretRule(ruleId)) return false;
+        if (TraceSafety.UNKNOWN.name().equals(traceSafety)) return true;
+        return traceSafety == null
+                && ((severity != null && severities.contains(severity)) || (ruleId != null && extraRules.contains(ruleId.trim())));
     }
 
     /**

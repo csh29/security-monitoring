@@ -18,17 +18,23 @@ import java.util.regex.Pattern;
  * <p>고친 결과를 다시 읽어 "지금 규칙에 변경을 적용한 규칙"과 같은지 확인하고, 다르면 예외를 던진다(파일은 쓰지 않는다). 사람이 손으로 쓴
  * 파일 모양이 예상과 달라(키 목록을 여러 줄로 썼다 등) 엉뚱한 곳을 고치는 일을 막는다.
  *
- * <p>frameworks(프레임워크 구조)는 서버가 쓰는 기록이라 섹션을 통째로 다시 쓰고, 항상 파일 맨 끝에 둔다.
+ * <p>로그인 정보 이름·사용자 범위 키는 공통 목록이 아니라 그 초안을 만든 시스템 항목(systems.시스템명)에 더한다 — 한 시스템에서 반영한 키가
+ * 다른 시스템에 적용되지 않게(TraceRules.forSystem). frameworks(프레임워크 구조)는 서버가 쓰는 기록이라 섹션을 통째로 다시 쓰고,
+ * 항상 파일 맨 끝에 둔다.
  */
 public final class TraceRulesFileEditor {
 
     static final String FRAMEWORKS = "frameworks";
+    static final String SYSTEMS = "systems";
     private static final String INDENT = "  ";
     private static final Pattern FLOW_LIST = Pattern.compile("^(\\s*[\\w-]+:\\s*)\\[([^\\]]*)]\\s*(#.*)?$");
     private static final String FRAMEWORKS_HEADER = """
             # 프레임워크 구조 — 점검 때 서버가 시스템별로 설정 파일(빌드 파일·web.xml·Spring XML·application.yml 등)과 소스를 읽어 기록한다
             # (FrameworkProfiler). 판정에는 쓰지 않는다. 위 규칙의 확인 대기 초안을 반영할지 판단할 때 그 시스템이 어떤 구조인지 보는 근거다.
             # 구조가 바뀌면 다음 점검이 이 섹션을 다시 쓰므로 손으로 고치지 않는다.""";
+    private static final String SYSTEMS_HEADER = """
+            # 시스템별 규칙 — 앱 관리의 시스템명 아래에 그 시스템에만 더하는 loginMethodPrefixes·loginTypeNames·userScopeKeys.
+            # 점검은 위 공통 목록에 점검하는 앱의 시스템 항목을 더해 쓴다. 코드 점검 화면 [추적 규칙 초안]에서 반영한 키·이름이 여기에 들어간다.""";
 
     private TraceRulesFileEditor() {
     }
@@ -55,9 +61,9 @@ public final class TraceRulesFileEditor {
                 }
                 case ADD_OVERWRITE_KEYS, REMOVE_OVERWRITE_KEYS -> setOverwriteKeys(lines, change, expected, stamp);
                 case SET_FIRST_PARAM -> setFirstParam(lines, change, stamp);
-                case ADD_LOGIN_TYPE -> addToList(lines, "loginTypeNames", change, stamp);
-                case ADD_LOGIN_PREFIX -> addToList(lines, "loginMethodPrefixes", change, stamp);
-                case ADD_SCOPE_KEY -> addToList(lines, "userScopeKeys", change, stamp);
+                case ADD_LOGIN_TYPE -> addToSystemList(lines, "loginTypeNames", change, stamp);
+                case ADD_LOGIN_PREFIX -> addToSystemList(lines, "loginMethodPrefixes", change, stamp);
+                case ADD_SCOPE_KEY -> addToSystemList(lines, "userScopeKeys", change, stamp);
                 case SET_FRAMEWORK -> writeFrameworks(lines, expected.frameworks());
             }
         }
@@ -86,36 +92,88 @@ public final class TraceRulesFileEditor {
         return String.join("\n", rest).strip();
     }
 
-    // ---------------------------------------------------------------- 목록(loginTypeNames 등)
+    // ---------------------------------------------------------------- 시스템별 목록(systems.시스템명.userScopeKeys 등)
 
-    private static void addToList(List<String> lines, String key, TraceRuleChange change, String stamp) {
-        String comment = "# " + stamp + ": " + key + "에 " + change.values() + " 추가 — " + firstEvidence(change);
-        int at = topKey(lines, key);
-        if (at < 0) {
+    /** systems.시스템명.key 목록에 값을 더한다. 섹션·시스템·목록이 없으면 만든다(systems는 frameworks 앞). */
+    private static void addToSystemList(List<String> lines, String key, TraceRuleChange change, String stamp) {
+        String comment = "# " + stamp + ": " + change.values() + " 추가 — " + firstEvidence(change);
+        int section = topKey(lines, SYSTEMS);
+        if (section < 0) {
             int insert = appendIndex(lines);
             List<String> block = new ArrayList<>();
             if (insert > 0 && !lines.get(insert - 1).isBlank()) block.add("");
-            block.add(comment);
-            block.add(key + ": [" + String.join(", ", change.values()) + "]");
+            block.addAll(Arrays.asList(SYSTEMS_HEADER.split("\n")));
+            block.add(SYSTEMS + ":");
             block.add("");
             lines.addAll(insert, block);
+            section = topKey(lines, SYSTEMS);
+        } else if (lines.get(section).matches("systems:\\s*\\{\\s*}\\s*(#.*)?")) {
+            lines.set(section, SYSTEMS + ":");
+        }
+        int sectionEnd = sectionEnd(lines, section);
+        int system = -1;
+        for (int i = section + 1; i < sectionEnd; i++) {
+            String line = lines.get(i);
+            if (indentOf(line).length() == INDENT.length() && !line.strip().startsWith("#")
+                    && unquote(line.strip().replaceFirst(":\\s*$", "")).equals(change.system())) {
+                system = i;
+                break;
+            }
+        }
+        if (system < 0) {
+            lines.add(sectionEnd, INDENT + quote(change.system()) + ":");
+            system = sectionEnd;
+        }
+        int systemEnd = blockEnd(lines, system, INDENT.length());
+        String keyIndent = INDENT + INDENT;
+        int at = -1;
+        for (int i = system + 1; i < systemEnd; i++) {
+            if (lines.get(i).startsWith(keyIndent + key + ":")) {
+                at = i;
+                break;
+            }
+        }
+        String itemIndent = keyIndent + INDENT;
+        if (at < 0) {
+            List<String> block = new ArrayList<>();
+            block.add(keyIndent + key + ":");
+            block.add(itemIndent + comment);
+            change.values().forEach(v -> block.add(itemIndent + "- " + v));
+            lines.addAll(systemEnd, block);
             return;
         }
         Matcher flow = FLOW_LIST.matcher(lines.get(at));
         if (flow.matches()) {
             List<String> items = new ArrayList<>(splitFlow(flow.group(2)));
-            change.values().forEach(v -> { if (!items.contains(v)) items.add(v); });
+            change.values().forEach(v -> {
+                if (!items.contains(v)) items.add(v);
+            });
             lines.set(at, flow.group(1) + "[" + String.join(", ", items) + "]" + (flow.group(3) == null ? "" : " " + flow.group(3)));
-            lines.add(at, comment);
+            lines.add(at, keyIndent + comment);
             return;
         }
-        // 여러 줄 목록(- a): 섹션 끝에 항목을 더하고 근거는 그 위 주석으로.
-        int end = sectionEnd(lines, at);
-        String indent = itemIndent(lines, at, end);
+        // 여러 줄 목록(- a): 목록 끝에 항목을 더하고 근거는 그 위 주석으로.
+        int listEnd = blockEnd(lines, at, keyIndent.length());
         List<String> block = new ArrayList<>();
-        block.add(indent + comment);
-        change.values().forEach(v -> block.add(indent + "- " + v));
-        lines.addAll(end, block);
+        block.add(itemIndent + comment);
+        change.values().forEach(v -> block.add(itemIndent + "- " + v));
+        lines.addAll(listEnd, block);
+    }
+
+    /** start 줄 아래로 들여쓰기가 indent보다 깊은 줄들의 끝(빈 줄은 건너뛴다). */
+    private static int blockEnd(List<String> lines, int start, int indent) {
+        int last = start;
+        for (int i = start + 1; i < lines.size(); i++) {
+            String line = lines.get(i);
+            if (line.isBlank()) continue;
+            if (indentOf(line).length() <= indent) break;
+            last = i;
+        }
+        return last + 1;
+    }
+
+    private static String unquote(String value) {
+        return value.replaceAll("^[\"']|[\"']$", "");
     }
 
     // ---------------------------------------------------------------- 세션 덮어쓰기
@@ -211,7 +269,7 @@ public final class TraceRulesFileEditor {
         String text = line.strip();
         if (text.startsWith("- ")) text = text.substring(2).strip();
         String value = text.substring(text.indexOf(':') + 1).replaceAll("\\s+#.*$", "").strip();
-        return value.replaceAll("^[\"']|[\"']$", "");
+        return unquote(value);
     }
 
     // ---------------------------------------------------------------- 프레임워크 구조

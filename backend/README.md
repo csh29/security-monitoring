@@ -81,7 +81,7 @@ Windows에서는 `mvnw.cmd`를 쓴다.
 | `ai.assessor.script` | 배치 스크립트 경로 (`../ai/vuln_assessor.py`) |
 | `ai.assessment.severities` | AI 판단 대상 등급 (기본 `HIGH,CRITICAL`) |
 | `ai.securecode.extra-rules` *(선택)* | 등급과 무관하게 AI 판별 대상에 넣는 규칙 id(쉼표 구분). 기본 난수·취약한 해시·솔트 없는 해시·XXE — 용도를 코드에서 읽어야 판단되는 규칙 |
-| `ai.securecode.severities` *(선택)* | 코드 점검 탐지 중 AI 판별 대상 등급 (기본 `HIGH`). 연계 추적이 판정한 건과 하드코드된 비밀값 규칙(값이 가려져 AI가 판단할 근거가 없음)은 등급과 무관하게 빠진다 |
+| `ai.securecode.severities` *(선택)* | 코드 점검 탐지 중 AI 판별 대상 등급 (기본 `HIGH`). 연계 추적이 판정한 건과 하드코드된 비밀값 규칙(값이 가려져 AI가 판단할 근거가 없음)은 등급과 무관하게 빠지고, 연계 추적이 판정 불가로 남긴 건은 등급과 무관하게 들어간다 |
 | `securecode.semgrep.command` *(선택)* | semgrep 실행 파일(기본 `semgrep`). PATH에 없으면 `ai.python.command` 파이썬의 Scripts 폴더에서 자동으로 찾는다 |
 | `securecode.rules-dir` *(선택)* | 코드 점검 규칙 폴더(기본 `../securecode/rules`, backend/에서 띄우는 기준) |
 | `securecode.timeout-seconds` *(선택)* | 코드 점검 1회 제한시간(기본 600초) |

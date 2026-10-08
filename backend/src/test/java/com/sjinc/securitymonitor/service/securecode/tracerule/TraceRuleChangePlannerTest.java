@@ -86,6 +86,27 @@ class TraceRuleChangePlannerTest {
                 .extracting(TraceRuleChange::type).containsExactly(Type.SET_FRAMEWORK);
     }
 
+    /** 다른 시스템 항목에 있는 키·이름은 이 시스템에 적용되지 않으므로 이 시스템에는 다시 묻는다. */
+    @Test
+    void 로그인_이름과_범위_키는_공통과_이_시스템_항목_기준으로_이미_있는지_본다() {
+        TraceRules current = rules(Set.of("compCd", "userId"), "HttpServletRequest")
+                .withSystem("SYS", new TraceRules.SystemRules(Set.of(), Set.of(), Set.of("compCd")))
+                .withSystem("OTHER", new TraceRules.SystemRules(Set.of(), Set.of(), Set.of("brandCd")));
+        Draft draft = draft(List.of(new Evidenced("compCd", "t.xml:2"), new Evidenced("brandCd", "t.xml:3")), List.of());
+
+        TraceRuleChangePlanner.Plan plan = TraceRuleChangePlanner.plan(current, draft, "SYS");
+
+        assertThat(plan.needsReview()).singleElement().satisfies(c -> {
+            assertThat(c.type()).isEqualTo(Type.ADD_SCOPE_KEY);
+            assertThat(c.values()).containsExactly("brandCd");
+            assertThat(c.summary()).contains("SYS에만");
+        });
+        // 같은 키라도 시스템이 다르면 다른 변경이다 — 한 시스템에서 무시해도 다른 시스템에서는 다시 묻는다.
+        TraceRuleChange other = TraceRuleChangePlanner.plan(current, draft, "THIRD").needsReview().stream()
+                .filter(c -> c.values().contains("brandCd")).findFirst().orElseThrow();
+        assertThat(other.key()).isNotEqualTo(plan.needsReview().get(0).key());
+    }
+
     @Test
     void 위치가_두_단계_이상인_장치는_변경_없이_안내만() {
         OverwriteCandidate deep = new OverwriteCandidate("AddUser", "paramData.sub", null,

@@ -1,5 +1,8 @@
 package com.sjinc.securitymonitor.service.securecode.trace;
 
+import com.sjinc.securitymonitor.dto.securecode.DollarVerdict;
+import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
+import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
@@ -8,9 +11,6 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import com.sjinc.securitymonitor.dto.securecode.DollarVerdict;
-import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
-import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules;
 
 /** iBatis 2(sqlMap)의 $값$·#값# — 매퍼 색인과 연계 추적이 MyBatis와 같은 기준으로 판정하는지. 옛 시스템(Spring 어노테이션 없음) 코드 모양으로 본다. */
 class IbatisTraceTest {

@@ -1,6 +1,8 @@
 package com.sjinc.securitymonitor.service.securecode.trace;
 
 import com.sjinc.securitymonitor.dto.securecode.DetectedFinding;
+import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
+import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
@@ -9,8 +11,6 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
-import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules;
 
 class SinkTracerTest {
 
@@ -255,6 +255,37 @@ class SinkTracerTest {
                 .trace(List.of(finding("kisa-sql-injection-java-concat", 7, "src/main/java/p/T1.java")));
 
         assertThat(v).singleElement().extracting(SinkTracer.SinkVerdict::safety).isEqualTo(TraceSafety.SERVER_SET);
+    }
+
+    /** OWASP Benchmark cmdi(BenchmarkTest00007) 모양 — 명령은 상수 배열, 환경 변수 배열에 요청 헤더. 예전엔 배열 초기화를 몰라 판정 불가였다. */
+    @Test
+    void 배열로_넘긴_명령_인자도_원소의_출처로_판정한다() {
+        String servlet = """
+                package p;
+                public class CmdServlet extends HttpServlet {
+                    public void doPost(HttpServletRequest request, HttpServletResponse response) throws IOException {
+                        String param = request.getHeader("X-Env");
+                        String[] args = {"ls"};
+                        String[] argsEnv = {param};
+                        Runtime.getRuntime().exec(args, argsEnv);
+                        String[] fixed = new String[] {"ping", "localhost"};
+                        Runtime.getRuntime().exec(fixed);
+                        String[] later = new String[2];
+                        later[0] = "echo";
+                        later[1] = request.getParameter("msg");
+                        Runtime.getRuntime().exec(later);
+                    }
+                }
+                """;
+        Map<String, String> sources = new LinkedHashMap<>();
+        sources.put("src/main/java/p/CmdServlet.java", servlet);
+        String path = "src/main/java/p/CmdServlet.java";
+
+        List<SinkTracer.SinkVerdict> verdicts = new SinkTracer(JavaSourceIndex.fromSources(sources), TraceRules.empty()).trace(List.of(
+                finding("kisa-os-command-exec", 7, path), finding("kisa-os-command-exec", 9, path), finding("kisa-os-command-exec", 13, path)));
+
+        assertThat(verdicts).extracting(SinkTracer.SinkVerdict::safety)
+                .containsExactly(TraceSafety.CLIENT, TraceSafety.SERVER_SET, TraceSafety.CLIENT);
     }
 
     private static Map<String, SinkTracer.SinkVerdict> trace(DetectedFinding... findings) {

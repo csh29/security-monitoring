@@ -1,5 +1,6 @@
 package com.sjinc.securitymonitor.service.securecode.tracerule;
 
+import com.sjinc.securitymonitor.service.securecode.trace.JavaSourceIndex;
 import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules.FrameworkFact;
 import org.junit.jupiter.api.Test;
 
@@ -8,7 +9,6 @@ import java.util.Map;
 import java.util.TreeMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import com.sjinc.securitymonitor.service.securecode.trace.JavaSourceIndex;
 
 class FrameworkProfilerTest {
 
