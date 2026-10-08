@@ -50,7 +50,8 @@ rules:
       cwe: CWE-22
 
   # 변수로 만든 경로로 파일을 내려보내는 지점. 경로가 외부 입력에서 오는지는 메서드 밖이라 모른다 — 사람이 확인할 목록.
-  # 파일 다운로드 응답(Content-Disposition)을 쓰는 메서드 안의 파일 열기만 본다(모든 new File을 잡으면 너무 많다).
+  # 파일 다운로드 응답(Content-Disposition)을 쓰는 메서드 안의 파일 열기만 본다. 다운로드가 아닌 곳은 아래 kisa-path-traversal-dynamic-path가 본다
+  # (같은 줄은 DuplicateCweMerger가 이 규칙 한 건으로 합친다 — 예전 탐지의 지문이 그대로 남는다).
   - id: kisa-path-traversal-download
     languages: [java]
     patterns:
@@ -71,6 +72,56 @@ rules:
     message: "파일 다운로드에서 변수로 만든 경로를 엽니다. 경로가 요청값에서 오지 않는지, 온다면 정규화 후 허용 폴더 안인지 검사하는지 확인하세요."
     severity: WARNING
     metadata:
+      # 연계 추적(SinkTracer)이 따라갈 값 — arguments: 걸린 호출의 인자 전부, first-argument: 첫 인자, value: 걸린 식(focus-metavariable)
+      trace: arguments
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: 경로 조작 및 자원 삽입
+      cwe: CWE-22
+
+  # 문자열 경로가 파일이 되는 지점(실행 지점) — 값의 출처를 보지 않고 경로가 변수면 잡는다. 출처는 연계 추적(SinkTracer)이 판정한다:
+  # 요청값이면 HIGH, 서버가 정한 경로면 LOW, 끝까지 못 따라가면 AI 판별. 위 taint 규칙은 한 메서드 안만 봐서 요청값을 헬퍼·서비스가 읽으면
+  # (OWASP Benchmark SeparateClassRequest.getTheParameter, 사내 컨트롤러 → 서비스) 놓친다. 명령 실행의 kisa-os-command-exec와 같은 짝이다.
+  # 이미 File·Path인 값을 여는 것(new FileInputStream(file))은 뺀다 — 경로는 그 File·Path를 만든 곳에서 잡힌다(같은 약점이 두 줄이 되지 않게).
+  - id: kisa-path-traversal-dynamic-path
+    languages: [java]
+    patterns:
+      - pattern-either:
+          - pattern: new java.io.File(...)
+          - pattern: new java.io.FileInputStream(...)
+          - pattern: new java.io.FileOutputStream(...)
+          - pattern: new java.io.FileReader(...)
+          - pattern: new java.io.FileWriter(...)
+          - pattern: new java.io.RandomAccessFile(...)
+          - pattern: java.nio.file.Paths.get(...)
+          - pattern: java.nio.file.Path.of(...)
+          - pattern: new org.springframework.core.io.FileSystemResource(...)
+      # 모든 인자가 문자열 상수
+      - pattern-not: new java.io.File("...")
+      - pattern-not: new java.io.File("...", "...")
+      - pattern-not: new java.io.FileInputStream("...")
+      - pattern-not: new java.io.FileOutputStream("...", ...)
+      - pattern-not: new java.io.FileReader("...")
+      - pattern-not: new java.io.FileWriter("...", ...)
+      - pattern-not: new java.io.RandomAccessFile("...", "...")
+      - pattern-not: java.nio.file.Paths.get("...")
+      - pattern-not: java.nio.file.Paths.get("...", "...")
+      - pattern-not: java.nio.file.Path.of("...")
+      - pattern-not: java.nio.file.Path.of("...", "...")
+      - pattern-not: new org.springframework.core.io.FileSystemResource("...")
+      # 이미 만든 File·Path를 연다(경로는 만든 곳에서 잡힌다). 상위 폴더가 File이고 이름이 상수인 new File(dir, "a.txt")도 같다.
+      - pattern-not: new java.io.File((java.io.File $D), "...")
+      - pattern-not: new java.io.FileInputStream((java.io.File $F))
+      - pattern-not: new java.io.FileOutputStream((java.io.File $F), ...)
+      - pattern-not: new java.io.FileReader((java.io.File $F), ...)
+      - pattern-not: new java.io.FileWriter((java.io.File $F), ...)
+      - pattern-not: new java.io.RandomAccessFile((java.io.File $F), ...)
+      - pattern-not: new org.springframework.core.io.FileSystemResource((java.io.File $F))
+      - pattern-not: new org.springframework.core.io.FileSystemResource((java.nio.file.Path $F))
+    message: "변수로 만든 경로로 파일을 엽니다. 경로가 외부 입력에서 오지 않는지 확인하고, 온다면 파일은 서버가 정한 키(ID)로 찾거나 정규화 후 허용 폴더 안인지 검사하세요(getCanonicalPath().startsWith(기준폴더))."
+    severity: WARNING
+    metadata:
+      # 연계 추적(SinkTracer)이 따라갈 값 — arguments: 걸린 호출의 인자 전부, first-argument: 첫 인자, value: 걸린 식(focus-metavariable)
+      trace: arguments
       kisa_category: 입력데이터 검증 및 표현
       kisa_name: 경로 조작 및 자원 삽입
       cwe: CWE-22

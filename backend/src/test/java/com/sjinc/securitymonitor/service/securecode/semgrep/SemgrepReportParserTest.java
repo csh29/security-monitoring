@@ -45,6 +45,8 @@ class SemgrepReportParserTest {
         assertThat(match.filePath()).isEqualTo("src/main/A.java");
         assertThat(match.startLine()).isEqualTo(3);
         assertThat(match.endLine()).isEqualTo(3);
+        assertThat(match.startCol()).isEqualTo(24);
+        assertThat(match.endCol()).isEqualTo(37);
         assertThat(match.severity()).isEqualTo("MEDIUM");
         assertThat(match.kisaName()).isEqualTo("적절하지 않은 난수 값 사용");
         assertThat(match.cwe()).isEqualTo("CWE-330");

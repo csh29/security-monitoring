@@ -20,7 +20,7 @@ import java.util.Set;
  *   <li>기존 OPEN인데 이번에 안 걸림 → RESOLVED. 단 두 경우는 그대로 둔다:
  *     그 파일을 Semgrep이 끝까지 못 봤을 때(못 본 것이지 고친 게 아니다),
  *     그 규칙이 이번 규칙셋에 없을 때(규칙을 지운 것이지 고친 게 아니다).</li>
- *   <li>이번에 걸렸지만 같은 줄·같은 CWE의 다른 규칙 건으로 합쳐 빠진 것(DuplicateCweMerger) → RESOLVED + 비고에 합친 이유
+ *   <li>이번에 걸렸지만 같은 줄·같은 CWE의 다른 규칙 건(DuplicateCweMerger)이나 같은 규칙의 바깥 건(NestedMatchMerger)으로 합쳐 빠진 것 → RESOLVED + 비고에 합친 이유
  *     ("조치완료"만 보이면 고친 것으로 오해한다). 사람이 정한 상태는 그대로 둔다.</li>
  * </ul>
  */
@@ -75,7 +75,7 @@ public final class SecureCodeReconciler {
             if (current.containsKey(finding.getFingerprint())) continue;
             String keptRule = mergedAway.get(finding.getFingerprint());
             if (keptRule != null) {
-                if (finding.retireRule("같은 줄·같은 CWE의 " + keptRule + " 탐지와 한 건으로 합침", now)) {
+                if (finding.retireRule("같은 위치의 " + keptRule + " 탐지와 한 건으로 합침", now)) {
                     toSave.add(finding);
                 }
                 continue;

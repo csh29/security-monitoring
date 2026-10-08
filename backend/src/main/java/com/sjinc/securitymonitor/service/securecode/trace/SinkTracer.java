@@ -1,6 +1,5 @@
 package com.sjinc.securitymonitor.service.securecode.trace;
 
-import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.body.CallableDeclaration;
 import com.github.javaparser.ast.expr.BinaryExpr;
 import com.github.javaparser.ast.expr.Expression;
@@ -15,164 +14,86 @@ import com.sjinc.securitymonitor.service.securecode.trace.ValueOriginTracer.V;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.function.Function;
 import java.util.regex.Pattern;
 import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
 import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules;
 
 /**
- * Semgrep이 "위험 호출 지점"으로만 잡은 탐지(SSRF 변수 주소·명령 실행·다운로드 경로·업로드 저장·문자열 연결 SQL)에, 그 호출에 들어가는
+ * Semgrep이 "위험 호출 지점"으로 잡은 탐지(SSRF 변수 주소·명령 실행·파일 경로·업로드 저장·문자열 연결 SQL 등)에, 그 호출에 들어가는
  * 값(주소·명령·경로·SQL)이 어디서 오는지 판정을 붙인다. 무료판 Semgrep taint는 한 메서드 안만 봐서, 컨트롤러가 받은 값을 서비스에서
  * 쓰는 사내 구조에서는 이 지점들이 출처를 모르는 WARNING으로 남았다. ValueOriginTracer로 호출자를 거슬러 컨트롤러까지 따라간다.
  *
+ * <p>어느 규칙을 추적할지·무엇을 따라갈지는 규칙 파일이 정한다(metadata.trace → TraceSink, RuleSetLoader가 읽음). 여기는 규칙을 모른다 —
+ * 탐지 범위(줄·열)에 정확히 놓인 식을 찾아 선언대로 값을 꺼낸다. 실행 지점 규칙을 늘리거나 고칠 때 자바를 고치지 않는다.
+ *
  * <p>등급은 TraceSafety.severity() — 클라이언트 값이면 HIGH로 올리고(확정), 서버 값·설정값이면 LOW, 끝까지 못 따라가면 MEDIUM.
- * 탐지 줄에서 규칙이 보는 호출을 구문 트리로 다시 찾고, 못 찾으면 판정을 붙이지 않는다(Semgrep 등급 그대로).
+ * 범위의 식을 찾지 못하면(열을 모르는 탐지, 파일을 구문 분석하지 못함) 판정을 붙이지 않는다(Semgrep 등급 그대로).
  */
 public final class SinkTracer {
 
-    /** 탐지 한 건의 판정. 같은 줄에 같은 규칙 호출이 여럿이면 가장 위험한 것. */
-    public record SinkVerdict(String ruleId, String path, int line, TraceSafety safety, List<String> evidence) {
+    /** 탐지 한 건의 판정. */
+    public record SinkVerdict(String fingerprint, String ruleId, String path, int line, TraceSafety safety, List<String> evidence) {
     }
 
-    /** 규칙 하나가 보는 호출 모양과, 그 호출에서 출처를 따라갈 인자. 못 알아보는 노드면 null. */
-    private record SinkRule(String ruleId, Function<Node, List<Expression>> arguments, boolean hostMatters) {
-    }
-
-    private static final Set<String> REST_METHODS = Set.of("getForObject", "getForEntity", "postForObject", "postForEntity",
-            "postForLocation", "exchange", "execute", "put", "delete", "patchForObject", "headForHeaders", "optionsForAllow");
-    /** 규칙(kisa-sql-injection-java-concat)의 실행 메서드 목록과 같아야 한다 — 규칙만 잡고 추적이 호출을 못 찾으면 판정이 빠진다. */
-    private static final Set<String> SQL_EXEC_METHODS = Set.of("executeQuery", "executeUpdate", "executeLargeUpdate", "execute",
-            "addBatch", "prepareStatement", "prepareCall", "createQuery", "createNativeQuery", "createSQLQuery", "query",
-            "queryForObject", "queryForList", "queryForMap", "queryForRowSet", "queryForLong", "queryForInt", "update", "batchUpdate");
     /** 고정 호스트로 시작하는 주소("https://host/…"). 그 뒤에 요청값이 붙어도 호출 대상은 바뀌지 않는다(규칙의 sanitizer와 같은 기준). */
     private static final Pattern FIXED_HOST = Pattern.compile("^https?://[^/\\s]+/.*");
 
-    private static final List<SinkRule> RULES = List.of(
-            new SinkRule("kisa-ssrf-dynamic-url", node -> {
-                if (node instanceof ObjectCreationExpr c && c.getType().getNameAsString().equals("URL") && c.getArguments().size() == 1) {
-                    return List.of(c.getArgument(0));
-                }
-                if (node instanceof MethodCallExpr m && REST_METHODS.contains(m.getNameAsString()) && !m.getArguments().isEmpty()) {
-                    return List.of(m.getArgument(0));
-                }
-                return null;
-            }, true),
-            new SinkRule("kisa-os-command-exec", SinkTracer::commandArguments, false),
-            // 같은 실행 호출을 Semgrep taint로 보는 규칙. taint는 조건을 계산하지 못해(if ((7 * 42) - num > 200) 같은 상수 조건) 실행되지 않는
-            // 요청값 갈래로도 HIGH가 되고, 추적이 없으면 그대로 AI 판별 대기로 갔다 — 같은 줄의 exec 규칙과 같은 기준으로 판정한다.
-            new SinkRule("kisa-os-command-injection-request", SinkTracer::commandArguments, false),
-            new SinkRule("kisa-path-traversal-download", SinkTracer::pathArguments, false),
-            new SinkRule("kisa-file-upload-save", node -> {
-                if (node instanceof MethodCallExpr m) {
-                    String name = m.getNameAsString();
-                    if ((name.equals("transferTo") || name.equals("write")) && m.getArguments().size() == 1) return List.of(m.getArgument(0));
-                    if (name.equals("copy") && m.getArguments().size() >= 2) return List.of(m.getArgument(1));
-                }
-                return null;
-            }, false),
-            new SinkRule("kisa-sql-injection-java-concat", node -> {
-                if (node instanceof MethodCallExpr m && SQL_EXEC_METHODS.contains(m.getNameAsString()) && !m.getArguments().isEmpty()) {
-                    return List.of(m.getArgument(0));
-                }
-                return null;
-            }, false));
-
-    private static final Map<String, SinkRule> RULES_BY_ID = new HashMap<>();
-
-    static {
-        RULES.forEach(r -> RULES_BY_ID.put(r.ruleId(), r));
-    }
-
     private final JavaSourceIndex java;
     private final ValueOriginTracer origin;
+    private final Map<String, TraceSink> sinks;
 
-    public SinkTracer(JavaSourceIndex java, TraceRules rules) {
+    /** @param sinks 연계 추적을 받는 규칙 id → 따라갈 값(RuleSetLoader.RuleSet.sinks) */
+    public SinkTracer(JavaSourceIndex java, TraceRules rules, Map<String, TraceSink> sinks) {
         this.java = java;
         this.origin = new ValueOriginTracer(java, rules);
+        this.sinks = sinks;
     }
 
-    /** 이 규칙의 탐지를 추적할 수 있는가. */
-    public static boolean supports(String ruleId) {
-        return RULES_BY_ID.containsKey(ruleId);
-    }
-
-    /** 탐지들 중 추적할 수 있는 것마다 판정. 호출을 찾지 못한 탐지는 결과에 없다. */
+    /** 탐지들 중 추적할 수 있는 것마다 판정. 범위의 식을 찾지 못한 탐지는 결과에 없다. */
     public List<SinkVerdict> trace(List<DetectedFinding> detected) {
-        Map<String, SinkVerdict> byKey = new LinkedHashMap<>();
+        List<SinkVerdict> verdicts = new ArrayList<>();
         for (DetectedFinding f : detected) {
-            SinkRule rule = RULES_BY_ID.get(f.ruleId());
-            String key = f.ruleId() + "|" + f.filePath() + "|" + f.startLine();
-            if (rule == null || byKey.containsKey(key)) continue;
+            TraceSink sink = sinks.get(f.ruleId());
+            if (sink == null) continue;
+            Expression at = java.expressionAt(f.filePath(), f.startLine(), f.startCol(), f.endLine(), f.endCol()).orElse(null);
+            List<Expression> values = at == null ? List.of() : valuesOf(at, sink.target());
+            CallableDeclaration<?> method = at == null ? null : at.findAncestor(CallableDeclaration.class).orElse(null);
+            if (values.isEmpty() || method == null) continue;
             V worst = null;
-            Node sinkNode = null;
-            for (Node node : java.nodesAt(f.filePath(), f.startLine())) {
-                List<Expression> args = rule.arguments().apply(node);
-                if (args == null || args.isEmpty()) continue;
-                CallableDeclaration<?> method = node.findAncestor(CallableDeclaration.class).orElse(null);
-                if (method == null) continue;
-                for (Expression arg : args) {
-                    origin.resetBudget();
-                    V v = rule.hostMatters() && fixedHost(arg) != null
-                            ? V.of(TraceSafety.SERVER_SET, java.location(arg) + " 호스트 고정: " + fixedHost(arg))
-                            : origin.valueOf(arg, Frame.root(method), 0);
-                    if (worst == null || v.safety().worseThan(worst.safety())) {
-                        worst = v;
-                        sinkNode = node;
-                    }
-                }
+            for (Expression value : values) {
+                origin.resetBudget();
+                V v = sink.fixedHost() && fixedHost(value) != null
+                        ? V.of(TraceSafety.SERVER_SET, java.location(value) + " 호스트 고정: " + fixedHost(value))
+                        : origin.valueOf(value, Frame.root(method), 0);
+                if (worst == null || v.safety().worseThan(worst.safety())) worst = v;
             }
-            if (worst != null) {
-                byKey.put(key, new SinkVerdict(f.ruleId(), f.filePath(), f.startLine(), worst.safety(),
-                        worst.append(java.location(sinkNode) + " " + ValueOriginTracer.abbreviate(sinkNode.toString())).evidence()));
-            }
+            verdicts.add(new SinkVerdict(f.fingerprint(), f.ruleId(), f.filePath(), f.startLine(), worst.safety(),
+                    worst.append(java.location(at) + " " + ValueOriginTracer.abbreviate(at.toString())).evidence()));
         }
-        return new ArrayList<>(byKey.values());
+        return verdicts;
+    }
+
+    /** 걸린 식에서 따라갈 값 — 호출·생성이 아니면 인자를 꺼낼 수 없어 빈 목록(ARGUMENTS·FIRST_ARGUMENT). */
+    private static List<Expression> valuesOf(Expression at, TraceSink.Target target) {
+        if (target == TraceSink.Target.VALUE) return List.of(at);
+        List<Expression> arguments = at instanceof MethodCallExpr m ? m.getArguments()
+                : at instanceof ObjectCreationExpr c ? c.getArguments() : List.of();
+        if (arguments.isEmpty()) return List.of();
+        return target == TraceSink.Target.FIRST_ARGUMENT ? List.of(arguments.get(0)) : List.copyOf(arguments);
     }
 
     /** 판정을 탐지에 붙이고 등급을 다시 매긴다. 지문은 그대로다(재점검 비교·처리여부 유지). */
     public static List<DetectedFinding> apply(List<DetectedFinding> detected, List<SinkVerdict> verdicts) {
-        Map<String, SinkVerdict> byKey = new HashMap<>();
-        verdicts.forEach(v -> byKey.put(v.ruleId() + "|" + v.path() + "|" + v.line(), v));
+        Map<String, SinkVerdict> byFingerprint = new HashMap<>();
+        verdicts.forEach(v -> byFingerprint.put(v.fingerprint(), v));
         List<DetectedFinding> result = new ArrayList<>(detected.size());
         for (DetectedFinding f : detected) {
-            SinkVerdict v = byKey.get(f.ruleId() + "|" + f.filePath() + "|" + f.startLine());
+            SinkVerdict v = byFingerprint.get(f.fingerprint());
             result.add(v == null ? f : f.withTrace(v.safety().severity(), v.safety().name(), String.join("\n", v.evidence())));
         }
         return result;
-    }
-
-    /** 명령 실행 호출(Runtime.exec, ProcessBuilder.command, new ProcessBuilder)의 명령 인자. */
-    private static List<Expression> commandArguments(Node node) {
-        if (node instanceof MethodCallExpr m && (m.getNameAsString().equals("exec") || m.getNameAsString().equals("command"))) {
-            return List.copyOf(m.getArguments());
-        }
-        if (node instanceof ObjectCreationExpr c && c.getType().getNameAsString().equals("ProcessBuilder")) {
-            return List.copyOf(c.getArguments());
-        }
-        return null;
-    }
-
-    private static List<Expression> pathArguments(Node node) {
-        if (node instanceof ObjectCreationExpr c && Set.of("File", "FileInputStream").contains(c.getType().getNameAsString())
-                && !c.getArguments().isEmpty()) {
-            return List.copyOf(c.getArguments());
-        }
-        if (node instanceof MethodCallExpr m && !m.getArguments().isEmpty()
-                && ((m.getNameAsString().equals("get") && m.getScope().map(s -> isClass(s, "Paths")).orElse(false))
-                || (m.getNameAsString().equals("newInputStream") && m.getScope().map(s -> isClass(s, "Files")).orElse(false)))) {
-            return m.getNameAsString().equals("get") ? List.copyOf(m.getArguments()) : List.of(m.getArgument(0));
-        }
-        return null;
-    }
-
-    /** 받는 쪽이 그 클래스인가 — 짧은 이름(Paths)과 패키지까지 쓴 이름(java.nio.file.Paths) 모두. 규칙도 두 모양을 다 잡는다. */
-    private static boolean isClass(Expression scope, String simpleName) {
-        String text = scope.toString();
-        return text.equals(simpleName) || text.endsWith("." + simpleName);
     }
 
     /**

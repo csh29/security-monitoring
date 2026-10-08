@@ -5,6 +5,7 @@ import com.sjinc.securitymonitor.service.securecode.trace.DollarTraceMerger;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -21,7 +22,7 @@ class DuplicateCweMergerTest {
         DetectedFinding exec = f("e", "kisa-os-command-exec", "CWE-78", 82, "LOW", "SERVER_SET");
         DetectedFinding other = f("o", "kisa-insecure-random", "CWE-330", 82, "MEDIUM", null);
 
-        DuplicateCweMerger.Merged merged = DuplicateCweMerger.merge(List.of(taint, exec, other));
+        DuplicateCweMerger.Merged merged = DuplicateCweMerger.merge(List.of(taint, exec, other), Set.of("kisa-os-command-exec", "kisa-os-command-injection-request"));
 
         assertThat(merged.findings()).extracting(DetectedFinding::fingerprint).containsExactly("e", "o");
         assertThat(merged.findings().get(0).severity()).isEqualTo("LOW");   // 추적 판정이 있으면 그 등급
@@ -34,7 +35,7 @@ class DuplicateCweMergerTest {
         DetectedFinding a = f("a", "kisa-xss-a", "CWE-79", 5, "MEDIUM", null);
         DetectedFinding b = f("b", "kisa-xss-b", "CWE-79", 5, "HIGH", null);
 
-        DuplicateCweMerger.Merged merged = DuplicateCweMerger.merge(List.of(b, a));
+        DuplicateCweMerger.Merged merged = DuplicateCweMerger.merge(List.of(b, a), Set.of());
 
         assertThat(merged.findings()).singleElement().satisfies(x -> {
             assertThat(x.ruleId()).isEqualTo("kisa-xss-a");                 // 추적 규칙이 없으면 규칙 id 순 — 점검마다 같다
@@ -52,7 +53,7 @@ class DuplicateCweMergerTest {
                 f("n1", "r1", null, 6, "LOW", null),
                 f("n2", "r2", null, 6, "LOW", null));
 
-        DuplicateCweMerger.Merged merged = DuplicateCweMerger.merge(detected);
+        DuplicateCweMerger.Merged merged = DuplicateCweMerger.merge(detected, Set.of("kisa-os-command-exec"));
 
         assertThat(merged.findings()).isEqualTo(detected);
         assertThat(merged.mergedAway()).isEmpty();

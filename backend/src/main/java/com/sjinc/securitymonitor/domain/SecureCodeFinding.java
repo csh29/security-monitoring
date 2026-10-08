@@ -147,8 +147,20 @@ public class SecureCodeFinding {
     @Column(name = "ai_confidence", length = 10)
     private String aiConfidence;
 
+    /** 결론 한 문장(2026-10-08부터 — 그 전 판별은 없고 aiReasoning만 있다). */
+    @Column(name = "ai_summary", length = 300)
+    private String aiSummary;
+
     @Column(name = "ai_reasoning", length = 2000)
     private String aiReasoning;
+
+    /** 예상 공격(어떤 요청으로 무엇이 되는가). 취약하지 않으면 null. */
+    @Column(name = "ai_attack", length = 1000)
+    private String aiAttack;
+
+    /** 조치 방법(어느 줄을 어떻게). 취약하지 않으면 null. */
+    @Column(name = "ai_fix", length = 1000)
+    private String aiFix;
 
     @Column(name = "ai_input_hash", length = 64)
     private String aiInputHash;
@@ -248,12 +260,21 @@ public class SecureCodeFinding {
     }
 
     /** AI 판별 결과를 저장한다. 값 검증은 SecureCodeAiReviewService가 한다. */
-    public void applyAiReview(String verdict, String confidence, String reasoning, String inputHash, LocalDateTime now) {
+    public void applyAiReview(String verdict, String confidence, String summary, String reasoning, String attack, String fix,
+                              String inputHash, LocalDateTime now) {
         aiVerdict = verdict;
         aiConfidence = confidence;
+        aiSummary = summary;
         aiReasoning = reasoning;
+        aiAttack = attack;
+        aiFix = fix;
         aiInputHash = inputHash;
         aiReviewedAt = now;
+    }
+
+    /** 요약·공격·조치 없이(테스트). */
+    public void applyAiReview(String verdict, String confidence, String reasoning, String inputHash, LocalDateTime now) {
+        applyAiReview(verdict, confidence, null, reasoning, null, null, inputHash, now);
     }
 
     private void applyDetected(DetectedFinding detected, LocalDateTime now) {

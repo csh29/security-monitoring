@@ -44,7 +44,9 @@ public class SemgrepReportParser {
                     normalizePath(result.path("path").asText()),
                     result.path("start").path("line").asInt(),
                     result.path("end").path("line").asInt(),
-                    textOrNull(extra, "message")));
+                    textOrNull(extra, "message"),
+                    result.path("start").path("col").asInt(),
+                    result.path("end").path("col").asInt()));
         }
 
         // 해석 실패·시간 초과는 파일 단위로 errors에 온다. 경로가 없는 오류(규칙 문제 등)는 파일로 셀 수 없어 로그만 남긴다.

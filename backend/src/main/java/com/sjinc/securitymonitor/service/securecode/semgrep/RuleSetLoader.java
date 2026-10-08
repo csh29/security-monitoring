@@ -14,19 +14,23 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.stream.Stream;
 import com.sjinc.securitymonitor.exception.SecureCodeScanException;
+import com.sjinc.securitymonitor.service.securecode.trace.TraceSink;
 
 /**
  * 규칙 폴더(securecode/rules)의 규칙 id 목록과 규칙셋 버전을 읽는다. Semgrep 결과 JSON에는 "어떤 규칙을 돌렸는지"가 없어서
  * 직접 읽는다.
  *
  * <p>규칙 id 목록은 재점검 비교에 쓴다 — 규칙 파일에서 지운 규칙의 기존 탐지가 "이번에 안 걸림 = 조치완료"로 집계되면 안 된다.
+ * 실행 지점 규칙이 연계 추적에 맡기는 값(metadata.trace — TraceSink)도 여기서 모은다.
  */
 public class RuleSetLoader {
 
-    public record RuleSet(Set<String> ruleIds, String version) {
+    /** @param sinks 연계 추적을 받는 규칙 id → 따라갈 값(metadata.trace가 있는 규칙만) */
+    public record RuleSet(Set<String> ruleIds, String version, Map<String, TraceSink> sinks) {
     }
 
     public RuleSet load(Path rulesDir) throws IOException {
@@ -49,12 +53,19 @@ public class RuleSetLoader {
         }
 
         Set<String> ruleIds = new TreeSet<>();
+        Map<String, TraceSink> sinks = new TreeMap<>();
         MessageDigest digest = sha256();
         Yaml yaml = new Yaml(new SafeConstructor(new LoaderOptions()));
         for (Path file : files) {
             byte[] bytes = Files.readAllBytes(file);
             digest.update(bytes);
-            ruleIds.addAll(ruleIds(yaml.load(new String(bytes, StandardCharsets.UTF_8))));
+            Object document = yaml.load(new String(bytes, StandardCharsets.UTF_8));
+            ruleIds.addAll(ruleIds(document));
+            try {
+                sinks.putAll(sinks(document));
+            } catch (IllegalArgumentException e) {
+                throw new SecureCodeScanException(e.getMessage() + " — 규칙 파일 " + file.getFileName(), e);
+            }
         }
         for (String extra : extraContents) {
             if (!extra.isEmpty()) digest.update(extra.getBytes(StandardCharsets.UTF_8));
@@ -63,7 +74,21 @@ public class RuleSetLoader {
         if (ruleIds.isEmpty()) {
             throw new SecureCodeScanException("규칙 폴더에 규칙이 없습니다. 서버 설정 securecode.rules-dir을 확인하세요.", null);
         }
-        return new RuleSet(ruleIds, HexFormat.of().formatHex(digest.digest()).substring(0, 12));
+        return new RuleSet(ruleIds, HexFormat.of().formatHex(digest.digest()).substring(0, 12), sinks);
+    }
+
+    static Map<String, TraceSink> sinks(Object document) {
+        Map<String, TraceSink> sinks = new TreeMap<>();
+        if (document instanceof Map<?, ?> map && map.get("rules") instanceof List<?> rules) {
+            for (Object rule : rules) {
+                if (rule instanceof Map<?, ?> ruleMap && ruleMap.get("id") != null) {
+                    String id = String.valueOf(ruleMap.get("id"));
+                    TraceSink sink = TraceSink.fromMetadata(id, ruleMap.get("metadata"));
+                    if (sink != null) sinks.put(id, sink);
+                }
+            }
+        }
+        return sinks;
     }
 
     static Set<String> ruleIds(Object document) {

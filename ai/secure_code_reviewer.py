@@ -1,6 +1,6 @@
 """시큐어코딩 점검 AI 단계 — 코드 점검(Semgrep 행안부 규칙) 탐지가 진짜 취약한지 판별한다.
 
-결정론(연계 추적)으로 못 정한 높은 등급 탐지만(비밀값 규칙 제외 — 대상은 자바 SecureCodeAiReviewService가 정한다), 걸린 줄을 감싼
+HIGH·MEDIUM 탐지(연계 추적이 요청값으로 확정한 것도 — 그 뒤의 검증을 본다. 안전 확정·비밀값 규칙 제외, 대상은 자바 SecureCodeAiReviewService가 정한다), 걸린 줄을 감싼
 메서드를 보고 VULNERABLE/NOT_VULNERABLE/UNCERTAIN을 판별해 저장한다. 라이브러리 취약점 단계(cve_assessor.py)와 무관하다.
 판별은 화면 참고용이고 처리여부는 사람이 정한다. 코드는 자바가 비밀값을 가린 뒤 넘겨준다.
 
@@ -27,9 +27,13 @@ SECURE_CODE_REVIEW_SCHEMA = {
         # 값은 자바 SecureCodeAiReviewService.VERDICTS와 같아야 한다.
         "verdict": {"type": "string", "enum": ["VULNERABLE", "NOT_VULNERABLE", "UNCERTAIN"]},
         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+        # 사람이 읽기 쉽게 나눠 받는다(2026-10-08) — 한 문단 이유는 길고 무엇을 해야 하는지가 묻혔다.
+        "summary": {"type": "string"},
         "reasoning": {"type": "string"},
+        "attack": {"type": "string"},
+        "fix": {"type": "string"},
     },
-    "required": ["verdict", "confidence", "reasoning"],
+    "required": ["verdict", "confidence", "summary", "reasoning", "attack", "fix"],
     "additionalProperties": False,
 }
 
@@ -92,7 +96,10 @@ class SecureCodeReviewTarget:
 class SecureCodeReview:
     verdict: str  # "VULNERABLE" | "NOT_VULNERABLE" | "UNCERTAIN"
     confidence: str  # "high" | "medium" | "low"
-    reasoning: str
+    summary: str  # 결론 한 문장
+    reasoning: str  # 근거 — 줄 번호를 단 글머리
+    attack: str  # 예상 공격. 취약하지 않으면 ""
+    fix: str  # 조치 방법. 취약하지 않으면 ""
 
 
 class SecureCodeBackendClient(BackendClient):
@@ -105,7 +112,10 @@ class SecureCodeBackendClient(BackendClient):
         self._post(f"/api/ai/secure-code/{target.id}/review", {
             "verdict": review.verdict,
             "confidence": review.confidence,
+            "summary": review.summary,
             "reasoning": review.reasoning,
+            "attack": review.attack,
+            "fix": review.fix,
             "inputHash": target.input_hash,
         })
 
@@ -137,7 +147,10 @@ class SecureCodeReviewerClient:
         return SecureCodeReview(
             verdict=data["verdict"],
             confidence=data["confidence"],
+            summary=data.get("summary", "").strip(),
             reasoning=data.get("reasoning", "").strip(),
+            attack=data.get("attack", "").strip(),
+            fix=data.get("fix", "").strip(),
         )
 
     @staticmethod

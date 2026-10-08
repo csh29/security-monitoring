@@ -12,7 +12,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import com.sjinc.securitymonitor.service.securecode.trace.DollarTraceMerger;
-import com.sjinc.securitymonitor.service.securecode.trace.SinkTracer;
 import com.sjinc.securitymonitor.service.securecode.trace.UserScopeFindings;
 
 /**
@@ -38,17 +37,17 @@ public final class DuplicateCweMerger {
     public record Merged(List<DetectedFinding> findings, Map<String, String> mergedAway) {
     }
 
-    /** 연계 추적을 받는 규칙인가(위험 호출 지점·MyBatis/iBatis 매퍼·사용자 범위). */
-    static boolean traceable(String ruleId) {
-        return SinkTracer.supports(ruleId) || DollarTraceMerger.RULE_ID.equals(ruleId)
+    /** 연계 추적을 받는 규칙인가(위험 호출 지점 — 규칙 파일의 metadata.trace, MyBatis/iBatis 매퍼·사용자 범위). */
+    static boolean traceable(String ruleId, Set<String> sinkRuleIds) {
+        return sinkRuleIds.contains(ruleId) || DollarTraceMerger.RULE_ID.equals(ruleId)
                 || DollarTraceMerger.IBATIS_RULE_ID.equals(ruleId) || UserScopeFindings.RULE_ID.equals(ruleId);
     }
 
-    private static final Comparator<String> RULE_PRIORITY = Comparator
-            .comparing((String ruleId) -> !traceable(ruleId))
-            .thenComparing(Comparator.naturalOrder());
-
-    public static Merged merge(List<DetectedFinding> detected) {
+    /** @param sinkRuleIds 위험 호출 지점 연계 추적을 받는 규칙 id(RuleSetLoader.RuleSet.sinks의 키) */
+    public static Merged merge(List<DetectedFinding> detected, Set<String> sinkRuleIds) {
+        Comparator<String> rulePriority = Comparator
+                .comparing((String ruleId) -> !traceable(ruleId, sinkRuleIds))
+                .thenComparing(Comparator.naturalOrder());
         Map<String, List<DetectedFinding>> groups = new LinkedHashMap<>();
         for (DetectedFinding f : detected) {
             if (f.cwe() == null || f.cwe().isBlank()) continue;
@@ -58,7 +57,7 @@ public final class DuplicateCweMerger {
         Map<DetectedFinding, DetectedFinding> replace = new HashMap<>();
         Map<String, String> mergedAway = new LinkedHashMap<>();
         for (List<DetectedFinding> group : groups.values()) {
-            Set<String> rules = new TreeSet<>(RULE_PRIORITY);
+            Set<String> rules = new TreeSet<>(rulePriority);
             group.forEach(f -> rules.add(f.ruleId()));
             if (rules.size() < 2) continue;
             String kept = rules.iterator().next();

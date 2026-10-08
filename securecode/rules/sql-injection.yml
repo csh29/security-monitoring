@@ -90,6 +90,8 @@ rules:
     message: "문자열 연결로 만든 SQL을 실행합니다. PreparedStatement 파라미터(?)·이름 있는 파라미터로 바인딩하세요."
     severity: ERROR
     metadata:
+      # 연계 추적(SinkTracer)이 따라갈 값 — arguments: 걸린 호출의 인자 전부, first-argument: 첫 인자, value: 걸린 식(focus-metavariable)
+      trace: first-argument
       kisa_category: 입력데이터 검증 및 표현
       kisa_name: SQL 삽입
       cwe: CWE-89

@@ -33,7 +33,7 @@ class SecureCodeAiReviewServiceTest {
         findingRepository = mock(SecureCodeFindingRepository.class);
         appRepository = mock(AppRepository.class);
         service = new SecureCodeAiReviewService(findingRepository, appRepository);
-        ReflectionTestUtils.setField(service, "severities", List.of("HIGH"));
+        ReflectionTestUtils.setField(service, "severities", List.of("HIGH", "MEDIUM"));
         ReflectionTestUtils.setField(service, "extraRules", List.of("kisa-insecure-random", "kisa-xxe-parser"));
         when(appRepository.findAll()).thenReturn(List.of(App.builder().id(1L).systemName("CRM").build()));
     }
@@ -55,8 +55,8 @@ class SecureCodeAiReviewServiceTest {
         // 난수·XXE는 MEDIUM이지만 "무엇에 쓰는가"를 코드에서 읽어야 판단되는 규칙이라 넣는다
         assertThat(service.isTarget("kisa-insecure-random", "MEDIUM", null)).isTrue();
         assertThat(service.isTarget("kisa-xxe-parser", "MEDIUM", null)).isTrue();
-        // 추가 규칙이 아닌 MEDIUM은 그대로 대상 아님
-        assertThat(service.isTarget("kisa-empty-catch", "MEDIUM", null)).isFalse();
+        // 추가 규칙이 아닌 LOW는 대상 아님
+        assertThat(service.isTarget("kisa-empty-catch", "LOW", null)).isFalse();
     }
 
     @Test
@@ -72,13 +72,21 @@ class SecureCodeAiReviewServiceTest {
     }
 
     @Test
-    void 결정론으로_못_정한_높은_등급만_대상이다() {
+    void HIGH_MEDIUM은_추적이_확정했어도_대상이고_안전_확정만_뺀다() {
         assertThat(service.isTarget(RULE, "HIGH", null)).isTrue();
+        assertThat(service.isTarget(RULE, "MEDIUM", null)).isTrue();
         assertThat(service.isTarget(RULE, "HIGH", "UNKNOWN")).isTrue();
-        // 연계 추적이 정한 건은 보내지 않는다(클라이언트 값 HIGH도, 서버 세팅 LOW도).
-        assertThat(service.isTarget(RULE, "HIGH", "CLIENT")).isFalse();
+        // 출처는 요청값으로 확정이어도 그 뒤의 검증(허용 목록·정규화 후 기준 폴더 검사)은 엔진이 보지 않는다 — AI가 본다.
+        assertThat(service.isTarget(RULE, "HIGH", "CLIENT")).isTrue();
+        assertThat(service.isTarget(RULE, "HIGH", "BYPASSABLE")).isTrue();
+        // 안전 확정은 다시 묻지 않는다 — 기준 등급을 LOW까지 넓혀도 마찬가지.
         assertThat(service.isTarget(RULE, "LOW", "SERVER_SET")).isFalse();
-        assertThat(service.isTarget(RULE, "MEDIUM", null)).isFalse();
+        assertThat(service.isTarget(RULE, "LOW", "SESSION_OVERWRITE")).isFalse();
+        assertThat(service.isTarget(RULE, "LOW", "XML_FIXED")).isFalse();
+        ReflectionTestUtils.setField(service, "severities", List.of("HIGH", "MEDIUM", "LOW"));
+        assertThat(service.isTarget(RULE, "LOW", "SERVER_SET")).isFalse();
+        ReflectionTestUtils.setField(service, "severities", List.of("HIGH", "MEDIUM"));
+        assertThat(service.isTarget(RULE, "LOW", null)).isFalse();
         assertThat(service.isTarget(RULE, null, null)).isFalse();
     }
 
@@ -109,15 +117,18 @@ class SecureCodeAiReviewServiceTest {
     void 대기열은_OPEN_대상_중_지워진_앱과_판별을_마친_건을_뺀다() {
         SecureCodeFinding target = finding(1L, detected("a", "HIGH", null, "ctx-a"));
         SecureCodeFinding traced = finding(1L, detected("b", "HIGH", "CLIENT", "ctx-b"));
-        SecureCodeFinding medium = finding(1L, detected("c", "MEDIUM", null, null));
+        SecureCodeFinding serverSet = finding(1L, detected("f", "LOW", "SERVER_SET", "ctx-f"));
+        SecureCodeFinding noContext = finding(1L, detected("c", "MEDIUM", null, null));
         SecureCodeFinding deletedApp = finding(9L, detected("d", "HIGH", null, "ctx-d"));
         SecureCodeFinding reviewed = finding(1L, detected("e", "HIGH", null, "ctx-e"));
         reviewed.applyAiReview("NOT_VULNERABLE", "high", "이유", SecureCodeAiReviewService.toTarget(reviewed).inputHash(), NOW);
-        when(findingRepository.findByStatus("OPEN")).thenReturn(List.of(target, traced, medium, deletedApp, reviewed));
+        when(findingRepository.findByStatus("OPEN")).thenReturn(List.of(target, traced, serverSet, noContext, deletedApp, reviewed));
 
         List<SecureCodeReviewTarget> pending = service.getPendingTargets();
 
-        assertThat(pending).extracting(SecureCodeReviewTarget::code).containsExactly("ctx-a");
+        // 클라이언트 값 확정(HIGH)은 그 뒤의 검증을 보러 들어가고, 안전 확정(LOW)은 빠진다.
+        assertThat(pending).extracting(SecureCodeReviewTarget::code).containsExactly("ctx-a", "ctx-b");
+        assertThat(pending.get(1).traceLabel()).isEqualTo("클라이언트 값");
         assertThat(pending.get(0).codeStartLine()).isEqualTo(3);
     }
 
@@ -175,36 +186,66 @@ class SecureCodeAiReviewServiceTest {
         assertThat(SecureCodeAiReviewService.toTarget(without).relatedCode()).isEmpty();
     }
 
+    private static SecureCodeReviewRequest req(String verdict, String confidence, String reasoning, String hash) {
+        return new SecureCodeReviewRequest(verdict, confidence, "요약", reasoning, "pgmID=../../x 로 상위 폴더에 쓴다", "pgmID를 영숫자로 검증", hash);
+    }
+
     @Test
     void 판별_값을_검증하고_저장한다() {
         SecureCodeFinding f = finding(1L, detected("a", "HIGH", null, "ctx"));
         when(findingRepository.findById(7L)).thenReturn(Optional.of(f));
 
-        service.saveReview(7L, new SecureCodeReviewRequest("NOT_VULNERABLE", "high", "  상수만 들어간다  ", "hash"));
+        service.saveReview(7L, new SecureCodeReviewRequest("NOT_VULNERABLE", "high", " 상수 경로라 안전 ", "  - 12줄: 상수만 들어간다  ",
+                "", " ", "hash"));
 
         assertThat(f.getAiVerdict()).isEqualTo("NOT_VULNERABLE");
-        assertThat(f.getAiReasoning()).isEqualTo("상수만 들어간다");
+        assertThat(f.getAiSummary()).isEqualTo("상수 경로라 안전");
+        assertThat(f.getAiReasoning()).isEqualTo("- 12줄: 상수만 들어간다");
+        // 취약하지 않으면 공격·조치는 빈 값으로 오고 null로 저장한다.
+        assertThat(f.getAiAttack()).isNull();
+        assertThat(f.getAiFix()).isNull();
         assertThat(f.getAiInputHash()).isEqualTo("hash");
         // 처리여부는 사람이 정한다 — AI가 오탐이라 해도 OPEN 그대로.
         assertThat(f.getStatus()).isEqualTo("OPEN");
     }
 
     @Test
+    void 취약_판별은_예상_공격과_조치_방법까지_저장하고_없으면_거절한다() {
+        SecureCodeFinding f = finding(1L, detected("a", "HIGH", "CLIENT", "ctx"));
+        when(findingRepository.findById(7L)).thenReturn(Optional.of(f));
+
+        service.saveReview(7L, req("VULNERABLE", "high", "- 51줄: 요청값", "hash"));
+
+        assertThat(f.getAiAttack()).isEqualTo("pgmID=../../x 로 상위 폴더에 쓴다");
+        assertThat(f.getAiFix()).isEqualTo("pgmID를 영숫자로 검증");
+        assertThatThrownBy(() -> service.saveReview(7L, new SecureCodeReviewRequest("VULNERABLE", "high", "요약", "이유", "", "고친다", "h")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.saveReview(7L, new SecureCodeReviewRequest("VULNERABLE", "high", " ", "이유", "공격", "고친다", "h")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.saveReview(7L, new SecureCodeReviewRequest("VULNERABLE", "high",
+                "가".repeat(SecureCodeAiReviewService.MAX_SUMMARY_LENGTH + 1), "이유", "공격", "고친다", "h")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.saveReview(7L, new SecureCodeReviewRequest("VULNERABLE", "high", "요약", "이유",
+                "가".repeat(SecureCodeAiReviewService.MAX_DETAIL_LENGTH + 1), "고친다", "h")))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void 잘못된_판별_요청은_거절한다() {
         when(findingRepository.findById(7L)).thenReturn(Optional.of(finding(1L, detected("a", "HIGH", null, "ctx"))));
 
-        assertThatThrownBy(() -> service.saveReview(7L, new SecureCodeReviewRequest("SAFE", "high", "이유", "h")))
+        assertThatThrownBy(() -> service.saveReview(7L, req("SAFE", "high", "이유", "h")))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.saveReview(7L, new SecureCodeReviewRequest("VULNERABLE", "certain", "이유", "h")))
+        assertThatThrownBy(() -> service.saveReview(7L, req("VULNERABLE", "certain", "이유", "h")))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.saveReview(7L, new SecureCodeReviewRequest("VULNERABLE", "high", " ", "h")))
+        assertThatThrownBy(() -> service.saveReview(7L, req("VULNERABLE", "high", " ", "h")))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.saveReview(7L, new SecureCodeReviewRequest("VULNERABLE", "high",
+        assertThatThrownBy(() -> service.saveReview(7L, req("VULNERABLE", "high",
                 "가".repeat(SecureCodeAiReviewService.MAX_REASONING_LENGTH + 1), "h")))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.saveReview(7L, new SecureCodeReviewRequest("VULNERABLE", "high", "이유", null)))
+        assertThatThrownBy(() -> service.saveReview(7L, req("VULNERABLE", "high", "이유", null)))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.saveReview(8L, new SecureCodeReviewRequest("VULNERABLE", "high", "이유", "h")))
+        assertThatThrownBy(() -> service.saveReview(8L, req("VULNERABLE", "high", "이유", "h")))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

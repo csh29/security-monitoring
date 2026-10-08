@@ -37,13 +37,18 @@
         /* 연계 추적 근거 — 값이 지나온 길을 위에서 아래로. 한 걸음이 길어 줄을 꺾는다. */
         .trace-steps{ margin:6px 0 0; padding-left:20px; font-size:12px; line-height:1.6; color:var(--text-sub); white-space:normal; }
         .trace-steps li{ word-break:break-all; }
+        /* 걸음 앞의 위치(파일명.확장자:줄)는 본문 글자색·굵게 — 어느 파일을 지나는지 먼저 눈에 들어오게. */
+        .trace-step-loc{ color:var(--text); font-weight:700; }
         /* 코드가 붙은 걸음은 눌러서 그 줄 주변 코드를 펼친다(점검 때 저장해 둔 앞뒤 3줄). */
         .trace-step-link{ color:var(--accent); text-decoration:underline dotted; text-underline-offset:3px; cursor:pointer; }
         .trace-step-link:hover, .trace-step-link:focus{ text-decoration-style:solid; outline:none; }
         .trace-steps .code-block{ margin:4px 0 8px; }
         .trace-hint{ margin-top:4px; font-size:11px; color:var(--text-sub); }
-        /* AI 판별 이유 — 몇 문장짜리 설명이라 줄을 꺾는다. */
-        .ai-reasoning{ margin:6px 0 0; font-size:12px; line-height:1.6; white-space:pre-wrap; word-break:break-all; }
+        /* AI 판별 — 요약 한 문장 + 근거·예상 공격·조치 방법. AI가 쓴 글이라 줄을 꺾는다. */
+        .ai-summary{ margin:6px 0 0; font-size:13px; font-weight:600; line-height:1.6; word-break:break-all; }
+        .ai-section{ margin:8px 0 0; }
+        .ai-section-title{ font-size:11px; font-weight:600; color:var(--text-sub); }
+        .ai-reasoning{ margin:2px 0 0; font-size:12px; line-height:1.6; white-space:pre-wrap; word-break:break-all; }
         .ai-note{ margin-top:4px; font-size:11px; color:var(--text-sub); }
     </style>
 </head>
@@ -204,6 +209,20 @@
          * traceCode(근거와 같은 순서, 없으면 null)가 있는 걸음은 눌러서 그 줄 주변 코드를 펼친다 — 근거는 다른 파일·메서드를 가리켜
          * 아래 조각(걸린 줄을 감싼 메서드)에 안 보이는 경우가 많다.
          */
+        /** 근거 한 걸음 — 앞의 "파일명.확장자:줄"만 굵게 나눠 넣는다(AI·소스에서 온 글이라 textContent로만). */
+        function appendStepText(parent, step) {
+            const m = /^(\S+\.\w+:\d+)(\s[\s\S]*)?$/.exec(step);
+            if (!m) {
+                parent.appendChild(document.createTextNode(step));
+                return;
+            }
+            const loc = document.createElement('span');
+            loc.className = 'trace-step-loc';
+            loc.textContent = m[1];
+            parent.appendChild(loc);
+            if (m[2]) parent.appendChild(document.createTextNode(m[2]));
+        }
+
         function renderTrace(row, traceCode) {
             const term = document.getElementById('findingModalTraceTerm');
             const dd = document.getElementById('findingModalTrace');
@@ -220,14 +239,14 @@
                 const li = document.createElement('li');
                 const code = traceCode && traceCode[i];
                 if (!code) {
-                    li.textContent = step;
+                    appendStepText(li, step);
                     steps.appendChild(li);
                     return;
                 }
                 linked++;
                 const text = document.createElement('span');
                 text.className = 'trace-step-link';
-                text.textContent = step;
+                appendStepText(text, step);
                 text.tabIndex = 0;
                 text.title = code.path + ':' + code.line;
                 let pre = null;
@@ -297,14 +316,38 @@
             }
             dd.appendChild(document.createTextNode(' 신뢰도 ' + (CONFIDENCE_LABELS[row.aiConfidence] || row.aiConfidence || '-')
                 + ' · ' + formatDateTime(row.aiReviewedAt)));
-            const reasoning = document.createElement('div');
-            reasoning.className = 'ai-reasoning';
-            reasoning.textContent = row.aiReasoning || '';
-            dd.appendChild(reasoning);
+            if (row.aiSummary) {
+                const summary = document.createElement('div');
+                summary.className = 'ai-summary';
+                summary.textContent = row.aiSummary;
+                dd.appendChild(summary);
+            }
+            // 요약이 없는 예전 판별은 이유 한 문단만 있다 — 제목 없이 그대로 보여준다.
+            appendAiSection(dd, row.aiSummary ? '근거' : null, row.aiReasoning);
+            appendAiSection(dd, '예상 공격', row.aiAttack);
+            appendAiSection(dd, '조치 방법', row.aiFix);
             const note = document.createElement('div');
             note.className = 'ai-note';
             note.textContent = '탐지 줄을 감싼 메서드만 보고 낸 참고 의견입니다. 처리여부는 코드를 확인한 뒤 직접 정하세요.';
             dd.appendChild(note);
+        }
+
+        /** 판별 항목 하나(제목 + 본문). 값이 없으면 넣지 않는다. */
+        function appendAiSection(dd, title, text) {
+            if (!text) return;
+            const section = document.createElement('div');
+            section.className = 'ai-section';
+            if (title) {
+                const head = document.createElement('div');
+                head.className = 'ai-section-title';
+                head.textContent = title;
+                section.appendChild(head);
+            }
+            const body = document.createElement('div');
+            body.className = 'ai-reasoning';
+            body.textContent = text;
+            section.appendChild(body);
+            dd.appendChild(section);
         }
 
         function openModal(row) {
@@ -380,11 +423,11 @@
                     return (row.traceTarget ? '대상: ' + row.traceTarget + '\n' : '') + (row.traceEvidence || []).join('\n');
                 }
             },
-            // 결정론(연계 추적)으로 못 정한 높은 등급만 AI가 코드를 보고 판별한다. 참고용 — 처리여부는 바꾸지 않는다.
+            // HIGH·MEDIUM(연계 추적이 안전으로 확정한 건 제외)을 AI가 코드를 보고 판별한다. 참고용 — 처리여부·등급은 바꾸지 않는다.
             {
                 id: 'aiVerdict', label: 'AI 판별', width: 120, align: 'center',
                 render: function (value, row) { return aiBadge(row); },
-                title: function (value, row) { return row.aiReasoning || ''; }
+                title: function (value, row) { return row.aiSummary || row.aiReasoning || ''; }
             },
             // 오탐·위험수용·조치완료로 저장한 건은 같은 코드가 다시 탐지돼도 유지된다(코드가 바뀌면 새 건이 된다).
             {

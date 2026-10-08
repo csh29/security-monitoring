@@ -30,6 +30,8 @@ import com.github.javaparser.ast.stmt.ForEachStmt;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import com.github.javaparser.ast.type.Type;
 
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
@@ -72,6 +74,8 @@ public final class JavaSourceIndex {
     private static final Set<String> CONTROLLER_ANNOTATIONS = Set.of("Controller", "RestController");
 
     private final Map<CompilationUnit, String> paths = new IdentityHashMap<>();
+    /** 파일별 줄 내용 — Semgrep 열(바이트 기준)을 JavaParser 열(글자 기준)과 맞출 때 쓴다. */
+    private final Map<String, String[]> linesByPath = new HashMap<>();
     private final Map<String, List<ClassOrInterfaceDeclaration>> classesByName = new HashMap<>();
     private final Map<String, List<MethodCallExpr>> callsByName = new HashMap<>();
     private final List<String> failedFiles = new ArrayList<>();
@@ -102,6 +106,7 @@ public final class JavaSourceIndex {
             }
             CompilationUnit unit = result.getResult().get();
             index.paths.put(unit, path);
+            index.linesByPath.put(path, content.split("\r?\n", -1));
             unit.findAll(ClassOrInterfaceDeclaration.class).forEach(type ->
                     index.classesByName.computeIfAbsent(type.getNameAsString(), k -> new ArrayList<>()).add(type));
             unit.findAll(MethodCallExpr.class).forEach(call ->
@@ -114,20 +119,34 @@ public final class JavaSourceIndex {
         return failedFiles;
     }
 
-    /** 파일의 그 줄에서 시작하는 메서드 호출·객체 생성 노드(위험 호출 지점 찾기용). 파일을 못 읽었으면 빈 목록. */
-    List<Node> nodesAt(String path, int line) {
+    /**
+     * Semgrep이 걸린 범위에 정확히 놓인 식(위험 호출 지점 찾기용). 같은 범위의 식이 여럿이면 바깥 것. 못 찾으면 빈 값.
+     * Semgrep 열은 파일 바이트 기준(한글 한 글자가 UTF-8 3바이트·MS949 2바이트)이고 끝 열은 끝 글자 다음이다. JavaParser 열은 글자 기준이고
+     * 끝은 끝 글자다 — 줄 내용으로 바이트 열을 다시 세어 비교한다. 파일 인코딩은 모르므로 UTF-8·MS949 둘 다 맞춰 본다.
+     */
+    Optional<Expression> expressionAt(String path, int startLine, int startCol, int endLine, int endCol) {
+        String[] lines = linesByPath.get(path);
+        if (lines == null || startCol <= 0 || startLine > lines.length || endLine > lines.length) return Optional.empty();
         for (Map.Entry<CompilationUnit, String> entry : paths.entrySet()) {
             if (!entry.getValue().equals(path)) continue;
-            List<Node> nodes = new ArrayList<>();
-            entry.getKey().walk(node -> {
-                if ((node instanceof MethodCallExpr || node instanceof ObjectCreationExpr)
-                        && node.getBegin().map(p -> p.line == line).orElse(false)) {
-                    nodes.add(node);
-                }
-            });
-            return nodes;
+            for (Charset charset : SOURCE_CHARSETS) {
+                Optional<Expression> found = entry.getKey().findFirst(Expression.class, e -> e.getRange()
+                        .filter(r -> r.begin.line == startLine && r.end.line == endLine
+                                && byteColumn(lines[startLine - 1], r.begin.column, charset) == startCol
+                                && byteColumn(lines[endLine - 1], r.end.column + 1, charset) == endCol)
+                        .isPresent());
+                if (found.isPresent()) return found;
+            }
         }
-        return List.of();
+        return Optional.empty();
+    }
+
+    private static final List<Charset> SOURCE_CHARSETS = List.of(StandardCharsets.UTF_8, Charset.forName("MS949"));
+
+    /** 글자 기준 열(1부터)을 그 인코딩의 바이트 기준 열로. */
+    private static int byteColumn(String line, int charColumn, Charset charset) {
+        int chars = Math.min(Math.max(charColumn - 1, 0), line.length());
+        return line.substring(0, chars).getBytes(charset).length + 1;
     }
 
     /** 노드가 있는 파일의 저장소 기준 경로. 모르면 null. */

@@ -29,16 +29,21 @@ rules:
   # 저장 지점마다 사람이 확인하도록 목록으로 남긴다(WARNING). 업로드 기능은 앱마다 몇 곳뿐이라 건수가 많지 않다.
   - id: kisa-file-upload-save
     languages: [java]
-    pattern-either:
-      - pattern: (org.springframework.web.multipart.MultipartFile $F).transferTo(...)
-      - pattern: java.nio.file.Files.copy((org.springframework.web.multipart.MultipartFile $F).getInputStream(), ...)
-      - pattern: org.springframework.util.FileCopyUtils.copy((org.springframework.web.multipart.MultipartFile $F).getBytes(), ...)
-      - pattern: org.springframework.util.FileCopyUtils.copy((org.springframework.web.multipart.MultipartFile $F).getInputStream(), ...)
-      - pattern: (javax.servlet.http.Part $P).write(...)
-      - pattern: (jakarta.servlet.http.Part $P).write(...)
+    patterns:
+      # 저장 위치($DEST)만 가리킨다 — 인자 자리가 호출마다 달라서(transferTo(dest)·Files.copy(in, dest)) 연계 추적이 이 값을 따라간다.
+      - pattern-either:
+          - pattern: (org.springframework.web.multipart.MultipartFile $F).transferTo($DEST)
+          - pattern: java.nio.file.Files.copy((org.springframework.web.multipart.MultipartFile $F).getInputStream(), $DEST, ...)
+          - pattern: org.springframework.util.FileCopyUtils.copy((org.springframework.web.multipart.MultipartFile $F).getBytes(), $DEST)
+          - pattern: org.springframework.util.FileCopyUtils.copy((org.springframework.web.multipart.MultipartFile $F).getInputStream(), $DEST)
+          - pattern: (javax.servlet.http.Part $P).write($DEST)
+          - pattern: (jakarta.servlet.http.Part $P).write($DEST)
+      - focus-metavariable: $DEST
     message: "업로드 파일을 저장합니다. 확장자 허용 목록(jsp·jspx·exe 등 차단), 크기 제한, 웹 루트 밖 저장, 서버가 만든 파일명을 쓰는지 확인하세요."
     severity: WARNING
     metadata:
+      # 연계 추적(SinkTracer)이 따라갈 값 — arguments: 걸린 호출의 인자 전부, first-argument: 첫 인자, value: 걸린 식(focus-metavariable)
+      trace: value
       kisa_category: 입력데이터 검증 및 표현
       kisa_name: 위험한 형식 파일 업로드
       cwe: CWE-434

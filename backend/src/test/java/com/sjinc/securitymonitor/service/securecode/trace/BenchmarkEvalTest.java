@@ -18,6 +18,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
 import com.sjinc.securitymonitor.service.securecode.SecureCodeSnippetBuilder;
+import com.sjinc.securitymonitor.service.securecode.semgrep.RuleSetLoader;
 import com.sjinc.securitymonitor.service.securecode.semgrep.SemgrepReportParser;
 import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules;
 
@@ -52,7 +53,7 @@ class BenchmarkEvalTest {
             }
         }
         JavaSourceIndex java = JavaSourceIndex.fromSources(sources);
-        List<SinkTracer.SinkVerdict> verdicts = new SinkTracer(java, TraceRules.empty()).trace(detected);
+        List<SinkTracer.SinkVerdict> verdicts = new SinkTracer(java, TraceRules.empty(), new RuleSetLoader().load(Path.of(System.getProperty("bench.rules", "../securecode/rules"))).sinks()).trace(detected);
 
         Pattern test = Pattern.compile("(BenchmarkTest\\d+)\\.java$");
         Map<String, TraceSafety> worstByTest = new TreeMap<>();

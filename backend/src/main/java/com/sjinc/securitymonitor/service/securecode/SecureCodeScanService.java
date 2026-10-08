@@ -33,6 +33,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -48,6 +49,7 @@ import com.sjinc.securitymonitor.service.securecode.trace.DollarTraceMerger;
 import com.sjinc.securitymonitor.service.securecode.trace.JavaSourceIndex;
 import com.sjinc.securitymonitor.service.securecode.trace.MybatisDollarTracer;
 import com.sjinc.securitymonitor.service.securecode.trace.SinkTracer;
+import com.sjinc.securitymonitor.service.securecode.trace.TraceSink;
 import com.sjinc.securitymonitor.service.securecode.trace.UserScopeFindings;
 import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRuleDraftPreview;
 import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRuleService;
@@ -226,14 +228,20 @@ public class SecureCodeScanService {
         SemgrepReport report = new SemgrepReportParser(objectMapper)
                 .parse(semgrepRunner.run(projectDir, rules));
         SecureCodeSnippetBuilder snippetBuilder = new SecureCodeSnippetBuilder(projectDir);
-        List<DetectedFinding> detected = snippetBuilder.build(report.matches());
-        TraceOutcome trace = traceFindings(app, projectDir, detected, traceRules, snippetBuilder);
+        // 같은 규칙이 한 식 안에 겹쳐 걸린 것(new FileInputStream(new File(x)))은 바깥 한 건으로 — 지문을 다 만든 뒤 빼야 남는 건의 지문이 그대로다.
+        DuplicateCweMerger.Merged nested = NestedMatchMerger.merge(report.matches(), snippetBuilder.build(report.matches()));
+        if (!nested.mergedAway().isEmpty()) {
+            log.info("[{}] 같은 규칙이 겹쳐 걸린 탐지 {}건을 합침", app.getSystemName(), nested.mergedAway().size());
+        }
+        TraceOutcome trace = traceFindings(app, projectDir, nested.findings(), traceRules, ruleSet.sinks(), snippetBuilder);
         // 같은 줄·같은 CWE를 다른 방식으로 보는 규칙 쌍(taint + 실행 호출 등)은 한 건으로 — 판정이 엇갈리지 않게, AI 대상도 남은 건 기준으로.
-        DuplicateCweMerger.Merged merged = DuplicateCweMerger.merge(trace.findings());
+        DuplicateCweMerger.Merged merged = DuplicateCweMerger.merge(trace.findings(), ruleSet.sinks().keySet());
         if (!merged.mergedAway().isEmpty()) {
             log.info("[{}] 같은 줄·같은 CWE 탐지 {}건을 합침", app.getSystemName(), merged.mergedAway().size());
         }
-        detected = attachAiContext(app, projectDir, snippetBuilder, trace.java(), merged.findings());
+        Map<String, String> mergedAway = new LinkedHashMap<>(nested.mergedAway());
+        mergedAway.putAll(merged.mergedAway());
+        List<DetectedFinding> detected = attachAiContext(app, projectDir, snippetBuilder, trace.java(), merged.findings());
         detected = attachTraceCode(app, projectDir, snippetBuilder, detected);
 
         // 사용자 범위 판정은 Semgrep 규칙이 아니라 판정이 만드는 탐지라 규칙셋에 없다. 이번에 판정을 했을 때만 활성 규칙에 넣는다 —
@@ -243,7 +251,7 @@ public class SecureCodeScanService {
         if (trace.userScopeJudged()) activeRuleIds.add(UserScopeFindings.RULE_ID);
 
         SecureCodeApplyResult applied = findingService.applyScan(
-                app.getId(), detected, report.failedFiles(), activeRuleIds, merged.mergedAway());
+                app.getId(), detected, report.failedFiles(), activeRuleIds, mergedAway);
 
         log.info("[{}] 코드 점검 완료: 파일 {}개, 탐지 {}건(신규 {}, 해결 {}), 분석 실패 파일 {}개",
                 app.getSystemName(), report.scannedFileCount(), detected.size(),
@@ -293,9 +301,9 @@ public class SecureCodeScanService {
      * 찾아야 해서, 추적할 탐지가 없어도 소스는 읽는다.
      */
     private TraceOutcome traceFindings(App app, Path projectDir, List<DetectedFinding> detected, TraceRules traceRules,
-                                      SecureCodeSnippetBuilder snippetBuilder) {
+                                      Map<String, TraceSink> sinks, SecureCodeSnippetBuilder snippetBuilder) {
         boolean hasDollar = detected.stream().anyMatch(f -> DollarTraceMerger.RULE_IDS.contains(f.ruleId()));
-        boolean hasSink = detected.stream().anyMatch(f -> SinkTracer.supports(f.ruleId()));
+        boolean hasSink = detected.stream().anyMatch(f -> sinks.containsKey(f.ruleId()));
         Map<String, String> sources;
         JavaSourceIndex java;
         try {
@@ -362,7 +370,7 @@ public class SecureCodeScanService {
         }
         if (hasSink) {
             try {
-                List<SinkTracer.SinkVerdict> verdicts = new SinkTracer(java, traceRules).trace(findings);
+                List<SinkTracer.SinkVerdict> verdicts = new SinkTracer(java, traceRules, sinks).trace(findings);
                 findings = SinkTracer.apply(findings, verdicts);
                 log.info("[{}] 위험 호출 지점 연계 추적: {}건 판정 {}", app.getSystemName(), verdicts.size(),
                         verdicts.stream().collect(Collectors.groupingBy(v -> v.safety().label(), Collectors.counting())));

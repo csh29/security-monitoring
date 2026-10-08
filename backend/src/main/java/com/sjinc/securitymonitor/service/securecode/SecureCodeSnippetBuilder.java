@@ -123,7 +123,7 @@ public class SecureCodeSnippetBuilder {
                     fingerprint(key + "\n" + occurrence),
                     match.ruleId(), match.kisaCategory(), match.kisaName(), match.cwe(), match.severity(),
                     match.filePath(), match.startLine(), match.endLine(), match.message(),
-                    snippet, snippetStart, null, null, null, null));
+                    snippet, snippetStart, null, null, null, null).withColumns(match.startCol(), match.endCol()));
         }
         return detected;
     }

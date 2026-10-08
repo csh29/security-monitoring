@@ -66,7 +66,7 @@ com.sjinc.securitymonitor
 | --- | --- |
 | `service.securecode` | 점검 흐름(`SecureCodeScanService`)·결과 저장·재점검 비교·코드 조각/지문·업로드 압축 해제·폐기 규칙 정리 |
 | `service.securecode.semgrep` | `SemgrepRunner`·`SemgrepReportParser`·`RuleSetLoader` |
-| `service.securecode.trace` | 연계 추적 엔진 — `JavaSourceIndex`·`MapperXmlIndex`·`ValueOriginTracer`·`ConstantFolder`·`MybatisDollarTracer`·`SinkTracer`·`DollarTraceMerger`·`UserScopeFindings` |
+| `service.securecode.trace` | 연계 추적 엔진 — `JavaSourceIndex`·`MapperXmlIndex`·`ValueOriginTracer`·`ConstantFolder`·`MybatisDollarTracer`·`SinkTracer`·`TraceSink`·`DollarTraceMerger`·`UserScopeFindings` |
 | `service.securecode.tracerule` | 추적 규칙 — `TraceRules`(설정)·`TraceRuleService`·`TraceRuleDrafter`·`FrameworkProfiler`·`TraceRuleChange`·`TraceRuleChangePlanner`·`TraceRulesFileEditor`·`TraceRuleDraftPreview` |
 | `dto.securecode` | 판정 값 `TraceSafety`(enum)·`DollarVerdict`도 여기 — 화면 DTO(`SecureCodeFindingView`)와 AI 판별 서비스가 같이 써서, dto가 service를 import하지 않게 |
 
@@ -157,10 +157,20 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
    판정 불가 MEDIUM, 안전 판정 LOW. 판정·근거는 `SecureCodeFinding.traceSafety`·`traceEvidence`에 저장하고, 지문은 그대로라 재점검 비교·처리여부에 영향이 없다.
    - **위험 호출 지점**(`SinkTracer`): SSRF 변수 주소(`kisa-ssrf-dynamic-url`)·명령 실행(`kisa-os-command-exec`, 같은 호출을 taint로 보는 `kisa-os-command-injection-request`도 같은 기준 —
      taint는 상수 조건을 계산하지 못해 실행되지 않는 요청값 갈래로도 HIGH가 되고 추적이 없으면 AI 대기로 갔다)·다운로드 경로(`kisa-path-traversal-download`)·
-     업로드 저장(`kisa-file-upload-save`)·문자열 연결 SQL(`kisa-sql-injection-java-concat`) 탐지 줄에서 규칙이 보는 호출을 구문 트리로 다시 찾아(`JavaSourceIndex.nodesAt`)
-     그 인자(주소·명령·경로·SQL)의 출처를 판정한다. 무료판 Semgrep taint는 한 메서드 안만 봐서, 컨트롤러가 받은 값을 서비스에서 쓰는 사내 구조에서는
+     파일 경로(`kisa-path-traversal-dynamic-path`)·업로드 저장(`kisa-file-upload-save`)·문자열 연결 SQL(`kisa-sql-injection-java-concat`)의 탐지 범위(줄·열)에 놓인 식을
+     구문 트리에서 찾아(`JavaSourceIndex.expressionAt`) 그 값(주소·명령·경로·SQL)의 출처를 판정한다.
+     **어느 규칙을 추적할지·무엇을 따라갈지는 규칙 파일이 정한다**(2026-10-08) — `metadata.trace`: `arguments`(걸린 호출의 인자 전부), `first-argument`(첫 인자 —
+     SQL의 쿼리·주소), `value`(걸린 식 자체 — 규칙이 `focus-metavariable`로 값만 가리킴, 업로드의 저장 위치), `trace_fixed_host: true`(SSRF).
+     `RuleSetLoader`가 `TraceSink`로 모으고(값이 틀리면 점검 실패) `SinkTracer`·`DuplicateCweMerger`(추적 규칙 우선)가 받는다. 자바에 규칙 id·호출 이름 목록이 없다 —
+     실행 지점 규칙을 늘리거나 고칠 때 yml만 고친다. Semgrep 열은 파일 바이트 기준(UTF-8 한글 3바이트·MS949 2바이트)이라 줄 내용으로 두 인코딩 다 맞춰 본다. 무료판 Semgrep taint는 한 메서드 안만 봐서, 컨트롤러가 받은 값을 서비스에서 쓰는 사내 구조에서는
      Spring 출처를 넣어도 이어지지 않던 것을 호출자를 거슬러 컨트롤러까지 따라가 확정한다. SSRF는 고정 호스트로 시작하는 주소(지역 변수에 만든 것도)를
-     안전으로 본다(규칙의 sanitizer와 같은 기준). 호출을 못 찾으면 판정을 붙이지 않는다(Semgrep 등급 그대로).
+     안전으로 본다(규칙의 sanitizer와 같은 기준). 범위의 식을 못 찾으면(열을 모르는 탐지, 구문 분석 실패) 판정을 붙이지 않는다(Semgrep 등급 그대로).
+   - **파일 경로 실행 지점(2026-10-08, `kisa-path-traversal-dynamic-path`):** 경로 조작은 taint 규칙뿐이라 요청값을 다른 클래스의 헬퍼가 읽으면
+     (Benchmark `SeparateClassRequest.getTheParameter`, 사내 컨트롤러 → 서비스) 탐지 자체가 없어 연계 추적이 돌 기회가 없었다(BenchmarkTest00040).
+     명령 실행처럼 "문자열 경로가 파일이 되는 지점"(`new File`·`FileInputStream`·`FileReader`·`Paths.get`·`Path.of`·`FileSystemResource` 등, 상수 경로·이미 만든
+     File/Path를 여는 것 제외)을 잡고 출처는 추적이 판정한다. 지역·`static final` 상수 경로는 Semgrep이 값을 계산해 상수로 보고 뺀다. 같은 줄의 taint·다운로드 규칙과는
+     `DuplicateCweMerger`가 합친다(추적 규칙 우선, 둘 다 추적 규칙이면 id 순이라 다운로드 규칙이 남아 예전 지문 유지).
+     Benchmark pathtraver 268건: **탐지율 100%(133/133), 오탐 0(0/135)**, 판정 불가 13건(전부 오탐 유도, AI 판별로). 같은 측정에서 cmdi·sqli도 755/755 그대로.
    - **실측(2026-10-06):** CRM_BACK 6건 — 업로드 저장 4건 중 원래 파일명의 확장자를 저장 경로에 쓰는 2곳(`Crc020Service:898`·`Crd010Service:72`, `.jsp` 업로드
      가능)은 HIGH, 설정값 + 날짜 + 난수로 이름을 만드는 2곳은 LOW. SSRF 변수 주소 2건(`callUrl` 대입 3곳 모두 서버 값, `batchUrl` `@Value`)은 LOW.
      ext-api 2건 — 상수 주소를 넘겨받은 `new URL(url)` LOW, 외부 HTML의 `img.attr("src")`는 판정 불가.
@@ -182,14 +192,19 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
    - **규칙 패턴의 클래스 이름(2026-10-08):** 규칙이 짧은 이름(`new FileInputStream(...)`, `ESAPI.encoder()...`)이라 패키지까지 쓴 코드
      (Benchmark `new java.io.FileInputStream(fileName)`)를 못 알아봐 경로 조작은 놓치고, `org.owasp.esapi.ESAPI...encodeForHTML`로 이스케이프한 출력은 XSS로 잘못 걸었다
      (BenchmarkTest00363). Java 규칙 15개 파일의 클래스 이름을 패키지까지 쓴 이름으로 바꿨다 — import한 짧은 이름도 그대로 잡힌다(`java.lang`만 두 모양,
-     서블릿은 javax·jakarta 둘 다). `SinkTracer`의 `Paths.get`·`Files.newInputStream` 찾기도 패키지까지 쓴 호출을 안다(`isClass`).
+     서블릿은 javax·jakarta 둘 다). 연계 추적은 이름이 아니라 탐지 범위로 호출을 찾아 짧은 이름·패키지까지 쓴 이름이 따로 없다.
    - **같은 줄·같은 CWE 합치기**(`DuplicateCweMerger`, 연계 추적 뒤·AI 문맥 전): 한 약점을 두 방식으로 보는 규칙 쌍(명령 실행 taint + 실행 호출,
      SSRF `kisa-ssrf-request` + `kisa-ssrf-dynamic-url`)은 한 메서드에서 끝나는 코드에서 같은 줄 두 건이 되고 추적을 받는 쪽만 판정이 붙어 HIGH·LOW가
      엇갈렸다. 같은 파일·줄·CWE에 다른 규칙이 여럿이면 한 건만 남긴다 — 남길 규칙은 점검마다 같아야 해서(지문에 규칙 id) 판정 유무가 아니라 규칙만 보고
      고른다(연계 추적을 받는 규칙 → 규칙 id 순). 남은 건에 추적 판정이 없으면 등급은 묶음에서 가장 높은 것(그러면 AI 판별 대상), 설명 끝에 함께 걸린 규칙을
      적는다. 같은 규칙이 한 줄에 여럿(`${a}`·`${b}`)이거나 CWE가 없으면 합치지 않는다. 합쳐 빠진 기존 탐지는 `SecureCodeReconciler`가 RESOLVED +
-     비고 "같은 줄·같은 CWE의 … 탐지와 한 건으로 합침"(`retireRule`, 사람이 정한 상태는 유지, "해결" 건수에는 넣지 않음). Benchmark 3,568건 중 460묶음
+     비고 "같은 위치의 … 탐지와 한 건으로 합침"(`retireRule`, 사람이 정한 상태는 유지, "해결" 건수에는 넣지 않음). Benchmark 3,568건 중 460묶음
      (SSRF 312, 명령 실행 148).
+   - **같은 규칙이 겹쳐 걸린 것 합치기**(`NestedMatchMerger`, 2026-10-08, 지문을 만든 직후·연계 추적 전): 규칙은 위험 지점을 빠짐없이 적으므로
+     `new java.io.FileInputStream(new java.io.File(fileName))`은 같은 값이 두 지점(`File`·`FileInputStream`)에 걸려 한 줄 두 건이 된다(BenchmarkTest00001).
+     중복은 규칙에서 지점을 빼지 않고 자바가 정리한다 — 같은 규칙·같은 파일에서 걸린 범위(줄+열, `SemgrepMatch.startCol`·`endCol`)가 다른 범위 안에
+     통째로 들어가면 안쪽을 뺀다(범위가 똑같으면 앞의 것). 나란히 걸린 `${a}`·`${b}`는 겹치지 않아 그대로다. 지문은 모든 탐지로 만든 뒤에 빼서(지문에 파일 안
+     등장 순번이 들어감) 남는 바깥 건의 지문이 예전과 같다. 빠진 기존 탐지는 위와 같은 `mergedAway`로 "합침" 정리.
    - Set.of는 JVM마다 순회 순서가 달라, 구문 실행 메서드를 그대로 돌면 같은 코드인데 근거로 고르는 공통 실행 경로가 실행마다 바뀌었다 — 정렬해서 돈다.
 6-1-a. **MyBatis `${}`** — `kisa-sql-injection-mybatis-dollar`. `MybatisDollarTracer`(순수)가 매퍼 XML(`MapperXmlIndex`)과 Java 소스를 이어 `${key}`마다
    값의 출처를 판정하고, `DollarTraceMerger`가 (파일, 줄, 줄 안 순서)로 탐지에 붙인다.
@@ -267,7 +282,7 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
   같은 지문이 다시 걸려도·안 걸려도 스캔이 바꾸지 않는다. OPEN으로 되돌리면 다시 스캔을 따른다. 코드가 바뀌면 지문이 바뀌어 새 건이 된다(판단도 다시).
 - **심각도:** HIGH/MEDIUM/LOW뿐이다(Semgrep ERROR/WARNING/INFO, 연계 추적 판정 — CRITICAL은 라이브러리 CVE의 CVSS에만 있다). 그래서 코드 점검 결과
   조회조건은 라이브러리용 `SEVERITY`가 아니라 공통코드 `SC_SEVERITY`(HIGH/MEDIUM/LOW)를 쓴다 — 같은 그룹이면 걸리는 행이 없는 CRITICAL이 보였다.
-  값이 같은 문자열이라 뱃지·정렬(`SeverityOrder`)은 그대로다. AI 판별 대상 등급 `ai.securecode.severities`도 기본 HIGH다.
+  값이 같은 문자열이라 뱃지·정렬(`SeverityOrder`)은 그대로다. AI 판별 대상 등급 `ai.securecode.severities`는 기본 HIGH·MEDIUM이다.
   `SC_STATUS`·`SC_SEVERITY`는 `DataInitializer`가 **그룹이 없을 때만** 매 기동 심는다(사용자 0명일 때만 심는 다른 초기 데이터와 다르다 — 기존 DB에도 들어가야 해서).
 - **소스 업로드 점검**(2026-10-07): Git으로 접근할 수 없는 앱(옛날 시스템 등)은 앱 관리에서 소스 출처를 "소스 업로드"(`App.SOURCE_UPLOAD`, 공통코드
   `APP_SOURCE`)로 두고 코드 점검 화면에서 소스를 올린다(`POST /api/secure-code/scan-upload` multipart `appId`·`file`). 행의 버튼이 둘이다 —
@@ -442,8 +457,11 @@ AI에게 넘기는 근거도 마찬가지다. OSV에서 뽑은 `knownFixedVersio
 
 시큐어코딩 점검 탐지가 진짜 취약한지 AI가 코드를 보고 판별한다. 라이브러리 단계들과 무관하고 같은 배치의 마지막에 돈다.
 
-- **대상(`isTarget`):** OPEN이면서 (1) **연계 추적이 판정 불가로 남긴 것은 등급과 무관하게**(2026-10-08), (2) 연계 추적 판정이 없으면 등급이
-  `ai.securecode.severities`(기본 HIGH)이거나 추가 규칙인 것. 연계 추적이 클라이언트 값(HIGH)·서버 세팅(LOW) 등으로 정한 건은 보내지 않는다 — AI는 마지막 수단.
+- **대상(`isTarget`):** OPEN이면서 (1) **연계 추적이 판정 불가로 남긴 것은 등급과 무관하게**(2026-10-08), (2) 등급이 `ai.securecode.severities`(기본 HIGH·MEDIUM)
+  이거나 추가 규칙인 것 — **연계 추적이 클라이언트 값으로 확정한 HIGH도 보낸다**(2026-10-08). 엔진은 출처만 확정하고 그 뒤의 검증(허용 목록·정규화 후 기준 폴더
+  검사·확장자 검사)은 보지 않는데 실제 사내 코드엔 이런 검증이 많다 — AI가 읽어 사람의 HIGH 검토를 덜어 준다. 프롬프트는 "출처는 확정된 사실, 판단할 것은 검증"이라고
+  알린다. 판별은 참고용이라 **확정 등급은 그대로**다(AI가 틀려도 진짜 취약점이 묻히지 않게). 연계 추적이 안전(서버 세팅·세션 덮어씀·XML 결정, LOW)으로 확정한 건은
+  기준 등급과 무관하게 보내지 않는다.
   예전엔 판정 불가가 MEDIUM이라 기본 설정에서 대상이 안 돼, 엔진이 못 정한 탐지를 AI도 보지 않은 채 남았다(OWASP Benchmark cmdi —
   `exec(args, argsEnv)`의 환경 변수에 요청 헤더. 엔진은 배열 초기화를 알게 고쳤다). 판정 불가 근거("해석하지 못한 식 …")가 자주 나오는 모양은 엔진에 넣어
   결정론으로 옮긴다 — 한 번 넣으면 모든 시스템에 같은 판정이 나오고 AI 호출도 준다.
@@ -458,10 +476,12 @@ AI에게 넘기는 근거도 마찬가지다. OSV에서 뽑은 `knownFixedVersio
   **코드 문맥이 없는 탐지는 대기열에 올리지 않고 다음 점검을 기다린다** — 대상 기준을 넓힌 직후 기존 탐지에는 문맥이 없는데, 화면용 조각으로 판별하면
   근거가 부족하고 다음 점검에서 문맥이 생기면 입력이 바뀌어 다시 판별(과금)된다. 화면은 이런 건도 "판별 대기"로 보이고 모달에 "코드 문맥이 아직 없으면 다음 코드 점검 뒤"라고 적는다.
   코드는 보내기 직전에 `SecretMasker`로 가린다(되돌릴 원문이 없어 대응표는 버린다). **소스 코드가 AI로 나가는 유일한 곳이다**(사내 정책 예외, 2026-10-06 승인,
-  2026-10-07 추가 규칙까지 확대).
+  2026-10-07 추가 규칙, 2026-10-08 판정 불가 전체·관련 코드·HIGH·MEDIUM 전체(추적 확정 포함)까지 확대).
 - **재판별 기준:** 입력(가린 코드·규칙·경로·연계 추적)의 SHA-256(`aiInputHash`)이 저장된 값과 다를 때만. 줄 번호는 넣지 않는다(위에 한 줄 추가로 재과금되지 않게).
   배치는 pending에서 받은 해시를 그대로 돌려준다(CveSummary와 같은 방식). 재점검으로 입력이 바뀌면 옛 판별은 화면에서 숨기고(`isReviewCurrent`) 다시 대기가 된다.
-- **결과:** `aiVerdict`(VULNERABLE/NOT_VULNERABLE/UNCERTAIN)·`aiConfidence`·`aiReasoning`(2000자 이하)·`aiReviewedAt`. **처리여부는 바꾸지 않는다** —
+- **결과:** `aiVerdict`(VULNERABLE/NOT_VULNERABLE/UNCERTAIN)·`aiConfidence`·`aiSummary`(결론 한 문장, 300자)·`aiReasoning`(근거 글머리, 2000자)·
+  `aiAttack`(예상 공격)·`aiFix`(조치 방법, 각 1000자 — 취약하지 않으면 null, VULNERABLE인데 없으면 저장 거절)·`aiReviewedAt`. 한 문단 이유는 길고 무엇을 해야 하는지가
+  묻혀 2026-10-08에 나눴다 — 화면 상세보기는 요약(굵게)·근거·예상 공격·조치 방법으로 보여주고, 요약이 없는 예전 판별은 이유만 그대로 보여준다. **처리여부는 바꾸지 않는다** —
   오탐 의심이어도 OPEN 그대로, 사람이 정한다(연계 추적이 안전 판정이어도 자동 오탐 처리를 하지 않는 것과 같은 이유). 화면 조회 시
   `SecureCodeFindingView.aiVerdict`는 지금 입력 기준 판별, 대상인데 없으면 `PENDING`, 대상이 아니면 null.
 - **API:** `GET /api/ai/secure-code/pending`, `POST /api/ai/secure-code/{id}/review`(판별·신뢰도 값이 틀리거나 이유가 비었거나 너무 길면 400).
@@ -647,7 +667,7 @@ OPEN만)에서도 빠진다.
 | `ai.python.command` | 파이썬 실행 명령 (이 PC는 `py`) |
 | `ai.assessor.script` | 배치 스크립트 경로 (`../ai/vuln_assessor.py`) |
 | `ai.assessment.severities` | AI 판단 대상 등급 (기본 `HIGH,CRITICAL`) |
-| `ai.securecode.severities` | 선택. 코드 점검 탐지 중 AI 판별 대상 등급 (기본 `HIGH`, 코드 점검 등급은 HIGH/MEDIUM/LOW). 연계 추적이 판정한 건과 하드코드된 비밀값 규칙은 등급과 무관하게 빠지고, 연계 추적이 판정 불가로 남긴 건은 등급과 무관하게 들어간다 |
+| `ai.securecode.severities` | 선택. 코드 점검 탐지 중 AI 판별 대상 등급 (기본 `HIGH,MEDIUM`, 코드 점검 등급은 HIGH/MEDIUM/LOW). 연계 추적이 안전으로 확정한 건과 하드코드된 비밀값 규칙은 등급과 무관하게 빠지고, 연계 추적이 판정 불가로 남긴 건은 등급과 무관하게 들어간다. 클라이언트 값으로 확정한 HIGH는 들어간다 |
 | `ai.securecode.extra-rules` | 선택. 등급과 무관하게 AI 판별 대상에 넣는 규칙 id(쉼표 구분, 기본 `kisa-insecure-random,kisa-weak-crypto-hash,kisa-hash-without-salt,kisa-xxe-parser`, 비우면 없음). 연계 추적 판정·비밀값 규칙 제외는 같다 |
 | `github.token` | 선택. 영향 분석이 GitHub Releases를 받을 때 쓰는 읽기 전용 토큰. 배치에 `GITHUB_TOKEN`으로 넘긴다. 없으면 토큰 없이 부른다 |
 | `ai.auto-trigger.enabled` | 스캔 후 AI 배치 자동 실행 스위치의 **초기값**(기본 `true`, DB를 처음 만들 때만 쓰인다). 실제 스위치는 공통코드 `AI_CONFIG`/`AUTO_TRIGGER`의 사용여부로, 공통코드 관리 화면에서 바꾸면 재기동 없이 다음 스캔부터 적용된다(`ComCdService.isEnabled`). DB를 처음 만들 때만 이 값으로 심는다(파일 DB라 재기동해도 공통코드 값이 유지된다). 로컬은 `false`로 두면 과금 없이 스캔할 수 있다 |
@@ -688,10 +708,11 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `SemgrepReportParserTest` — Semgrep JSON 해석(규칙 id 접두어 제거, 역슬래시 경로, 심각도 변환, 경로 있는 오류만 분석 실패 파일)
 - `DuplicateCweMergerTest` — 같은 줄·같은 CWE 다른 규칙은 추적 규칙 한 건(판정 등급 유지, 설명에 함께 걸린 규칙), 추적 판정이 없으면 묶음 최고 등급·규칙 id 순,
   같은 규칙 여러 번·다른 줄·CWE 없음은 그대로. `SecureCodeReconcilerTest`에 합쳐 빠진 기존 탐지(비고·사람이 정한 상태 유지·해결 건수 제외)
+- `NestedMatchMergerTest` — 같은 규칙이 안쪽에 겹쳐 걸리면 바깥 한 건(빠진 지문 기록), 여러 줄 범위, 나란히 걸린 것·다른 규칙·열 모름은 그대로, 같은 범위는 앞의 것
 - `SecureCodeSnippetBuilderTest` — 지문(줄 밀림·들여쓰기 무관, 코드가 바뀌면 다름, 같은 코드 두 번은 순번), 조각(감싼 메서드·80줄 자름, 매퍼 XML은 감싼 구문, 못 찾으면 앞뒤 5줄), 연계 추적 근거 코드(걸음별 앞뒤 3줄, 동명 파일 고르기), 비밀값 가림, MS949 폴백, 저장소 밖 경로 차단,
   AI 판별 문맥(감싼 메서드 전체, 긴 메서드는 걸린 줄 가운데로 80줄·끝이면 당김, 자바가 아니면 앞뒤 15줄·비밀값 가림),
   AI 관련 코드(부르는 헬퍼·추적 경로 메서드, .java만, 키 대입 메서드·설정 파일·탐지 메서드 자신 제외)
-- `SecureCodeAiReviewServiceTest` — AI 판별 대상(결정론으로 못 정한 높은 등급, 판정 불가는 등급 무관, 비밀값 규칙 제외·남은 판별 숨김), 관련 코드(비밀값 가림·입력 해시 반영), 대기열(지워진 앱·판별 완료 제외), 코드가 바뀌면 옛 판별 숨김·재대기,
+- `SecureCodeAiReviewServiceTest` — AI 판별 대상(HIGH·MEDIUM, 클라이언트 값 확정 HIGH 포함·안전 확정 제외, 판정 불가는 등급 무관, 비밀값 규칙 제외·남은 판별 숨김), 관련 코드(비밀값 가림·입력 해시 반영), 판별 저장(요약·근거·예상 공격·조치 방법, 취약인데 공격·조치가 없으면 거절), 대기열(지워진 앱·판별 완료 제외), 코드가 바뀌면 옛 판별 숨김·재대기,
   줄 번호만 밀리면 재판별 안 함, 문맥 없으면 조각·비밀값 가림, 판별 값 검증, 처리여부는 그대로
 - `SecureCodeReconcilerTest` — 재점검 비교(신규·유지·해결, 분석 실패 파일·빠진 규칙은 해결 안 함, 수동 상태 유지, 재발견 시 OPEN)
 - `RuleSetLoaderTest` — 규칙 id·규칙셋 버전, 규칙 0개·폴더 없음은 실패, 실제 규칙 폴더 읽기
@@ -708,7 +729,10 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `DollarTraceMergerTest` — 판정별 등급 재매김·근거·지문 유지, 한 줄 여러 `${}`는 순서로, 줄 안 개수가 다르면 Semgrep 등급 유지, 다른 규칙은 그대로
 - `SinkTracerTest` — 서비스의 위험 호출을 컨트롤러까지 따라가 판정(요청값 주소 CLIENT, `@Value` 주소·고정 호스트 + 쿼리 SERVER_SET, 원래 파일명 저장 CLIENT,
   UUID 파일명 SERVER_SET, 상수 명령 SERVER_SET), 판정으로 등급 재매김(CLIENT HIGH·서버 LOW), 호출을 못 찾은 탐지·다른 규칙은 그대로, 지문 유지,
-  배열 인자(초기화·원소 대입), Benchmark 함정 모양(상수 헬퍼 + getBytes, getClass().getClassLoader()로 찾은 명령은 서버 값·요청값 헬퍼는 클라이언트 값)
+  배열 인자(초기화·원소 대입), Benchmark 함정 모양(상수 헬퍼 + getBytes, getClass().getClassLoader()로 찾은 명령은 서버 값·요청값 헬퍼는 클라이언트 값),
+  헬퍼가 읽은 요청값으로 연 파일(이름이 아니라 본문), 한글 앞 바이트 열(UTF-8·MS949). 추적 선언은 실제 규칙 파일에서 읽는다(선언이 틀리면 깨짐).
+  탐지는 Semgrep처럼 범위(바이트 열)를 붙여 만든다.
+- `RuleSetLoaderTest`에 연계 추적 선언(`metadata.trace` → `TraceSink`, 틀린 값은 점검 실패, 실제 규칙 폴더의 실행 지점 규칙 7개)
 - `FrameworkProfilerTest` — 빌드 파일·web.xml·Spring XML·application.yml·소스에서 구조(주석 안 제외, 비밀값 안 남김, 근거에 줄 번호 없음), 같은 저장소면 같은 결과,
   XML AOP 어드바이스(bean id → 클래스, pointcut-ref 펼침, after 제외)
 - `TraceRuleChangePlannerTest` — 새 시스템은 장치·로그인 정보·범위 키가 확인 대기·구조는 바로 반영, 세션 값 아닌 키는 자동 제외, 이 저장소에서 못 찾은 키는 안 뺌,
