@@ -107,7 +107,7 @@ public이다(다른 하위 패키지가 쓴다). `ValueOriginTracer`·`ConstantF
 - 오류 문구는 `IllegalArgumentException`만 메시지를 그대로 쓰고, 나머지는 예외 종류만 남긴다(`ScanController.handleScanError`와 같은 이유 — 내부 경로 노출).
 - 앱을 FK로 참조하지 않고 appId·시스템명·저장소·브랜치를 값으로 복사한다 — FK면 이력이 생긴 앱을 앱 관리에서 못 지운다.
 - 이력 기록이 실패해도 스캔은 실패시키지 않는다(로그만). 스캔 실행자는 `ScanController`가 Principal에서 넘긴다.
-- 조회: `GET /api/scan-histories?appId=`(생략 시 전체, 최신순 최대 500건). 화면은 고정 메뉴 `scan-history`라 둘 다 로그인만 필요하다.
+- 조회: `GET /api/scan-histories?appId=`(생략 시 전체, 최신순 최대 500건). 화면은 취약점 점검(`vulnerability-search`) 아래 "스캔 이력" 그리드(2026-10-12 — 별도 고정 메뉴 `scan-history`는 없앴다, 코드 점검 화면의 점검 이력과 같은 배치)이고, 조회조건(시스템명)으로 화면에서 거르며 스캔이 끝나면 다시 읽는다. 둘 다 로그인만 필요하다.
 
 ### 5단계의 실패 처리
 
@@ -256,6 +256,27 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
      후보로 냈다. `@AddUserInfo`는 로그인 정보를 넣어 주는 편의 장치일 뿐 강제가 아니고, 다른 시스템엔 없어 컨트롤러 거의 전부가 오탐이 되며, 사용자 범위 조건을
      쓰지 않는 메서드도 걸렸다. 남은 OPEN 탐지는 `SecureCodeRuleRetirement`가 기동 때 조치완료(비고 "규칙 폐기…")로 정리한다 — 재점검은 규칙셋에 없는 규칙의
      탐지를 해결 처리하지 않아 그대로 두면 영원히 OPEN이다. 규칙을 또 폐기하면 그 클래스의 `RETIRED_RULES`에 (id → 이유)를 추가한다.
+6-1-d. **엔드포인트 인증(2026-10-12)** — `kisa-authn-unprotected-endpoint`(행안부 "적절한 인증 없는 중요 기능 허용", CWE-306, MEDIUM).
+   사용자 범위처럼 **판정이 탐지를 만든다**(`trace/AuthCoverage`). 인증 "방식"(세션 속성·헤더 토큰·쿠키·SSO)은 시스템마다 다르지만 인증을 끼우는
+   "자리"는 정해져 있어서, 그 자리에 등록된 장치와 적용 경로를 결정론으로 뽑는다(`AuthCoverage.hooks`): Java 설정 `addInterceptors()`의
+   `addInterceptor(X).addPathPatterns(..).excludePathPatterns(..)`(문자열·배열·`List.of`·상수 필드까지 읽음), XML `<mvc:interceptors>`(`<mvc:interceptor>`·
+   `<mvc:mapping>`·`<mvc:exclude-mapping>`, 감싸지 않은 빈은 전체), web.xml `<filter>`·`<filter-mapping>`, `@WebFilter`. 인터셉터는 Ant 패턴, 필터는 서블릿
+   url-pattern(`/*`·`/x/*`·`*.ext`·정확히)으로 맞춘다.
+   - **인증 장치 후보**(`AuthCoverage.candidates`): 등록된 장치의 본문(인터셉터 `preHandle`, 필터 `doFilter`·`doFilterInternal`과 거기서 부르는 같은 클래스
+     메서드)이 로그인 정보를 읽고(`getSession`·`getAttribute`·`getHeader`·`getCookies`·`getUserPrincipal` 등) 없으면 막는(`return false`·`sendRedirect`·
+     `sendError`·`setStatus`·`throw new`·`forward`, 필터는 `return;`) 모양. 모양만 본다 — **장치를 인증으로 인정하는 것은 판정을 느슨하게 하는 일이라**
+     추적 규칙 초안 "인증 장치 추가"(`ADD_AUTH_DEVICE`, 확인 대기)로 묻고 사람이 근거(읽는 줄·막는 줄·적용/제외 경로)를 보고 반영한다 →
+     `trace-rules.yml` `systems.<시스템명>.authDevices`(공통 목록은 없다). 장치 본문이 라이브러리(jar)에 있으면 후보가 되지 않는다(KGC_CHN — 필터
+     7곳이 모두 `nuriaf.lib` 안이라 후보 0).
+   - **판정**(`AuthCoverage.judge`): 인정된 장치가 있고 그 등록·적용 경로를 모두 상수로 읽었을 때만, 모든 요청 처리 메서드(클래스 `@RequestMapping` 경로 ×
+     메서드 `@Get/Post/Put/Delete/Patch/RequestMapping` 경로, 경로를 상수로 못 읽은 메서드는 빼고 그 수를 알림)를 대조해 **어느 인정된 장치도 적용되지
+     않는 메서드**를 낸다(위치는 매핑 어노테이션 줄, 메시지에 경로별 이유 — 어느 장치의 어느 제외 경로인지·적용 경로 밖인지). 로그인·공개 화면도
+     나오므로 사람이 오탐 처리한다(지문이 같아 재점검에도 유지). 인정된 장치가 없거나 등록을 못 찾거나 경로를 못 읽으면 **판정하지 않고**(활성 규칙에도
+     안 넣어 기존 탐지를 해결로 바꾸지 않는다) 점검 알림에 이유를 남긴다 — 판정 안 했는데 0건이면 "인증이 다 걸렸다"로 읽힌다.
+   - 아직 보지 않는 자리: Spring Security 필터 체인 규칙, AOP, 컨트롤러 안 직접 검사, 앱 밖(게이트웨이·웹서버) 인증, 서블릿 매핑 접두(`/api/*`
+     DispatcherServlet)와 필터 경로의 결합. 이런 시스템은 후보가 없어 판정하지 않는다.
+   - 인정된 장치 이름은 AI 판별의 `[시스템 구조]`에도 실린다(`SecureCodeSystemContext`).
+
 6-2. **AI 판별 문맥** — `SecureCodeScanService.attachAiContext`. 연계 추적이 등급을 다시 매긴 뒤, AI 판별 대상(`SecureCodeAiReviewService.isTarget`)에만
    `SecureCodeSnippetBuilder.withAiContext`로 걸린 줄을 감싼 가장 안쪽 메서드·생성자(JavaParser, 파일 하나만)를 `aiContext`로 붙인다. 메서드가
    `AI_CONTEXT_MAX_LINES`(80줄)보다 길면 걸린 줄이 가운데 오게 자르고(메서드 끝에 닿으면 앞으로 당김), 자바가 아니거나 구문 분석 실패·메서드 밖이면
@@ -263,6 +284,11 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
    **관련 코드**(2026-10-08, `SecureCodeSnippetBuilder.aiRelatedCode` → `SecureCodeFinding.aiRelatedContext`, `AiRelatedCode` 목록 JSON): 탐지 메서드만 보내니 AI가
    값이 정해지는 다른 파일을 이름으로 추측해 틀렸다(Benchmark — `scr.getTheValue(...)`가 상수 `"bar"`를 돌려주는데 "요청 파라미터"로 보고 확신도 high로 취약).
    그래서 연계 추적 경로의 걸음이 있는 메서드와, 탐지 메서드가 부르는 우리 메서드(한 단계, `JavaSourceIndex.callableAt`·`resolve`)를 같이 보낸다.
+   2026-10-12부터 **걸음이 있는 줄에서 부르는 우리 메서드**(인터페이스면 구현 클래스 본문)도 보낸다 — 추적이 그 안으로 들어가지 못하고 멈춘 곳이다.
+   CRM_BACK `FrameFileUtil:182`는 `CommonController:289 fileInfo = commonService.saveFileOne(file, 요청값 path)` 뒤 `fileInfo.getFilePath()`로 경로를 만드는데,
+   엔진은 객체 필드 흐름(setter로 넣고 getter로 꺼냄)을 못 따라가 판정 불가로 남겼고 AI도 `saveFileOne` 본문이 없어 "확인 불가"를 냈다.
+   순서는 걸음 메서드 → 걸음 줄에서 부르는 메서드 → 탐지 메서드가 부르는 메서드(8개·240줄 상한 안에서 앞의 것이 먼저). 관련 코드가 늘면 입력 해시가 바뀌어
+   해당 탐지는 다음 점검 뒤 다시 판별된다.
    **.java 메서드만**(properties·yml·xml 설정은 안 보냄), 테스트 소스 제외, 비밀번호·키·토큰을 문자열로 대입하는 메서드는 통째로 뺀다(`SECRET_ASSIGNMENT`·설정 비밀값 줄),
    메서드당 40줄·최대 8개·합계 240줄, 보내기 직전 `SecretMasker`로 한 번 더 가린다. 입력 해시에 들어가(있을 때만 — 예전 판별이 괜히 재대기가 되지 않게) 관련 코드가 바뀌면
    다시 판별한다. 배치는 `[관련 코드]` 절로 받고, 프롬프트는 "이름이 아니라 본문의 실제 동작으로 출처를 본다"를 지시한다. 실패해도 탐지 메서드만 보낸다.
@@ -309,7 +335,7 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
   - 이력(`SecureCodeScan`)은 브랜치 대신 올린 zip 이름(`uploadFileName`)과 내용 SHA-256(`uploadSha256`)을 남긴다. 올린 zip과 푼 폴더는 점검이 끝나면 지운다.
 - **API**(`SecureCodeController`, `/api/secure-code`): `POST /scan {appId}`(Git 앱), `POST /scan-upload`(multipart, 소스 업로드 앱, app-mng 권한), `GET /scans?appId=`(최신 500건), `GET /findings?appId=&status=`(기본 OPEN, 빈 값=전체 — 코드는 넣지 않는다), `GET /findings/{id}/code`(상세보기용 조각·연계 추적 근거 코드 `SecureCodeFindingCode`
   — 조각이 메서드 단위라 목록에 넣으면 탐지 수천 건에서 응답이 수 MB가 된다),
-  `POST /findings/status`(실제로 바뀐 항목만 반영). 화면이 고정 메뉴라 `@RequiresProgram` 없이 로그인만 필요 — 취약점 관리와 같은 기준이다. 누가 바꿨는지는 `statusChangedBy`.
+  `POST /findings/status`(실제로 바뀐 항목만 반영). API는 `@RequiresProgram` 없이 로그인만 필요(화면 접근은 프로그램 권한) — 취약점 점검 결과와 같은 기준이다. 누가 바꿨는지는 `statusChangedBy`.
   추적 규칙 초안은 `TraceRuleProposalController`(`/api/secure-code/trace-rule-proposals`): `GET ?status=`(기본 PENDING, 빈 값=전체, 최신 500건, 로그인만),
   `POST /apply {ids}`·`POST /dismiss {ids}`(**app-mng 권한** — 반영한 규칙은 모든 앱의 판정을 바꾼다. 업로드 점검과 같은 기준).
 - **추적 규칙 확인**(`TraceRuleService.review` → `TraceRuleDrafter`·`FrameworkProfiler`·`TraceRuleChangePlanner`·`TraceRulesFileEditor`, 2026-10-08 개편):
@@ -358,7 +384,7 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
 - **규칙셋 버전**은 `rules/*.yml`과 함께 `trace-rules.yml`의 **판정에 쓰는 부분**(`TraceRulesFileEditor.judgmentPart` — `frameworks` 섹션 제외, 줄바꿈 정리)도 해시한다
   (`RuleSetLoader.load(rulesDir, extraContents)`) — 추적 규칙이 바뀌면 같은 코드도 판정이 달라져서 점검 이력에서 그 이유를 추적할 수 있게. 구조 기록만 바뀌면 버전은 그대로다.
   점검 중 규칙을 자동으로 고쳤으면 고친 규칙으로 버전을 다시 계산해 이력에 남긴다.
-- **화면:** 사이드바 "시큐어코딩" 구역의 고정 메뉴 **코드 점검**(`secure-code-scan` — 앱별 점검 버튼·마지막 점검·점검 이력)과
+- **화면:** 사이드바 "시큐어코딩" 구역의 **코드 점검**(`secure-code-scan` — 앱별 점검 버튼·마지막 점검·점검 이력)과
   **코드 점검 결과**(`secure-code-mng` — 탐지 그리드, 처리여부 select·비고 저장, 제목 옆 "총 N건"(밑줄·손 모양 커서, 마우스를 올리거나 키보드 초점이 가면 항목별 건수를 공통 그리드(`Grid.render`, 부모를 `.grid-wrap`으로 둬 숨겨진 상태에서 높이 계산을 하지 않게)로 띄움 — 예전엔 제목 아래 한 줄에 모든 항목을 나열해 항목이 많으면 여러 줄로 꺾였다), 상세 모달의 규칙 id·줄 번호·강조 코드 조각과 CWE 링크(규칙 id는 내부 식별자라 그리드 열에 두지 않고 상세에만 — 무슨 약점인지는 항목·CWE 열이 보여준다),
   `${}` 탐지의 "연계 판정" 열(뱃지 색은 등급과 같은 기준, 열에는 판정만 보이고 대상 식·근거는 툴팁, 상세 모달 뱃지에는 매퍼 판정의 대상 식을 붙임 — "서버가 세팅 · ${loginBrndzCd}". 한 줄에 `${}`가 여럿이면
   탐지도 여럿인데 위치·항목이 같아 어느 행이 어느 값의 판정인지 구분되지 않았다. `SecureCodeFindingView.traceTarget`이 근거 마지막 줄에서 꺼낸다)과 모달의 근거 경로 목록(코드가 붙은 걸음은 밑줄 — 누르면 그 줄 앞뒤 3줄을 펼친다), "AI 판별" 열(취약 (AI) 빨강·확인 필요 (AI) 노랑·
@@ -366,7 +392,7 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
   APP·처리여부는 서버에서, 심각도(여러 값 고르기 — HIGH+MEDIUM처럼)·CWE·파일은 받은 목록을 화면에서 거른다(`search.matches`, 2026-10-08 항목 조건은 뺐다 — 항목별 건수는 "총 N건" 팝업으로 본다). CWE는 번호로 정확히 비교한다("89"·"CWE-89" 모두, 쉼표로 여러 개 — 부분 일치면 89가 CWE-189까지 걸린다). 모달을 열 때 `/findings/{id}/code`로 조각·근거 코드를 받아, 조각은 높이 420px로 묶고 걸린 줄이 보이게 스크롤한다. 코드 조각은 전부 textContent로 그린다.
 - **규칙(51개 / 26개 파일, 행안부 7개 분류 중 시간 및 상태를 뺀 6개 — 2026-10-07 인가 후보 규칙 1개 폐기, iBatis `$값$` 규칙 1개 추가,
   2026-10-08 경로 조작 실행 지점 규칙 `kisa-path-traversal-dynamic-path` 1개 추가, 2026-10-12 가이드 항목 5개 추가):** 가이드(2021) 구현 단계 49개 항목 중
-  36개를 다룬다(Semgrep 규칙 51개 + 연계 추적이 만드는 인가 탐지 2개 — 빠진 항목과 이유는 아래 "패턴으로 확정할 수 없는 항목").
+  36개를 다룬다(Semgrep 규칙 51개 + 연계 추적이 만드는 인가 탐지 2개·엔드포인트 인증 탐지 1개(2026-10-12, 6-1-d) — 빠진 항목과 이유는 아래 "패턴으로 확정할 수 없는 항목").
   **2026-10-12 추가(5개):** 포맷 스트링 삽입(요청값 → `String.format`·`printf`·`MessageFormat`의 형식 자리 taint, ERROR, CWE-134 — `format-string.yml`.
   첫 인자가 Locale이면 두 번째를 형식으로 본다), 중요한 자원에 대한 잘못된 권한 설정(`setWritable/Readable/Executable(true, false)`, `OTHERS_WRITE`,
   other 쓰기가 있는 `PosixFilePermissions.fromString`, WARNING, CWE-732 — `permission.yml`), 쿠키를 통한 정보 노출(서블릿 `Cookie.setMaxAge`가 0·-1이
@@ -483,7 +509,14 @@ AI에게 넘기는 근거도 마찬가지다. OSV에서 뽑은 `knownFixedVersio
   **하드코드된 비밀값 규칙(id에 `hardcoded-secret`)은 뺀다** — 점검 단계에서 값을 `****`로 가려 두므로 AI가 평문인지 `ENC(...)`·`${}` 참조인지 구분할 근거가 없다.
   첫 실행(2026-10-06, CRM_BACK·CRM_BATCH 30건)에서 22건이 비밀값 규칙이었고, 값을 못 본 채 거의 다 "취약(high)"을 냈다(규칙을 되풀이한 것뿐).
   그때 저장된 판별은 DB에 남아 있지만 `isReviewCurrent`가 비밀값 규칙이면 숨긴다. 나머지 8건(업로드 원래 파일명 2·`isAdmin` 3·TLS 2·RSA 1024 1)은 대상 그대로.
-- **보내는 것:** 규칙·행안부 항목·CWE·등급·규칙 설명·파일 경로·줄, 코드 문맥(`aiContext`), 연계 추적 판정·근거.
+- **보내는 것:** 규칙·행안부 항목·CWE·등급·규칙 설명·파일 경로·줄, 코드 문맥(`aiContext`), 연계 추적 판정·근거,
+  **시스템 구조**(2026-10-12, `SecureCodeSystemContext` → 프롬프트 `[시스템 구조]`) — 그 앱 시스템의 프레임워크 구조 기록(인터셉터·필터·AOP·영속성 등,
+  `FrameworkProfiler`), 세션 덮어쓰기 장치, 로그인 정보 객체 이름·getter 접두어, 사용자 범위 키(`trace-rules.yml`, 공통 + 시스템별). 코드가 아니라 이름과
+  찾은 곳 한 줄이고(최대 40줄·줄당 300자, `SecretMasker`로 가림), **입력 해시에 넣지 않는다** — 점검마다 다시 쓰이는 배경 정보라 넣으면 기록이 바뀔 때마다
+  그 앱 판별이 전부 다시 돈다. 그래서 이미 판별한 탐지는 이 정보로 다시 판별되지 않는다. 넣은 이유: AI 입력 코드는 값의 흐름(연계 추적 경로·탐지 메서드가
+  부르는 메서드)으로 고르는데, 설정형 탐지(CSRF 끔·전체 허용·쿠키)는 판단 근거(로그인 유지 방식·인증 인터셉터)가 호출로 이어지지 않은 곳에 있어
+  탐지 메서드 하나만 갔다 — CRM_BACK `FrameWebSecurityConfig`의 CSRF 끔을 "Spring Security에 로그인이 없으니 인증 세션이 없다"며 취약 아님(high)으로 판별했다
+  (실제로는 직접 만든 로그인이 HTTP 세션을 쓰고 인증은 인터셉터가 한다).
   **코드 문맥이 없는 탐지는 대기열에 올리지 않고 다음 점검을 기다린다** — 대상 기준을 넓힌 직후 기존 탐지에는 문맥이 없는데, 화면용 조각으로 판별하면
   근거가 부족하고 다음 점검에서 문맥이 생기면 입력이 바뀌어 다시 판별(과금)된다. 화면은 이런 건도 "판별 대기"로 보이고 모달에 "코드 문맥이 아직 없으면 다음 코드 점검 뒤"라고 적는다.
   코드는 보내기 직전에 `SecretMasker`로 가린다(되돌릴 원문이 없어 대응표는 버린다). **소스 코드가 AI로 나가는 유일한 곳이다**(사내 정책 예외, 2026-10-06 승인,
@@ -556,7 +589,7 @@ fix-plan이 올리는 라이브러리마다 "올리면 무엇이 깨지나"를 �
   `HIGH`로 올린다. 근거가 JIRA뿐이면 confidence `high`를 `medium`으로 낮춘다. `ANALYZED`인데 근거가 없거나, 상태·위험도·신뢰도 값이 틀리거나,
   fix-plan에 없는 `(좌표, from, to)`면 400. `NO_SOURCE`/`FETCH_FAILED`는 분석 필드를 모두 비운다(모델 추측이 남지 않게).
 - **API:** `GET /api/ai/impacts/pending`, `POST /api/ai/impacts`. 결과는 `GET /api/fix-plans/{appId}`의 각 change에 `impact`로 붙는다(없으면 null).
-- **화면:** 고정 메뉴 **조치안**(`program/fix-plan.html`, 로그인만 필요 — `FixPlanController`에 `@RequiresProgram`이 없다). 시스템을 고르면
+- **화면:** **조치안**(`program/fix-plan.html`, API는 로그인만 필요 — `FixPlanController`에 `@RequiresProgram`이 없다). 판단 근거·수정된 pom.xml 팝업은 90vh, 내용 상자 우상단 복사 아이콘(공통 `.copy-box`/`.copy-btn`, 누르면 잠깐 체크 아이콘)으로 복사한다. 시스템을 고르면
   요약(전략·검토 상태·미해결/제외 CVE, 판단 근거·수정된 pom.xml은 모달)과 변경 그리드(점프·호환성 위험·신뢰도·breaking 수·분석 상태)를 보여주고,
   AI가 판단한 값에는 `(AI)`를 붙이고 "조치 전 원문 확인" 안내를 둔다. **호환성 위험(`UpgradeImpact.risk`)은 CVE 심각도가 아니라 그 버전으로 올릴 때
   앱이 깨질 위험**이다(HIGH: 코드·설정 수정 필수 / MEDIUM: 동작 변경 가능 / LOW: 근거상 breaking change 없음 — `impact.system.md`의 risk 기준).
@@ -585,8 +618,8 @@ fix-plan이 올리는 라이브러리마다 "올리면 무엇이 깨지나"를 �
 
 ### 처리여부(status)를 사람이 바꾼 경우
 
-취약점 관리 화면에서 개발자가 분석 후 처리여부를 직접 바꿀 수 있다(`POST /api/vulnerabilities/status`,
-고정 메뉴라 로그인만 필요). 수동으로 **처리완료(RESOLVED)** 한 건은 `statusManual=true`가 되어, 재스캔에서
+취약점 점검 결과 화면에서 개발자가 분석 후 처리여부를 직접 바꿀 수 있다(`POST /api/vulnerabilities/status`,
+API는 로그인만 필요). 수동으로 **처리완료(RESOLVED)** 한 건은 `statusManual=true`가 되어, 재스캔에서
 CVE가 다시 발견돼도 `updateFromScan`이 OPEN으로 되돌리지 않는다 — 원래는 다시 발견되면 무조건 OPEN이었다.
 설치 버전이 바뀌면 옛 버전 기준 판단이라 AI 판단처럼 해제되어 다시 OPEN이 된다. 수동으로 OPEN으로 되돌리면
 다시 스캔 결과를 따른다. 판단 사유는 `remark`(비고)에 적고, 바꾼 사람은 `statusChangedBy`. 서버는 요청 중 실제로 달라진 항목만 반영한다 — 비고만 고친 행에 처리여부까지 다시 적용하면 스캔이 RESOLVED로 만든 건이 수동 처리로 굳기 때문이다. RESOLVED는 fix-plan 대상(`findConfirmedVulnerable`,
@@ -606,7 +639,7 @@ OPEN만)에서도 빠진다.
   `/program/{*path}`가 경로를 그대로 템플릿 이름으로 쓴다 — **화면별 매핑 코드를 찾아도 없다.**
   화면 이름이 `Program.programId`와 같은 값이라, 같은 자리에서 "Program에 등록된 화면이면
   그 권한이 있어야 열린다"까지 함께 판단한다(6장).
-- 사이드바는 홈 아래 2뎁스 그룹 셋 — 기능 그룹 "라이브러리 취약점"(취약점 관리·조회·스캔 이력·조치안·리포트)·"시큐어코딩"(코드 점검·결과)과 관리 그룹. 기능 그룹은 고정 메뉴라 처음엔 펼쳐 두고(`data-default-open="Y"`), 사이드바를 접으면 그룹 제목 대신 하위 메뉴 아이콘을 1뎁스처럼 보여준다(`.nav-group--feature` — 관리 그룹처럼 숨기면 접힌 상태에서 매일 쓰는 메뉴에 못 들어간다). 그룹 접힘 상태는 그룹별로 `sidebar.<그룹 id>.open`에 기억한다. 관리 그룹은 `extraPrograms`(로그인 사용자가 권한을 가진 추가 프로그램)를
+- 사이드바는 홈 아래 2뎁스 그룹 셋 — 기능 그룹 "라이브러리 취약점"(취약점 점검 결과·취약점 점검(아래에 스캔 이력)·조치안·리포트)·"시큐어코딩"(코드 점검·결과)과 관리 그룹. **모든 메뉴는 `programs`에 등록된 프로그램이다**(2026-10-12 — 고정 메뉴 `FixedMenu`를 없앴다). `programs.menu_group`(공통코드 MENU_GROUP: LIB·SECURE·MNG, 비면 관리)으로 그룹이 정해지고 `icon`이 접힌 사이드바 아이콘이다. `SidebarModelAdvice`가 권한 있는 프로그램을 `libPrograms`·`securePrograms`·`extraPrograms`로 나눠 주며 비어 있는 그룹은 그리지 않는다. 기능 6종은 `DataInitializer.seedFeatureProgramsIfAbsent`가 없을 때만 넣고, 넣을 때 기존 사용자 전원에게 전체 버튼 권한을 준다(예전엔 로그인만으로 열려서 접근을 잃지 않게). 기능 그룹은 처음엔 펼쳐 두고(`data-default-open="Y"`), 사이드바를 접으면 그룹 제목 대신 하위 메뉴 아이콘을 1뎁스처럼 보여준다(`.nav-group--feature` — 관리 그룹처럼 숨기면 접힌 상태에서 매일 쓰는 메뉴에 못 들어간다). 그룹 접힘 상태는 그룹별로 `sidebar.<그룹 id>.open`에 기억한다. 관리 그룹은 `extraPrograms`(로그인 사용자가 권한을 가진 추가 프로그램)를
   `SidebarModelAdvice`가 얹는다. 추가 프로그램은 전부 관리성 화면이라 접었다 폈다 하는 **"관리" 그룹 하나**
   아래에 들어간다(`sidebar.html`, 하나도 없으면 그룹 자체를 안 그림). 접을 때 링크는 숨기기만 하므로
   `tabs.js`의 `.nav a` 목록은 그대로이고, 그룹 안 화면이 활성화되면 그룹이 펼쳐진다. 접힘 상태는
@@ -617,6 +650,12 @@ OPEN만)에서도 빠진다.
 - 상단바(`fragments/topbar.html`) 우측은 로그인 사용자 `사용자명(아이디)` · 비밀번호 변경 · 로그아웃이다. 표시 문구는
   `TopbarModelAdvice`가 `loginUserLabel`로 얹는다. 비밀번호 변경 모달은 topbar 조각 안에 있고 `POST /api/users/me/password`
   (본인만 — 대상은 Principal, 현재 비밀번호 재확인, `@RequiresProgram` 없음)를 부른다. 탭(iframe) 안에서는 상단바가 숨겨진다.
+- 사용자 관리의 사용여부(`users.use_yn`, 체크박스, 기존 행은 컬럼 기본값 Y): N이면 `CustomUserDetailsService`가 `disabled`로 넘겨
+  로그인이 막힌다(로그인 화면 문구는 아이디·비밀번호 오류와 같다).
+- 사용자 저장·삭제는 자신보다 높은 역할의 계정에 할 수 없고, 자신보다 높은 역할을 줄 수도 없다. 자기 자신은 삭제할 수 없고 저장하면
+  비밀번호만 바뀐다(다른 값은 무시). 등급은 공통코드 ROLE의 정렬순서(작을수록 높음)다. `GET /api/users`가 조회한 사람 기준
+  `editable`·`self`를 내려 주고, 화면은 잠긴 행(본인은 비밀번호만 열림)을 저장에서 뺀다. 역할 select는
+  `GET /api/users/assignable-roles`(줄 수 있는 역할)만 보여 준다.
 
 **목록 순서:** 취약점이 나오는 화면은 심각도 높은 것부터다(공통 비교기 `domain/SeverityOrder.HIGH_FIRST` — 문자열 정렬이면 LOW가 MEDIUM보다
 앞에 온다, 모르는 값·빈 값은 맨 뒤). 취약점 관리는 서버가(`VulnerabilityService.SCREEN_ORDER`) 심각도 → CVSS 점수 높은 순(없으면 뒤) → 시스템명 → CVE ID로,
@@ -633,7 +672,7 @@ OPEN만)에서도 빠진다.
 | --- | --- |
 | `/css/common-ui.css` | `:root` 변수, `.app-shell`, `.btn`, `.panel-head`, `.page-toolbar`, 코드·원문 블록(`.code-block` — 조치안 pom.xml, 코드 점검 조각. 줄마다 `.code-line > .code-no + .code-text`(flex — 긴 줄이 꺾여도 줄 번호 칸 아래로 안 파고든다), 탐지 줄은 `.hit`, 마우스를 올린 줄은 IDE처럼 줄 전체·줄 번호 강조), 모달(`.modal-backdrop`+`.open` / `.modal` / `.modal-actions`), 모달 안의 라벨|값 상세 표(`.detail-list` — 취약점 관리 상세보기·조치안), 상태 뱃지(`.badge.<코드값 소문자>` — 처리여부·심각도·스캔 결과·점프 폭·영향 분석 상태) 등 페이지 뼈대. 화면 공통 버튼은 항상 우측 상단 — 제목과 한 줄이면 `.panel-head`, 조회조건 영역이 있으면 그 위에 `.page-toolbar` |
 | `/css/grid.css` | `.grid` 공통 모양. 헤더 높이(45px)와 본문 행 높이(32px)를 모든 그리드에서 고정한다 — 화면 `<style>`에서 행 높이를 덮어쓰지 않는다. 헤더는 `position:sticky`라 세로 스크롤 때 고정된다. 행 안의 버튼(취약점 조회 스캔, 취약점 관리 상세보기)은 `.btn.grid-btn` |
-| `/js/grid.js` | **가상 스크롤(`Grid.render`의 `virtual: true`, 행 100개 이상일 때):** 보이는 범위 ± 20행만 tbody에 붙이고 위아래는 높이만 차지하는 빈 칸 행(`tr.grid-spacer`)으로 채운다 — 600행 표가 탭(iframe)을 다시 보일 때 전부 다시 배치되며 버벅였다(코드 점검 결과). 행(tr)은 전부 만들어 `tbody._gridAllRows`에 두고 붙였다 뗐다 해서 입력값이 남고, `getRows`·엑셀·복사·열 이동·현재 행 강조·엔터/방향키 이동(`neighborRow` — 화면 밖 행이면 스크롤해 붙인다)은 전체 행 기준이다. 행 높이 일정(32px)·table 부모가 스크롤 영역이라는 전제라 지금은 코드 점검 결과 그리드만 켠다. 숨겨진 탭에서는 높이가 0이라 계산하지 않고, 다시 보일 때(iframe resize) 맞춘다. (`Grid.copyText`는 그리드 밖에서도 쓰도록 공개한 클립보드 복사 — https가 아니면 execCommand 폴백. 조치안 pom.xml 모달이 쓴다) 컬럼 정의(`COLUMNS`)로 헤더·행·입력 셀까지 만드는 공통 그리드 렌더러. `renderHeader`가 tbody의 첫 안내 행("조회 중입니다...", colspan 자동)도 넣으므로 템플릿의 `<tbody>`는 비워 둔다. 행 데이터는 `getRows`/`getRow`(원본 row + 입력 셀 현재 값, `_rowIndex`/`_isNew`/`_selected`)로 읽고 `onRowClick(tr, row)`도 같은 값을 받는다. select 컬럼에 `display(value, label, row)`를 주면 평소엔 그 결과(뱃지 등)를 보여주고 셀을 누를 때만 select로 바뀐다(취약점 관리 처리여부). 또 table을 `.grid-scroll`로 감싸고 숫자 `width`를 최소 폭으로도 적용해, 화면보다 넓으면 가로 스크롤이 생긴다. `.grid-scroll`의 세로 한도(`max-height`)는 grid.js가 "그 영역 시작 위치부터 화면 아래 끝까지"로 계산해 넣어(헤더·행을 그릴 때, 창 크기 변경 때), 행이 많으면 페이지가 아니라 그리드 본문만 스크롤된다(최소 200px). 화면이 스크롤 영역을 직접 둔 경우(`.grid-wrap`, 취약점 관리)는 감싸지 않는다. **모든 그리드 공통으로** 클릭한 셀에 테두리(`td.cell-current`)를 그리고, 데이터 셀 우클릭 시 공통 메뉴(셀 복사 / 행 복사(탭 구분) / 엑셀 다운로드)를 띄운다 — 값은 화면에 보이는 값(입력 셀은 현재 입력값, select는 옵션 이름)이고 id 없는 컬럼(행 선택·버튼 열)은 행 복사·엑셀에서 빠진다. 입력 셀(에디터) 위에서도 같은 메뉴가 뜨고, 우클릭으로는 입력칸에 커서가 들어가지 않는다(mousedown 기본 동작 차단). 클립보드는 http(비보안 컨텍스트)면 `execCommand` 폴백. 헤더(th)를 드래그앤드롭하면 컬럼 순서가 바뀐다 — 화면이 넘긴 컬럼 배열을 제자리에서 바꾸므로(`moveColumn`) 재조회해도 유지되고 새로고침하면 원래 순서다. **그래서 화면 코드가 컬럼을 순번(`cells[i]`, `COLUMNS[i]`)으로 가정하면 안 된다** — 행 데이터는 항상 `col.id`로 읽는다 |
+| `/js/grid.js` | **컬럼 폭 조절·체크박스 셀(2026-10-12):** 헤더 오른쪽 경계 손잡이(`createResizer`)를 끌면 헤더와 그 열 모든 행(가상 스크롤로 뗀 행 포함)의 폭이 바뀌고 `col.width`에 남는다(순서 바꾸기처럼 재조회해도 유지, 새로고침하면 원래대로). 끄는 동안은 헤더 드래그(순서)를 끈다. 폭이 자유로운 컬럼이 하나도 남지 않으면 표 폭을 컬럼 합으로 둔다(100%를 채우려 남는 폭을 모든 컬럼에 나눠 줘서 다른 컬럼까지 넓어졌다). 체크박스·행 선택 셀과 행 선택 헤더는 빈 곳을 눌러도 체크가 바뀐다(`bindCheckCell` — 값을 바꾸고 change를 보낸다, `click()`은 행 클릭이 두 번 올라간다). **가상 스크롤(`Grid.render`의 `virtual: true`, 행 100개 이상일 때):** 보이는 범위 ± 20행만 tbody에 붙이고 위아래는 높이만 차지하는 빈 칸 행(`tr.grid-spacer`)으로 채운다 — 600행 표가 탭(iframe)을 다시 보일 때 전부 다시 배치되며 버벅였다(코드 점검 결과). 행(tr)은 전부 만들어 `tbody._gridAllRows`에 두고 붙였다 뗐다 해서 입력값이 남고, `getRows`·엑셀·복사·열 이동·현재 행 강조·엔터/방향키 이동(`neighborRow` — 화면 밖 행이면 스크롤해 붙인다)은 전체 행 기준이다. 행 높이 일정(32px)·table 부모가 스크롤 영역이라는 전제라 지금은 코드 점검 결과 그리드만 켠다. 숨겨진 탭에서는 높이가 0이라 계산하지 않고, 다시 보일 때(iframe resize) 맞춘다. (`Grid.copyText`는 그리드 밖에서도 쓰도록 공개한 클립보드 복사 — https가 아니면 execCommand 폴백. 조치안 pom.xml 모달이 쓴다) 컬럼 정의(`COLUMNS`)로 헤더·행·입력 셀까지 만드는 공통 그리드 렌더러. `renderHeader`가 tbody의 첫 안내 행("조회 중입니다...", colspan 자동)도 넣으므로 템플릿의 `<tbody>`는 비워 둔다. 행 데이터는 `getRows`/`getRow`(원본 row + 입력 셀 현재 값, `_rowIndex`/`_isNew`/`_selected`)로 읽고 `onRowClick(tr, row)`도 같은 값을 받는다. select 컬럼에 `display(value, label, row)`를 주면 평소엔 그 결과(뱃지 등)를 보여주고 셀을 누를 때만 select로 바뀐다(취약점 관리 처리여부). 또 table을 `.grid-scroll`로 감싸고 숫자 `width`를 최소 폭으로도 적용해, 화면보다 넓으면 가로 스크롤이 생긴다. `.grid-scroll`의 세로 한도(`max-height`)는 grid.js가 "그 영역 시작 위치부터 화면 아래 끝까지"로 계산해 넣어(헤더·행을 그릴 때, 창 크기 변경 때), 행이 많으면 페이지가 아니라 그리드 본문만 스크롤된다(최소 200px). 화면이 스크롤 영역을 직접 둔 경우(`.grid-wrap`, 취약점 관리)는 감싸지 않는다. **모든 그리드 공통으로** 클릭한 셀에 테두리(`td.cell-current`)를 그리고, 데이터 셀 우클릭 시 공통 메뉴(셀 복사 / 행 복사(탭 구분) / 엑셀 다운로드)를 띄운다 — 값은 화면에 보이는 값(입력 셀은 현재 입력값, select는 옵션 이름)이고 id 없는 컬럼(행 선택·버튼 열)은 행 복사·엑셀에서 빠진다. 입력 셀(에디터) 위에서도 같은 메뉴가 뜨고, 우클릭으로는 입력칸에 커서가 들어가지 않는다(mousedown 기본 동작 차단). 클립보드는 http(비보안 컨텍스트)면 `execCommand` 폴백. 헤더(th)를 드래그앤드롭하면 컬럼 순서가 바뀐다 — 화면이 넘긴 컬럼 배열을 제자리에서 바꾸므로(`moveColumn`) 재조회해도 유지되고 새로고침하면 원래 순서다. **그래서 화면 코드가 컬럼을 순번(`cells[i]`, `COLUMNS[i]`)으로 가정하면 안 된다** — 행 데이터는 항상 `col.id`로 읽는다 |
 | `/js/zip-writer.js` | 외부 라이브러리 없는 무압축 zip 작성기 `ZipWriter.storedBlob([{name, data(Uint8Array)}], type)`. 파일명 UTF-8(표시 비트 켬), ZIP64 없음(65,535개·4GB 넘으면 예외). 엑셀 다운로드(xlsx-writer.js)와 코드 점검 폴더 업로드가 쓴다 — 처음엔 xlsx-writer.js 안에 있었는데 두 번째로 쓰게 되어 뺐다. `loading-overlay.html`이 xlsx-writer.js보다 먼저 싣는다 |
 | `/js/xlsx-writer.js` | 외부 라이브러리 없는 최소 .xlsx 작성기(시트 XML을 `ZipWriter`로 묶음). `XlsxWriter.download(파일명, {sheetName, headers, widths, rows})`. 모든 셀을 문자열로 넣는다 — CSV면 엑셀이 버전 `1.10`을 숫자 1.1로 바꾼다. 헤더는 화면 그리드처럼 항상 가운데 정렬 + 배경 RGB(31,56,100)·흰 굵은 글꼴(`HEADER_FILL`). `loading-overlay.html`이 싣는다 |
 | `/js/modal-drag.js` | 공통 모달(`.modal-backdrop` > `.modal`)을 첫 `h3`(제목줄)로 끌어 옮긴다. `transform`으로만 움직여 닫히면(`.open` 제거) 위치가 초기화되고, 제목줄이 화면 밖으로 못 나가게 막는다. 끌다가 백드롭 위에서 놓으면 생기는 click을 삼켜 "백드롭 클릭 = 닫기"가 오작동하지 않게 한다. `loading-overlay.html`이 싣는다 — **새 모달은 제목을 `h3`로 두기만 하면 된다** |
@@ -662,8 +701,8 @@ OPEN만)에서도 빠진다.
 | 어노테이션이 없으면 | **로그인만 하면 통과한다**(= 권한 미요구 API로 간주) |
 | 예외 1건 | `ComCdController.getCodes`는 `@PreAuthorize` — `includeInactive`가 쿼리 파라미터라 메서드 단위 어노테이션으로 표현할 수 없기 때문 |
 | CSRF | `/api/**` 포함 전체 검증(`CookieCsrfTokenRepository`). 화면 JS는 공통 fetch 래퍼가 헤더를 붙인다. 래퍼는 `XSRF-TOKEN` 쿠키를 읽으므로, `CsrfCookieFilter`가 요청마다 토큰을 화면 렌더링 전에 먼저 읽어 쿠키를 응답 초반에 심는다 — 없으면 로그인(토큰 폐기) 직후 첫 화면에서 쿠키가 응답 버퍼 초과로 버려져 첫 POST가 403이 났다(실제로 그랬다). **`/api/ai/**`만 `ignoringRequestMatchers`로 제외** — 세션 쿠키가 아니라 헤더 토큰으로 인증하는 배치 전용 경로라 CSRF 전제가 성립하지 않고, 빼지 않으면 배치의 POST가 전부 403이 된다 |
-| 화면 공통 버튼 | 툴바 버튼 = **프로그램이 쓰는 버튼**(`programs`의 `search_yn`~`reset_yn`, 기타는 `etc1_nm`~`etc5_nm`에 이름이 있으면) **∩ 사용자에게 허용된 버튼**(`user_program_permissions`의 `search_yn`~`etc5_yn`). `ProgramService.getPageButtons`가 `ProgramButton` 순서로 만든다. 고정 메뉴는 `mvc/FixedMenu`에 버튼이 고정돼 있다. **화면 표시만 막는다** — API는 여전히 `@RequiresProgram`(프로그램 단위)만 본다 |
-| 화면 접근 | `ViewController.programPage`가 화면 이름(`Program.programId`와 같은 값)으로 Program 등록 여부를 보고, 등록돼 있으면 `ProgramAccessGuard`로 권한을 확인한다. 등록되지 않은 화면은 고정 메뉴라 로그인만으로 열린다. 화면 이름은 `[a-z0-9-]+`만 허용(경로 조작 차단) |
+| 화면 공통 버튼 | 툴바 버튼 = **프로그램이 쓰는 버튼**(`programs`의 `search_yn`~`reset_yn`, 기타는 `etc1_nm`~`etc5_nm`에 이름이 있으면) **∩ 사용자에게 허용된 버튼**(`user_program_permissions`의 `search_yn`~`etc5_yn`). `ProgramService.getPageButtons`가 `ProgramButton` 순서로 만든다. **화면 표시만 막는다** — API는 여전히 `@RequiresProgram`(프로그램 단위)만 본다 |
+| 화면 접근 | `ViewController.programPage`가 화면 이름(`Program.programId`와 같은 값)으로 Program 등록 여부를 보고, 등록돼 있으면 `ProgramAccessGuard`로 권한을 확인한다. 등록되지 않은 화면은 로그인만으로 열린다(지금은 모든 화면이 등록돼 있다). 화면 이름은 `[a-z0-9-]+`만 허용(경로 조작 차단) |
 | AI 배치 경로 | `/api/ai/**`는 세션 대신 `X-Internal-Token` 헤더로 자체 인증(`MessageDigest.isEqual`로 상수 시간 비교) |
 | 스캔 대상 | 앱 관리에 등록된 `repoUrl/branch` 조합만 허용. 등록 자체는 `RepoUrlValidator`가 https + 허용 호스트만 통과시킨다 |
 | 역할(`role`) | 공통코드 `ROLE` 그룹 값만 저장 가능. **다만 인가 판단에는 쓰이지 않는다** — 권한은 전적으로 `UserProgramPermission` 기준이고, `role`은 `CustomUserDetailsService`가 authority로 변환만 할 뿐 `hasRole(...)`을 보는 곳이 없다 |
@@ -753,6 +792,7 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `RuleSetLoaderTest` — 규칙 id·규칙셋 버전, 규칙 0개·폴더 없음은 실패, 실제 규칙 폴더 읽기
 - `MybatisDollarTracerTest` — `${}` 연계 추적(상수·삼항·모든 분기 상수 반환은 서버 세팅, else 없는 조건부 세팅은 클라이언트 값, XML 상수 비교·bind,
   세션 덮어쓰기는 container 안의 키만·첫 파라미터 조건, 공통 실행 경로 우회, List 실행 제외, 다른 프레임워크 규칙은 설정만으로, 규칙 없으면 클라이언트 값, 설정 파일 읽기, XML 줄 번호·주석 제외)
+- `AuthCoverageTest` — 인증을 끼우는 자리 읽기(Java 설정 addInterceptor 사슬·상수 배열 제외 경로, XML mvc:interceptor·주석 안 제외, web.xml 필터·서블릿 패턴), 로그인 정보를 읽고 막는 장치만 후보(근거 줄), 인정된 장치가 적용되지 않는 요청 처리 메서드만 탐지, 장치 미인정·미등록·경로를 상수로 못 읽으면 판정 안 함
 - `UserScopeTraceTest` — 조건·값 자리 구분(INSERT 값/INSERT…SELECT WHERE, UPDATE SET/WHERE·SET 안 서브쿼리, `<where>`·`<set>`·`<trim>`, MERGE ON·
   ON DUPLICATE KEY UPDATE, 주석 속 키워드 무시, 키워드 없는 조각은 조건), 값 자리의 키는 인가 판정에서 빠짐, 맵을 돌려주는 유틸 메서드 추적, 사용자 범위 판정(클라이언트가 보낸 키는 클라이언트 값, 설정한 장치가 덮어쓰면 안전·안 덮어쓰는 키는 클라이언트 값, 서비스가 로그인 정보로
   넣어도 공통 실행 경로로 우회, 키가 매퍼에 없으면 판정 없음·알림용 플래그, 설정 없으면 판정 안 함, 위험한 판정만 탐지·지문 고정, `#{}` 첫 이름 키, 설정 읽기) —

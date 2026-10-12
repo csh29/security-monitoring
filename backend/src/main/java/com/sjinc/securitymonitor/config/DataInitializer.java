@@ -22,18 +22,13 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
- * DB가 비어 있을 때(사용자가 한 명도 없을 때) 한 번만 초기 데이터를 심는다 — 관리자 계정, 프로그램·권한, 공통코드,
- * 샘플 앱. H2 파일 DB라 재기동해도 데이터가 남으므로 두 번째 기동부터는 아무것도 하지 않는다.
- *
- * <p>그래서 <b>여기에 심을 데이터를 새로 추가해도 이미 만들어진 DB에는 들어가지 않는다.</b> 기존 DB에도 넣어야 하면
- * data 폴더를 지워 새로 시작하거나, 해당 데이터만 "없으면 넣기"로 따로 심는다.
- *
- * <p>비밀번호는 소스에 평문으로 박아두지 않는다 — 그 상태로 배포되면 계정이 공개된 것과 같다.
- * 대신 DB를 처음 만들 때 무작위로 생성해서 로그 한 줄로만 알려준다(운영자는 서버 로그에서 최초 1회
- * 확인하고, 첫 로그인 후 반드시 비밀번호를 바꿔야 한다). 잃어버리면 data 폴더를 지우고 새로 시작하는 수밖에 없다.
+ * DB가 비어 있을 때(사용자 0명) 한 번만 관리자·프로그램·권한·공통코드·샘플 앱을 심는다. 파일 DB라 기존 DB에는
+ * 새로 추가한 데이터가 들어가지 않으므로 필요하면 "없으면 넣기"로 따로 심는다. 비밀번호는 소스에 두지 않고
+ * 최초 생성 때 무작위로 만들어 로그로만 알린다.
  */
 @Component
 @RequiredArgsConstructor
@@ -45,6 +40,7 @@ public class DataInitializer implements CommandLineRunner {
     private static final String SECURE_CODE_STATUS_GROUP = "SC_STATUS";
     private static final String SECURE_CODE_SEVERITY_GROUP = "SC_SEVERITY";
     private static final String APP_SOURCE_GROUP = "APP_SOURCE";
+    private static final String MENU_GROUP = "MENU_GROUP";
 
     private final UserRepository userRepository;
     private final ProgramRepository programRepository;
@@ -64,8 +60,15 @@ public class DataInitializer implements CommandLineRunner {
         seedSecureCodeStatusIfAbsent();
         seedSecureCodeSeverityIfAbsent();
         seedAppSourceIfAbsent();
+        seedMenuGroupIfAbsent();
 
-        if (userRepository.count() > 0) return;
+        if (userRepository.count() == 0) seedInitialData();
+        // 관리자를 만든 뒤에 돈다 — 새 DB에서도 관리자가 기능 화면 권한을 받게.
+        seedFeatureProgramsIfAbsent();
+    }
+
+    /** DB가 비었을 때 한 번만 — 초기 관리자, 관리 프로그램, 공통코드, 예시 앱. */
+    private void seedInitialData() {
 
         String initialPassword = generateInitialPassword();
         User admin = userRepository.save(User.builder()
@@ -77,8 +80,7 @@ public class DataInitializer implements CommandLineRunner {
         log.warn("초기 관리자 계정을 생성했습니다. username=admin, password={} "
                 + "(이 로그에만 한 번 출력됩니다 — 로그인 후 반드시 비밀번호를 변경하세요)", initialPassword);
 
-        // 사이드바 고정 메뉴 외에 권한 기반으로 노출되는 추가 프로그램 예시.
-        // 실제 프로그램/URL로 교체하거나 관리 화면이 생기면 이 시드는 제거한다.
+        // 관리 그룹 프로그램(메뉴 그룹이 비어 있으면 관리).
         Program programMng = programRepository.save(Program.builder()
                 .programId("program-mng")
                 .programNm("프로그램 관리")
@@ -277,6 +279,52 @@ public class DataInitializer implements CommandLineRunner {
                 .codeValue(App.SOURCE_UPLOAD).codeName("소스 업로드").sortOrder(2).useYn("Y")
                 .remark("Git으로 접근할 수 없는 앱 — zip을 올려 코드 점검만 한다(라이브러리 스캔 불가)").build());
         log.info("공통코드 {}(앱 소스 출처)를 추가했습니다.", APP_SOURCE_GROUP);
+    }
+
+    /** 사이드바 메뉴 그룹(공통코드 MENU_GROUP) — 프로그램 관리 화면의 select. 값은 Program.GROUP_*와 같아야 한다. */
+    private void seedMenuGroupIfAbsent() {
+        if (comCdGroupRepository.existsById(MENU_GROUP)) return;
+
+        comCdGroupRepository.save(ComCdGroup.builder()
+                .codeGroup(MENU_GROUP).groupName("메뉴 그룹").sortOrder(8).useYn("Y").build());
+        comCdRepository.save(ComCd.builder().codeGroup(MENU_GROUP)
+                .codeValue(Program.GROUP_LIB).codeName("라이브러리 취약점").sortOrder(1).useYn("Y").build());
+        comCdRepository.save(ComCd.builder().codeGroup(MENU_GROUP)
+                .codeValue(Program.GROUP_SECURE).codeName("시큐어코딩").sortOrder(2).useYn("Y").build());
+        comCdRepository.save(ComCd.builder().codeGroup(MENU_GROUP)
+                .codeValue(Program.GROUP_MNG).codeName("관리").sortOrder(3).useYn("Y").build());
+        log.info("공통코드 {}(메뉴 그룹)를 추가했습니다.", MENU_GROUP);
+    }
+
+    /**
+     * 기능 화면(라이브러리 취약점 4종·시큐어코딩 2종)을 프로그램으로 등록한다. 없을 때만 넣어 사람이 고친 이름·순서를 덮어쓰지 않는다.
+     * 예전엔 로그인만으로 열리던 화면이라, 새로 넣을 때 기존 사용자 모두에게 전체 버튼 권한을 줘 접근을 잃지 않게 한다.
+     */
+    private void seedFeatureProgramsIfAbsent() {
+        List<Program> added = new ArrayList<>();
+        addIfAbsent(added, "vulnerability-mng", "취약점 점검 결과", Program.GROUP_LIB, "⚠", 1, "Y", "N", "Y", "N", "N");
+        addIfAbsent(added, "vulnerability-search", "취약점 점검", Program.GROUP_LIB, "⌕", 2, "Y", "N", "N", "N", "Y");
+        addIfAbsent(added, "fix-plan", "조치안", Program.GROUP_LIB, "🛠", 3, "Y", "N", "N", "N", "Y");
+        addIfAbsent(added, "report", "리포트", Program.GROUP_LIB, "📄", 4, "N", "N", "N", "N", "N");
+        addIfAbsent(added, "secure-code-scan", "코드 점검", Program.GROUP_SECURE, "⛨", 1, "Y", "N", "N", "N", "Y");
+        addIfAbsent(added, "secure-code-mng", "코드 점검 결과", Program.GROUP_SECURE, "☑", 2, "Y", "N", "Y", "N", "N");
+        if (added.isEmpty()) return;
+        List<User> users = userRepository.findAll();
+        for (User user : users) {
+            for (Program program : added) userProgramPermissionRepository.save(allButtonsPermission(user, program));
+        }
+        log.info("기능 화면 프로그램 {}개를 등록하고 사용자 {}명에게 권한을 줬습니다: {}", added.size(), users.size(),
+                added.stream().map(Program::getProgramId).toList());
+    }
+
+    private void addIfAbsent(List<Program> added, String id, String name, String group, String icon, int sort,
+                             String search, String newYn, String save, String delete, String reset) {
+        if (programRepository.existsById(id)) return;
+        added.add(programRepository.save(Program.builder()
+                .programId(id).programNm(name).url("/program/" + id).sortOrder(sort).useYn("Y")
+                .menuGroup(group).icon(icon)
+                .searchYn(search).newYn(newYn).saveYn(save).deleteYn(delete).resetYn(reset)
+                .build()));
     }
 
     /** 혼동되기 쉬운 문자(0/O, 1/l/I 등)를 뺀 문자셋에서 무작위로 뽑은 초기 비밀번호. */

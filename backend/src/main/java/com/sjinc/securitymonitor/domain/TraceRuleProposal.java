@@ -15,11 +15,9 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 /**
- * 코드 점검이 만든 추적 규칙(trace-rules.yml) 변경 한 건과 그 처리 결과. 판정을 느슨하게 하는 변경은 확인 대기(PENDING)로 두었다가
- * 사람이 반영하고, 점검 중 바로 반영한 변경(AUTO_APPLIED)도 "언제 왜 규칙이 바뀌었나"를 볼 수 있게 함께 남긴다.
- *
- * <p>같은 변경(changeKey)이 점검마다 다시 나오면 새로 만들지 않고 마지막 확인 시각만 바꾼다. 사람이 무시(DISMISSED)한 변경은 다시 묻지 않는다.
- * 앱은 값으로만 둔다(SecureCodeScan과 같은 이유 — FK면 앱을 못 지운다).
+ * 코드 점검이 만든 추적 규칙(trace-rules.yml) 변경 한 건과 처리 결과 — 판정을 느슨하게 하는 변경은 PENDING으로 사람이 반영하고, 자동 반영분도 이력으로 남긴다.
+ * 같은 변경(changeKey)은 마지막 확인 시각만 바꾸고, 무시(DISMISSED)한 변경은 다시 묻지 않는다.
+ * 앱은 값으로만 둔다(FK면 앱을 못 지운다).
  */
 @Entity
 @Table(name = "trace_rule_proposals", indexes = {

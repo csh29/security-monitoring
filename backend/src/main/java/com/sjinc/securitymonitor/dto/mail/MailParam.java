@@ -6,14 +6,7 @@ import lombok.Setter;
 import java.util.List;
 
 /**
- * fileName       : MailParam
- * author         : 최세훈
- * date           : 2025-03-17
- * description    :
- * ===========================================================
- * DATE              AUTHOR             NOTE
- * -----------------------------------------------------------
- * 2025-03-17        최세훈       최초 생성
+ * 메일 발송 요청 파라미터(제목·본문·받는 사람).
  */
 
 @Getter

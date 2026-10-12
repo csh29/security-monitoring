@@ -33,7 +33,7 @@ import java.security.Principal;
 import java.util.List;
 
 /**
- * 시큐어코딩 점검 API. 화면(코드 점검·코드 점검 결과)이 고정 메뉴라 라이브러리 스캔·취약점 관리와 같은 기준으로
+ * 시큐어코딩 점검 API. 화면 접근은 프로그램 권한으로 막고, API는 라이브러리 스캔과 같은 기준으로
  * 로그인만 요구한다 — 그래서 {@code @RequiresProgram}을 붙이지 않는다. 처리여부를 누가 바꿨는지는 statusChangedBy로 남는다.
  */
 @Slf4j
@@ -93,7 +93,7 @@ public class SecureCodeController {
         return scanService.getHistories(appId);
     }
 
-    /** status 기본값 OPEN. 화면의 "전체"는 빈 문자열로 와서 상태 무관 전체를 본다(취약점 관리와 같은 규칙). */
+    /** status 기본값 OPEN. 화면의 "전체"는 빈 문자열로 와서 상태 무관 전체를 본다(취약점 점검 결과와 같은 규칙). */
     @GetMapping("/findings")
     public List<SecureCodeFindingView> getFindings(@RequestParam(required = false) Long appId,
                                                    @RequestParam(required = false, defaultValue = "OPEN") String status) {

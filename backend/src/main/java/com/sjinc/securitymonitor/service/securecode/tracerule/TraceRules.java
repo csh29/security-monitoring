@@ -16,21 +16,16 @@ import java.util.Set;
 import java.util.TreeMap;
 
 /**
- * MyBatis ${} 연계 추적(MybatisDollarTracer)이 시스템마다 다른 프레임워크 규칙을 알기 위한 설정 — securecode/trace-rules.yml.
+ * 연계 추적이 시스템마다 다른 프레임워크 규칙을 알기 위한 설정(securecode/trace-rules.yml) — 판정 로직에 시스템별 이름을 박지 않으려고 뺐다.
+ * 세션 덮어쓰기는 어노테이션이 있을 때만 적용돼 공통으로 둬도 되지만, 로그인 정보 이름·사용자 범위 키는 흔한 이름이라
+ * 다른 시스템에 오탐을 쏟지 않게 공통 + 시스템별로 나누고 점검은 forSystem으로 합친 규칙으로 한다.
  *
- * <p>판정 로직에 특정 시스템의 어노테이션·키 이름을 박아 두지 않고 여기로 뺀다. 세션 덮어쓰기 장치는 대상 코드에 그 어노테이션이
- * 있을 때만 적용되므로 여러 시스템 것을 공통으로 둬도 서로 간섭하지 않는다. 반면 사용자 범위 키·로그인 정보 이름은 흔한 이름(compCd,
- * getLogin)이라 시스템마다 뜻이 다를 수 있어 <b>공통 + 시스템별</b>로 나눈다 — 점검은 공통에 그 시스템 항목을 더한 규칙(forSystem)으로 한다.
- * 한 시스템 때문에 넣은 키가 다른 시스템의 정상 화면을 "부적절한 인가"로 쏟아내지 않게 하기 위함이다.
- *
- * @param sessionOverwrites 요청 매핑에 붙으면 요청 맵의 키를 세션 값으로 덮어쓰는 장치(AOP 등)
- * @param loginMethodPrefixes 이 이름으로 시작하는 메서드의 반환값은 로그인 정보(서버 값)로 본다(예: getLogin)
- * @param loginTypeNames 이 문자열이 타입 이름에 들어간 객체에서 꺼낸 값은 로그인 정보로 본다(예: LoginUser)
- * @param userScopeKeys 매퍼 SQL에서 이 키(#{key}·${key})가 쓰이면 사용자 범위 조건(회사·브랜드·사용자로 데이터를 가르는 값)으로 본다.
- *                      그 값을 클라이언트가 정할 수 있으면 다른 사용자의 데이터에 접근할 수 있다(UserScopeFindings). 비면 이 판정을 하지 않는다
- * @param frameworks 시스템 이름 → 점검 때 설정 파일·소스에서 읽은 프레임워크 구조(FrameworkProfiler). <b>판정에는 쓰지 않는다</b> —
- *                   사람이 추적 규칙 초안을 판단할 때 "이 시스템은 어떤 구조인가"를 보는 기록이다
- * @param systems    시스템 이름(앱 관리의 시스템명) → 그 시스템에만 더하는 로그인 정보 이름·사용자 범위 키. 위 세 목록은 모든 시스템 공통이다
+ * @param sessionOverwrites 요청 맵의 키를 세션 값으로 덮어쓰는 장치(AOP 등)
+ * @param loginMethodPrefixes 이 이름으로 시작하는 메서드의 반환값은 로그인 정보로 본다
+ * @param loginTypeNames 이 문자열이 타입 이름에 들어간 객체의 값은 로그인 정보로 본다
+ * @param userScopeKeys 매퍼 SQL에서 데이터를 사용자 범위로 가르는 키(비면 사용자 범위 판정을 하지 않는다)
+ * @param frameworks 시스템 이름 → 프레임워크 구조 기록(판정에는 쓰지 않는다)
+ * @param systems    시스템 이름 → 그 시스템에만 더하는 로그인 정보 이름·사용자 범위 키·인증 장치
  */
 public record TraceRules(List<SessionOverwrite> sessionOverwrites, Set<String> loginMethodPrefixes,
                          Set<String> loginTypeNames, Set<String> userScopeKeys,
@@ -48,16 +43,30 @@ public record TraceRules(List<SessionOverwrite> sessionOverwrites, Set<String> l
         this(sessionOverwrites, loginMethodPrefixes, loginTypeNames, userScopeKeys, Map.of());
     }
 
-    /** 한 시스템에만 더하는 규칙(공통 목록과 같은 뜻). */
-    public record SystemRules(Set<String> loginMethodPrefixes, Set<String> loginTypeNames, Set<String> userScopeKeys) {
+    /**
+     * 한 시스템에만 더하는 규칙(공통 목록과 같은 뜻).
+     *
+     * @param authDevices 사람이 로그인을 검사한다고 확인한 인터셉터·필터(판정을 느슨하게 해 초안으로만 들어가고 공통 목록은 없다)
+     */
+    public record SystemRules(Set<String> loginMethodPrefixes, Set<String> loginTypeNames, Set<String> userScopeKeys,
+                              Set<String> authDevices) {
+
+        public SystemRules(Set<String> loginMethodPrefixes, Set<String> loginTypeNames, Set<String> userScopeKeys) {
+            this(loginMethodPrefixes, loginTypeNames, userScopeKeys, Set.of());
+        }
 
         public static SystemRules empty() {
-            return new SystemRules(Set.of(), Set.of(), Set.of());
+            return new SystemRules(Set.of(), Set.of(), Set.of(), Set.of());
         }
 
         public boolean isEmpty() {
-            return loginMethodPrefixes.isEmpty() && loginTypeNames.isEmpty() && userScopeKeys.isEmpty();
+            return loginMethodPrefixes.isEmpty() && loginTypeNames.isEmpty() && userScopeKeys.isEmpty() && authDevices.isEmpty();
         }
+    }
+
+    /** 이 시스템에서 사람이 확인한 인증 장치(클래스 이름). 없으면 빈 집합. */
+    public Set<String> authDevices(String system) {
+        return systems.getOrDefault(system, SystemRules.empty()).authDevices();
     }
 
     /** 사용자 범위 키 없이(사용자 범위 판정을 하지 않는 규칙). */
@@ -167,7 +176,7 @@ public record TraceRules(List<SessionOverwrite> sessionOverwrites, Set<String> l
         systems.forEach((system, item) -> {
             if (system == null || !(item instanceof Map<?, ?> rules)) return;
             SystemRules own = new SystemRules(strings(rules.get("loginMethodPrefixes")), strings(rules.get("loginTypeNames")),
-                    strings(rules.get("userScopeKeys")));
+                    strings(rules.get("userScopeKeys")), strings(rules.get("authDevices")));
             if (!own.isEmpty()) result.put(system.toString(), own);
         });
         return result;

@@ -17,22 +17,9 @@ import java.util.zip.ZipException;
 import java.util.zip.ZipFile;
 
 /**
- * 업로드한 소스 zip을 점검용 임시 폴더에 푼다(Git으로 접근할 수 없는 앱 — App.SOURCE_UPLOAD). Spring 없이 테스트할 수 있게 순수 클래스로 둔다.
- *
- * <p>외부에서 받은 압축 파일을 서버에 푸는 일이라 다음을 막는다.
- * <ul>
- *   <li>경로 조작(Zip Slip) — {@code ../}·절대 경로·드라이브 문자로 대상 폴더 밖에 쓰려는 항목이 하나라도 있으면 업로드 전체를 거부한다
- *       (정상적인 소스 압축에는 없다 — 일부만 건너뛰면 "조작된 zip"을 점검 결과로 받아들이게 된다).</li>
- *   <li>압축 폭탄 — 항목 수와 실제로 풀린 총 바이트(헤더에 적힌 크기가 아니라 쓰면서 센 값)에 상한을 둔다.</li>
- *   <li>심볼릭 링크 — ZipFile은 링크를 만들지 않고 일반 파일로 쓴다(링크 대상 경로 문자열이 내용이 된다). 서버 파일을 가리킬 수 없다.</li>
- * </ul>
- * 압축을 풀기만 하고 아무것도 실행하지 않는다 — 코드 점검은 소스를 읽기만 한다(Semgrep·JavaParser).
- *
- * <p>Windows 탐색기로 만든 zip은 한글 파일명이 MS949로 들어 있는 경우가 많다(UTF-8 표시 없이). UTF-8로 읽다 깨지면 MS949로 다시 읽는다
- * (SecureCodeSnippetBuilder가 소스 내용을 읽는 방식과 같다).
- *
- * <p>항목이 전부 한 최상위 폴더 아래에 있으면(프로젝트 폴더째 압축한 경우) 그 폴더를 벗긴다 — 탐지 지문이 저장소 기준 경로로 만들어져,
- * "myapp/src/..."와 "src/..."로 올릴 때마다 경로가 달라지면 재점검에서 모든 탐지가 "해결+신규"로 바뀐다.
+ * 업로드한 소스 zip을 점검용 임시 폴더에 풀기만 한다(실행은 하지 않는다). Zip Slip 항목이 하나라도 있으면 전체를 거부하고,
+ * 항목 수·실제 풀린 바이트에 상한을 두며, 심볼릭 링크는 일반 파일로 써서 서버 파일을 가리킬 수 없다. 이름은 UTF-8이 깨지면 MS949로 읽는다.
+ * 지문이 저장소 기준 경로라 올릴 때마다 경로가 달라지지 않게, 항목이 전부 한 최상위 폴더 아래면 그 폴더를 벗긴다.
  */
 public final class SourceArchiveExtractor {
 
@@ -52,8 +39,8 @@ public final class SourceArchiveExtractor {
     }
 
     /**
-     * 코드 점검 규칙이 보는 확장자. 이게 하나도 없는 zip은 소스가 아니다. 코드 점검 화면의 폴더 업로드(secure-code-scan.html
-     * SOURCE_EXTENSIONS)가 이 목록으로 묶을 파일을 고른다 — 규칙이 새 확장자를 보게 되면 두 곳을 같이 고친다.
+     * 코드 점검 규칙이 보는 확장자(하나도 없는 zip은 소스가 아니다). 화면의 폴더 업로드(secure-code-scan.html)도
+     * 같은 목록을 쓰므로 두 곳을 같이 고친다.
      */
     static final Set<String> SOURCE_EXTENSIONS = Set.of(
             "java", "jsp", "jspx", "jspf", "xml", "properties", "yml", "yaml",

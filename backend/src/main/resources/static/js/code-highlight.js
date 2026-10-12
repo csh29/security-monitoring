@@ -1,15 +1,11 @@
 /**
- * 코드 조각 구문 강조(코드 점검 결과 상세보기). 외부 라이브러리 없이 정규식으로 토큰만 나눈다 — 조각이 열 줄 남짓이라
- * 문법을 다 해석할 필요가 없고, 사내망에서 CDN을 못 쓸 수 있어 xlsx-writer.js처럼 직접 둔다.
+ * 코드 조각 구문 강조. 조각이 짧아 문법 전체를 해석할 필요가 없고 사내망에서 CDN을 못 쓸 수 있어,
+ * 외부 라이브러리 없이 정규식으로 토큰만 나눈다. 주석 중간에서 잘린 조각은 그 부분만 일반 글자로 보인다.
  *
  * 사용법:
- *   CodeHighlight.lines(text, CodeHighlight.languageOf('a/B.java'))
- *     → [[{type:'keyword', text:'private'}, {type:'', text:' '}, ...], ...]  줄마다 토큰 배열
- *   화면은 토큰마다 <span class="tok-<type>">을 만들고 textContent로 넣는다(innerHTML을 쓰지 않는다 — 코드 안의 HTML이 실행되지 않게).
- *   색은 common-ui.css의 .code-block .tok-* 에 있다.
- *   CodeHighlight.enableUsages(pre) — 이름(변수·메서드·클래스·상수, MyBatis ${}·#{})을 누르면 같은 이름을 모두 칠한다(IntelliJ의 사용처 강조).
- *
- * 조각은 파일 중간에서 잘린 것이라 여러 줄 주석·태그 한가운데서 시작할 수 있다. 그런 경우 그 부분만 일반 글자로 보일 뿐 깨지지는 않는다.
+ *   CodeHighlight.lines(text, CodeHighlight.languageOf('a/B.java')) → 줄마다 {type, text} 토큰 배열
+ *   토큰은 <span class="tok-<type>">에 textContent로 넣는다(코드 안 HTML 실행 방지). 색은 common-ui.css .tok-*.
+ *   CodeHighlight.enableUsages(pre) — 이름을 누르면 같은 이름을 모두 강조한다.
  */
 (function (global) {
     const JAVA_KEYWORDS = 'abstract assert boolean break byte case catch char class const continue default do double else enum ' +
@@ -69,7 +65,7 @@
             ['string', /'(?:''|[^'\n])*'/y],
             ['keyword', words(SQL_KEYWORDS, 'iy')],
             ['number', /\b\d+(?:\.\d+)?\b/y],
-            // 이름에 $를 넣지 않는다 — 넣으면 SU_MEM_INFO_${brndzCd}에서 "SU_MEM_INFO_$"까지 먹어 ${}를 못 알아본다(실제로 그랬다).
+            // 이름에 $를 넣지 않는다 — 넣으면 TABLE_${name}에서 "TABLE_$"까지 먹어 ${}를 못 알아본다.
             ['', /[A-Za-z_]\w*/y]
         ],
         config: [

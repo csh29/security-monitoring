@@ -12,17 +12,9 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 이번 점검 결과를 그 앱의 기존 탐지와 맞춘다. 저장은 하지 않고 바꿀 엔티티만 돌려준다 — Spring 없이 테스트하기 위함.
- *
- * <ul>
- *   <li>지문이 처음 보는 것 → 새 OPEN</li>
- *   <li>지문이 이미 있음 → 위치·조각 갱신. 스캔이 RESOLVED로 만든 건이면 다시 OPEN(사람이 정한 상태는 유지)</li>
- *   <li>기존 OPEN인데 이번에 안 걸림 → RESOLVED. 단 두 경우는 그대로 둔다:
- *     그 파일을 Semgrep이 끝까지 못 봤을 때(못 본 것이지 고친 게 아니다),
- *     그 규칙이 이번 규칙셋에 없을 때(규칙을 지운 것이지 고친 게 아니다).</li>
- *   <li>이번에 걸렸지만 같은 줄·같은 CWE의 다른 규칙 건(DuplicateCweMerger)이나 같은 규칙의 바깥 건(NestedMatchMerger)으로 합쳐 빠진 것 → RESOLVED + 비고에 합친 이유
- *     ("조치완료"만 보이면 고친 것으로 오해한다). 사람이 정한 상태는 그대로 둔다.</li>
- * </ul>
+ * 이번 점검 결과를 기존 탐지와 맞춰 바꿀 엔티티만 돌려준다(Spring 없이 테스트하려고 저장은 하지 않는다). 새 지문은 OPEN, 있던 지문은 갱신하고
+ * 안 걸린 OPEN은 RESOLVED로 두되, 파일을 끝까지 못 봤거나 규칙이 빠진 경우는 고친 게 아니라 그대로 둔다.
+ * 합쳐 빠진 건은 고친 것으로 오해하지 않게 비고에 이유를 남기며, 사람이 정한 상태는 유지한다.
  */
 public final class SecureCodeReconciler {
 
@@ -49,7 +41,7 @@ public final class SecureCodeReconciler {
         Map<String, SecureCodeFinding> byFingerprint = new HashMap<>();
         existing.forEach(finding -> byFingerprint.put(finding.getFingerprint(), finding));
 
-        // 같은 지문이 한 번의 결과에 두 번 오면(지문 계산상 없어야 하지만) 유니크 제약 위반으로 점검 전체가 실패한다 — 첫 번째만 쓴다.
+        // 같은 지문이 두 번 오면 유니크 제약 위반으로 점검 전체가 실패하므로 첫 번째만 쓴다.
         Map<String, DetectedFinding> current = new LinkedHashMap<>();
         detected.forEach(d -> current.putIfAbsent(d.fingerprint(), d));
 

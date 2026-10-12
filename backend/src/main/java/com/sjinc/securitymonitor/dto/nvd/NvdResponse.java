@@ -4,12 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import java.util.List;
 
 /**
- * NVD CVE API 2.0의 최상위 응답 객체.
- * GET https://services.nvd.nist.gov/rest/json/cves/2.0 응답 전체를 매핑한다.
- *
- * <p>실제 응답에는 resultsPerPage, startIndex, format, version, timestamp 등의
- * 필드도 포함되어 있지만, 현재 사용하지 않는 필드는 매핑하지 않고
- * {@code @JsonIgnoreProperties(ignoreUnknown = true)}로 무시한다.
+ * NVD CVE API 2.0(/rest/json/cves/2.0)의 최상위 응답 객체. 쓰지 않는 필드는 매핑하지 않고 무시한다.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class NvdResponse {

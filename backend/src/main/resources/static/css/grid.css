@@ -1,24 +1,13 @@
 /**
- * .grid 클래스가 붙은 모든 테이블에 공통 모양을 준다. 화면마다 <style> 태그에 반복해서 적던
- * ".grid th, .grid td{...}" 류 규칙 중, 모든 그리드 화면에서 값이 똑같은 것만 여기로 모았다.
- * padding은 헤더(th)·본문(td) 모두 모든 화면 공통으로 좌우 10px, 상하 0이다 — 화면 <style>에서
- * 덮어쓰지 않는다. 입력 셀(.grid-editor-cell)만 td padding이 0이고 그 안의 input/select가 좌우
- * 10px를 가진다(td padding + input padding이 겹치지 않게). 카드형 테두리/스크롤(취약점 관리 화면처럼 sticky 헤더를 쓰는 곳은
- * border-collapse:separate가 필요) 같은 진짜 화면별 값도 마찬가지.
- *
- * JS로 런타임에 <style>을 주입하지 않고 이렇게 정적 CSS 파일 + <link>로 두는 이유: JS 주입은
- * 스크립트가 실행될 때까지 스타일이 없어서, 화면이 원래 모습대로 그려졌다가 스크립트 실행 후
- * 스타일이 적용되며 한 번 더 바뀌는 깜빡임(FOUC)이 생긴다. <link rel="stylesheet">는 브라우저가
- * 페인트하기 전에 렌더링을 막고 기다려주므로, 서버 렌더링처럼 완성된 모습이 한 번에 뜬다.
+ * .grid 테이블의 공통 모양. th·td padding은 좌우 10px·상하 0으로 고정해 화면에서 덮어쓰지 않으며, 입력 셀만
+ * td padding을 0으로 두고 안의 입력칸이 10px를 가진다(겹침 방지). JS 주입 대신 정적 <link>로 두어 FOUC를 막는다.
  */
 
 .grid{ width:100%; border-collapse:separate; border-spacing:0; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-box); overflow:hidden; }
 .grid th, .grid td{ padding:0 10px; font-size:12.5px; text-align:left; border-bottom:1px solid var(--line); border-right:1px solid var(--line); }
 .grid th:last-child, .grid td:last-child{ border-right:none; }
-/* 헤더는 모든 그리드에서 높이 고정, 좌우 10px, 상하 0 — 화면별 padding 재정의는 td에만 한다.
-   헤더 글자는 줄바꿈하지 않고(좁으면 그리드에 가로 스크롤이 생긴다) 항상 가운데 정렬한다 —
-   컬럼 정의의 align은 본문(td)에만 적용된다. 배경·글자는 본문과 확실히 구분되게 진하게 둔다(예전 #fafafd는
-   흰 본문·행 hover 색과 거의 같아 헤더 경계가 안 보였다). */
+/* 헤더는 높이 고정·줄바꿈 없음(좁으면 가로 스크롤)·항상 가운데 정렬이다(컬럼 align은 td에만 적용).
+   배경은 본문·hover 색과 확실히 구분되게 진하게 둔다. */
 .grid th{ height:45px; box-sizing:border-box; padding:0 10px; white-space:nowrap; text-align:center; background:#e6e6f0; color:var(--text); font-weight:700;
           position:sticky; top:0; z-index:1; /* 세로 스크롤 시 헤더 고정(아래 .grid-scroll 참고) */ }
 /* 헤더 배경(#e6e6f0)이 공통 선 색(--line #e8e8f2)과 거의 같아 헤더 칸 사이 선이 안 보였다 — 헤더만 선을 더 진하게 둔다.
@@ -26,16 +15,13 @@
 /* 그리드 바깥 테두리 색 — 헤더 칸 사이 선과 헤더·본문의 바깥쪽 끝에 쓴다(본문 안쪽 선은 연한 --line 그대로). */
 .grid{ --grid-edge:#c9c9db; }
 .grid th{ border-right-color:var(--grid-edge); border-bottom-color:#b4b4c8; }
-/* 헤더 바깥쪽(위, 첫 컬럼 왼쪽, 마지막 컬럼 오른쪽)도 같은 색으로 둘러 헤더가 한 덩어리로 보이게 한다. 그리드 바깥
-   테두리(.grid / .grid-scroll / .grid-wrap의 --line)는 페이지 배경과 거의 같은 색이라 겹쳐도 두 줄로 보이지 않는다.
-   마지막 컬럼은 공통 규칙(.grid th:last-child{border-right:none})보다 우선하도록 thead를 붙여 특이도를 높인다. */
+/* 헤더 바깥쪽도 같은 색으로 둘러 한 덩어리로 보이게 한다. 마지막 컬럼은 .grid th:last-child{border-right:none}보다
+   우선하도록 thead를 붙여 특이도를 높인다. */
 .grid thead th{ border-top:1px solid var(--grid-edge); }
 .grid thead th:first-child{ border-left:1px solid var(--grid-edge); }
 .grid thead th:last-child{ border-right:1px solid var(--grid-edge); }
-/* 본문 행 높이도 모든 그리드에서 고정한다. 예전엔 행 높이가 내용에 따라 달라져서, 입력칸이 있는
-   그리드(프로그램 관리 등, 입력칸 높이 약 30px)와 글자만 있는 그리드(공통코드 관리 좌측 그룹 목록,
-   취약점 관리 등)의 행 높이가 화면마다 제각각이었다. 입력칸·버튼이 들어가는 높이로 모두 맞춘다
-   (td의 height는 최소 높이라, 입력칸이 여기 안에 들어가야 모든 화면이 정확히 같아진다). */
+/* 본문 행 높이를 입력칸·버튼이 들어가는 높이로 고정해 입력 그리드와 글자 그리드의 행 높이를 맞춘다
+   (td height는 최소 높이라 입력칸이 이 안에 들어가야 같아진다). */
 .grid tbody td{ height:32px; box-sizing:border-box; }
 /* 본문은 바깥쪽 끝(첫 컬럼 왼쪽, 마지막 컬럼 오른쪽, 마지막 행 아래)만 헤더와 같은 진한 선으로 둘러 표 전체가 한 상자로
    보이게 한다. 안쪽 칸 사이 선은 연한 --line 그대로 둔다. 안내 문구 행(td.empty, colspan)은 첫·마지막 칸이 같아 양쪽이 다 붙는다. */
@@ -52,13 +38,9 @@
 
 .grid .empty{ text-align:center; color:var(--text-sub); }
 
-/* 그리드 스크롤 영역(grid.js가 table을 이 div로 감싼다). 화면보다 넓으면 가로, 행이 많으면 세로로
-   스크롤하고, 세로 스크롤 때는 th의 position:sticky로 헤더는 고정되고 본문만 움직인다. 세로 한도
-   (max-height)는 grid.js가 "이 영역부터 화면 아래 끝까지"로 계산해 넣는다 — 화면마다 조회영역·패널
-   높이가 달라서 CSS 고정값으로는 맞출 수 없기 때문.
-   sticky가 먹으려면 스크롤 컨테이너가 이 div여야 해서, 테두리·모서리를 table에서 여기로 옮기고 table의
-   overflow:hidden을 푼다(table에 overflow가 걸리면 그게 sticky의 기준이 되어 헤더가 고정되지 않는다).
-   같은 이유로 .grid는 border-collapse:separate다(collapse면 sticky 헤더의 테두리가 스크롤 중 사라진다). */
+/* 그리드 스크롤 영역(grid.js가 table을 감싼다). max-height는 화면마다 달라 grid.js가 화면 아래 끝까지로 계산한다.
+   sticky 헤더가 먹으려면 이 div가 스크롤 컨테이너여야 해서 테두리를 여기로 옮기고 table의 overflow를 푼다
+   (같은 이유로 .grid는 border-collapse:separate다). */
 .grid-scroll{ overflow:auto; min-width:0; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-box); }
 .grid-scroll > .grid{ border:none; border-radius:0; overflow:visible; }
 
@@ -67,6 +49,12 @@
    — 일반 텍스트 셀과 글자 시작 위치가 같아진다. grid.js가 text/number/password/select 셀에 붙인다
    (체크박스 셀은 가운데 정렬이라 일반 셀과 같은 padding을 쓴다). */
 .grid td.grid-editor-cell{ padding:0; }
+/* 체크박스 셀은 빈 곳을 눌러도 체크가 바뀐다(grid.js bindCheckCell). */
+.grid .grid-check-cell{ cursor:pointer; }
+/* 컬럼 폭 조절 손잡이(grid.js createResizer) — 헤더 오른쪽 경계. 끄는 동안은 화면 전체 커서를 고정하고 글자 선택을 막는다. */
+.grid th .grid-col-resizer{ position:absolute; top:0; right:0; width:6px; height:100%; cursor:col-resize; z-index:2; }
+.grid th .grid-col-resizer:hover{ background:var(--accent-soft); }
+body.grid-col-resizing{ cursor:col-resize; user-select:none; }
 .grid td input:not([type="checkbox"]), .grid td select{ min-width:80px; }
 .grid td input, .grid td select{
     width:100%; box-sizing:border-box; border:1px solid transparent; background:transparent;

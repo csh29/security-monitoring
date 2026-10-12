@@ -37,14 +37,9 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * 메서드 안에서 상수로 정해지는 값(리터럴, 한 번만 정해지는 지역 변수, static final 필드, 그 사이의 사칙연산·비교·문자열 메서드)을 계산해
- * <b>절대 실행되지 않는 갈래</b>를 가려낸다. ValueOriginTracer가 대입을 모두 모아 가장 나쁜 값으로 판정하다 보니
- * {@code switch ("ABC".charAt(1)) { case 'A': bar = param; case 'B': bar = "bob"; }}처럼 실제로는 안전한 갈래만 도는 코드를
- * 클라이언트 값으로 판정했다(OWASP Benchmark SQL 인젝션 오탐의 대부분).
- *
- * <p>모르면 계산하지 않는다(Optional.empty) — 그 갈래는 실행될 수 있다고 보고, 판정은 지금처럼 가장 나쁜 쪽으로 남는다. 안전으로 기울이지 않는다.
- *
- * <p>값 표현: 정수·char 연산 결과는 Long, 실수는 Double, char 리터럴·charAt 결과는 Character, 그 밖에 String·Boolean.
+ * 메서드 안의 상수 값(리터럴, 한 번만 정해지는 지역 변수, static final 필드와 그 연산)을 계산해 <b>절대 실행되지 않는 갈래</b>를 가려낸다.
+ * 모든 대입을 가장 나쁜 값으로 모으면 안전한 갈래만 도는 코드도 클라이언트 값으로 오탐하기 때문이다.
+ * 계산하지 못하면 empty로 두어 실행될 수 있다고 본다 — 판정을 안전 쪽으로 기울이지 않는다.
  */
 final class ConstantFolder {
 

@@ -4,15 +4,14 @@ package com.sjinc.securitymonitor.dto.securecode;
  * 이번 점검에서 탐지된 한 건 — Semgrep 결과에 코드 조각과 지문을 붙인 것(SecureCodeSnippetBuilder).
  * 저장 전 값이라 엔티티(SecureCodeFinding)와 따로 둔다.
  *
- * @param traceSafety        MyBatis ${} 연계 추적 판정(DollarVerdict.Safety 이름). 추적 대상이 아니거나 못 맞췄으면 null
- * @param traceEvidence      그 판정의 근거 경로(한 줄에 한 걸음). traceSafety가 null이면 null
- * @param aiContext          AI 판별에 보낼 코드 문맥(걸린 줄을 감싼 메서드, 길면 걸린 줄 주변). AI 판별 대상이 아니면 null
+ * @param traceSafety        연계 추적 판정 이름(추적 대상이 아니면 null)
+ * @param traceEvidence      판정 근거 경로(한 줄에 한 걸음, 판정이 없으면 null)
+ * @param aiContext          AI 판별에 보낼 감싼 메서드 코드(대상이 아니면 null)
  * @param aiContextStartLine aiContext 첫 줄의 줄 번호
- * @param traceCode          연계 추적 근거 걸음마다의 주변 코드(TraceStepCode 목록 JSON, 근거와 같은 순서). 근거가 없거나 코드를 못 붙였으면 null
- * @param aiRelated          AI 판별에 탐지 메서드와 함께 보낼 다른 메서드들(AiRelatedCode 목록 JSON — 연계 추적 경로·탐지 메서드가 부르는 메서드).
- *                           AI 판별 대상이 아니거나 없으면 null
- * @param startCol           Semgrep이 걸린 범위의 시작 열(UTF-8 바이트 기준, 1부터) — 연계 추적이 그 범위의 식을 찾는다(SinkTracer). 모르면 0
- * @param endCol             걸린 범위의 끝 열(끝 글자 다음). 모르면 0
+ * @param traceCode          근거 걸음마다의 주변 코드 JSON(없으면 null)
+ * @param aiRelated          AI 판별에 함께 보낼 관련 메서드 JSON(없으면 null)
+ * @param startCol           걸린 범위의 시작 열(UTF-8 바이트, 1부터, 모르면 0)
+ * @param endCol             걸린 범위의 끝 열(끝 글자 다음, 모르면 0)
  */
 public record DetectedFinding(
         String fingerprint,

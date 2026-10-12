@@ -1,19 +1,6 @@
-"""라이브러리 취약점(CVE) AI 단계 — 스캔한 의존성의 CVE 판단·조치안·설명 요약·업그레이드 영향 분석.
-
-네 단계로 동작한다.
-  stage 1) 자바 백엔드(/api/ai/**)에서 아직 AI 판단이 없는 취약점을 읽어와서, 이 의존성 버전이
-           실제로 해당 CVE에 취약한지 / 어떤 버전으로 올려야 하는지 판단하고 저장한다. 첫 건은
-           혼자 먼저 보내 프롬프트 캐시를 예열한 뒤, 나머지는 ASSESS_MAX_WORKERS개씩 병렬로 처리한다.
-  stage 2) stage 1에서 "취약함"으로 확정된 CVE들을, 앱(pom.xml) 단위로 모아서
-           한 번에 취합 판단시켜 pom.xml 수정안(diff가 작은 전략 선택 포함)을 만들고 저장한다.
-  stage 3) 등급·판정과 무관하게, 아직 요약이 없거나 NVD가 설명을 바꾼 CVE의 영어 설명을 한국어 2~3문장으로
-           요약해서 저장한다(CVE ID당 한 번, SUMMARY_BATCH_SIZE건씩 묶어 한 요청으로). 판단이 아니라 화면에서
-           읽기 위한 것이라 싼 모델(SUMMARY_MODEL)을 쓴다.
-  stage 4) fix-plan이 제안한 마이너·메이저 업그레이드마다 릴리스 노트를 모아(release_notes.py, AI 없음) 그 근거만으로
-           breaking change·필요 조치·테스트 영역을 정리해 저장한다. (좌표, from, to) 단위라 여러 앱이 같은 업그레이드를
-           하면 한 번만 분석한다. 근거를 못 찾으면 AI를 부르지 않는다.
-
-보통은 진입점(vuln_assessor.py)이 시큐어코딩 단계와 함께 돌린다. 이 단계만 돌리려면 `py cve_assessor.py`.
+"""라이브러리 취약점(CVE) AI 단계 — stage 1 CVE 판단, stage 2 앱별 pom.xml 수정안(fix-plan),
+stage 3 설명 한국어 요약, stage 4 릴리스 노트 근거의 업그레이드 영향 분석을 차례로 돌린다.
+보통은 진입점(vuln_assessor.py)이 함께 돌리고, 이 단계만 돌리려면 `py cve_assessor.py`.
 """
 
 from __future__ import annotations
@@ -31,27 +18,20 @@ from ai_common import (MODEL, BackendClient, BatchReport, TokenUsageTracker, _ex
 from prompt_rules import ASSESS_SYSTEM, FIX_PLAN_SYSTEM, IMPACT_SYSTEM, SUMMARIZE_SYSTEM, load_prompt
 from release_notes import CollectionResult, ReleaseDocument, collect as collect_release_notes
 
-# stage 3(설명 요약)은 버전 범위를 추론하는 게 아니라 영어 문장 몇 줄을 한국어로 줄이는 일이라 Haiku로 충분하다.
-# 판단용 MODEL과 같이 쓰면 등급 제한 없이 모든 CVE에 도는 단계라 비용이 그만큼 커진다.
+# 설명 요약은 영어 몇 줄을 한국어로 줄이는 일이고 모든 CVE에 도는 단계라, 비용을 줄이려 Haiku를 쓴다.
 SUMMARY_MODEL = "claude-haiku-4-5"
-# 한 요청에 묶는 CVE 수. 건마다 따로 보내면 요약 규칙(시스템 프롬프트, 약 500토큰)이 건수만큼 반복돼
-# 입력의 60% 이상을 차지했다(104건에 입력 8만 토큰). 캐시 최소 길이보다 짧아 캐시로도 못 줄인다.
-# 너무 크게 묶으면 한 요청 실패에 그만큼 같이 실패하고(다음 배치에서 다시 대기가 되긴 한다) 출력이 길어진다.
+# 한 요청에 묶는 CVE 수. 건마다 보내면 캐시도 못 붙는 짧은 시스템 프롬프트가 건수만큼 반복되고,
+# 너무 크게 묶으면 한 요청 실패에 같이 실패하며 출력이 길어진다.
 SUMMARY_BATCH_SIZE = 10
-# 건당 요약 출력이 100~220토큰(실측)이라 10건 + JSON 껍데기로 넉넉히 잡는다. 잘리면(_reject_if_truncated)
-# 그 묶음은 저장하지 않는다 — JSON이 중간에 끊겨 일부만 파싱되는 상황을 만들지 않기 위해서다.
+# 10건 요약 + JSON 껍데기에 넉넉한 값. 잘리면 일부만 파싱되지 않게 묶음 전체를 저장하지 않는다.
 SUMMARY_MAX_TOKENS = 8192
 SUMMARY_MAX_WORKERS = 5
 
-# stage 1(CVE 판단)을 병렬로 돌릴 워커 수. 너무 높으면 두 가지 문제가 생긴다:
-#   1) 프롬프트 캐시가 아직 안 만들어진 상태에서 여러 요청이 동시에 도착하면 각자 따로
-#      캐시를 써버려서(cache_creation 중복) 캐싱 이득이 줄어든다.
-#   2) Anthropic API의 분당 요청/토큰 제한(rate limit)에 걸릴 수 있다.
-# 그래서 첫 건은 반드시 혼자 먼저 보내서 캐시를 예열한 뒤, 나머지만 이 워커 수로 병렬 처리한다.
+# stage 1 병렬 워커 수. 너무 높으면 캐시가 생기기 전 요청끼리 캐시를 중복으로 쓰고 rate limit에 걸릴 수 있어,
+# 첫 건으로 캐시를 예열한 뒤 나머지만 이 수로 병렬 처리한다.
 ASSESS_MAX_WORKERS = 5
 
-# Structured Outputs 스키마. output_config.format 으로 넘기면 응답이 이 스키마를
-# 만족하는 JSON 텍스트임이 보장되므로 코드펜스를 벗겨낼 필요가 없다.
+# Structured Outputs 스키마. 응답이 이 스키마를 만족하는 JSON임이 보장된다.
 ASSESSMENT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -95,9 +75,8 @@ FIX_PLAN_SCHEMA = {
         "pom_xml": {"type": "string"},
         "unresolved_cves": {"type": "string"},
         "reasoning": {"type": "string"},
-        # pom.xml에서 바꾼 버전 값 목록. 업그레이드 영향 분석이 reasoning 문장을 다시 해석하지 않고 이걸 입력으로
-        # 쓴다. 점프 폭(패치/마이너/메이저)은 자바가 계산하므로 여기서 받지 않는다. via 값은 자바
-        # FixPlanService.CHANGE_VIA와 같아야 한다.
+        # pom.xml에서 바꾼 버전 값 목록 — 영향 분석이 reasoning을 다시 해석하지 않고 이걸 입력으로 쓴다.
+        # via 값은 자바 FixPlanService.CHANGE_VIA와 같아야 한다.
         "changes": {
             "type": "array",
             "items": {
@@ -130,8 +109,7 @@ IMPACT_SCHEMA = {
                 "properties": {
                     "summary": {"type": "string"},
                     "source_url": {"type": "string"},
-                    # 이 변경이 가리키는 클래스·패키지·설정 키 이름. 서버가 앱의 import·설정 키와 대조한다(CodeUsageMatcher) —
-                    # 코드 목록을 AI로 보내지 않고 이름만 받아 서버 안에서 맞춰 보기 위함이다.
+                    # 이 변경이 가리키는 클래스·패키지·설정 키 이름. 코드를 AI로 보내지 않고 서버가 앱의 import와 대조한다.
                     "symbols": {"type": "array", "items": {"type": "string"}},
                 },
                 "required": ["summary", "source_url", "symbols"],
@@ -151,17 +129,11 @@ IMPACT_MAX_TOKENS = 32000
 
 ASSESS_MAX_TOKENS = 4096
 
-# fix-plan은 pom.xml 전문 + reasoning을 그대로 받아야 해서 출력이 길다. 게다가 claude-sonnet-5는
-# thinking 파라미터를 안 넘겨도 adaptive thinking이 켜진 채로 돌고(effort 기본 high), thinking
-# 토큰도 max_tokens 한도를 같이 쓴다. 그래서 같은 앱이라도 thinking 양에 따라 출력이 9천~3만 토큰으로
-# 들쭉날쭉했고, 32000에서는 CRM_BACK이 실제로 잘렸다(_reject_if_truncated가 저장을 막음).
-# 스트리밍으로 받으니 큰 값이어도 HTTP 타임아웃 걱정이 없고, 모델 출력 상한(128K) 안이다.
-# 한도는 상한일 뿐 실제로 쓴 만큼만 과금된다.
+# fix-plan은 pom.xml 전문을 받고 adaptive thinking도 같은 한도를 써서 출력이 들쭉날쭉하고 32000에서는 잘렸다.
+# 스트리밍이라 타임아웃 걱정이 없고, 한도는 상한일 뿐 쓴 만큼만 과금된다.
 FIX_PLAN_MAX_TOKENS = 64000
 
-# output_config.effort를 안 넘기면 claude-sonnet-5는 기본 "high"로 돈다. CVE 판단은 정해진
-# 스키마 안에서 고르는 분류 작업이라 medium으로 충분하다고 보고 낮춘다 — fix-plan(다중 CVE를
-# 취합해서 pom.xml 전체를 다시 써야 하는 더 복잡한 작업)은 그대로 기본값(high)을 쓴다.
+# CVE 판단은 스키마 안에서 고르는 분류라 기본값(high) 대신 medium으로 낮춘다. 더 복잡한 fix-plan은 기본값을 쓴다.
 ASSESS_EFFORT = "medium"
 
 
@@ -179,9 +151,8 @@ class DependencyContext:
     brought_in_by: Optional[str] = None
     # OSV가 알려주는 수정 버전 후보(쉼표 구분). 있으면 설명을 다시 해석해서 유추할 필요가 없다.
     known_fixed_versions: Optional[str] = None
-    # NVD의 구조화된 영향 버전 범위(cpeMatch)와 설치 버전을 자바가 직접 비교한 결과.
-    # None이면 NVD가 구조화된 범위를 안 줬거나 파싱 불가라 판단 불가라는 뜻 — 이때만
-    # description 프로즈를 근거로 판단한다. True/False면 그 자체가 최종 근거다.
+    # 구조화된 영향 버전 범위와 설치 버전을 자바가 직접 비교한 결과. True/False면 그 자체가 최종 근거이고,
+    # None(범위 없음·파싱 불가)일 때만 description을 근거로 판단한다.
     nvd_range_vulnerable: Optional[bool] = None
     nvd_matched_range: Optional[str] = None
 
@@ -223,9 +194,8 @@ class CveFinding:
     ai_fixed_version: Optional[str]
     ai_confidence: Optional[str]
     brought_in_by: Optional[str]  # 이 아티팩트를 끌고 들어온 최상위 직접 의존성. 직접 의존성 자신이면 스스로를 가리킴.
-    # 최상위 직접 의존성부터 이 아티팩트까지의 전체 조상 체인("A -> B -> C" 형태로 이미 조인됨).
-    # 직접 의존성이면 None. 자바에서 dependency:tree를 파싱해 미리 계산한 값이라, reasoning의
-    # "경로:" 줄은 이 값을 그대로 인용하기만 하면 된다 — dependency:tree를 다시 훑어 재구성하지 않는다.
+    # 최상위 직접 의존성부터 이 아티팩트까지의 조상 체인("A -> B -> C"), 직접 의존성이면 None.
+    # 자바가 dependency:tree에서 미리 계산한 값이라 reasoning의 "경로:"는 이 값을 그대로 인용한다.
     dependency_path: Optional[str] = None
 
     @staticmethod
@@ -371,12 +341,9 @@ class VulnAssessorClient:
             model=self._model,
             # 확장 사고가 붙으면 답이 나오기 전에 토큰을 다 쓸 수 있어 여유 있게 잡는다.
             max_tokens=ASSESS_MAX_TOKENS,
-            # 판정 룰은 prompts/assess.system.md 에 있다. CVE 건마다 같은 내용이라, 판단할 CVE가
-            # 2건 이상인 배치에서만 캐시를 붙인다(두 번째 요청부터 입력 토큰 값이 1/10).
+            # 판정 룰은 CVE마다 같은 내용이라 판단할 CVE가 2건 이상인 배치에서만 캐시를 붙인다.
             system=_system_prompt(load_prompt(ASSESS_SYSTEM), self._use_cache),
-            # CVE 판단은 정해진 스키마 안에서 취약 여부/버전을 고르는 분류에 가까운 작업이라
-            # (Claude API 가이드 기준 effort 미설정 시 기본값은 high) high까지는 필요 없다.
-            # medium으로 낮춰서 품질 손해 없이 thinking/output 토큰을 아낀다.
+            # 분류에 가까운 작업이라 effort를 medium으로 낮춰 thinking/output 토큰을 아낀다.
             output_config={
                 "format": {"type": "json_schema", "schema": ASSESSMENT_SCHEMA},
                 "effort": ASSESS_EFFORT,
@@ -388,15 +355,8 @@ class VulnAssessorClient:
         return self._parse_response(_extract_text(response))
 
     def _build_prompt(self, ctx: DependencyContext) -> str:
-        # 판정 룰은 전부 시스템 프롬프트(prompts/)로 갔다. 여기는 데이터만 담는다.
-        #
-        # description은 절대 축약하지 않는다 — 예전엔 OSV 후보가 있으면 "컴포넌트 동일성 확인용"
-        # 이라고 보고 240자로 잘랐는데, 실측해보니 여러 CVE에서 "Affected versions:" 목록이
-        # 뒷부분에 나와서 그 전에 잘려나갔다. is_vulnerable 판단(범위 안/밖)에 description이
-        # 실제로 필요한 경우가 많아 이제 항상 전문을 보낸다.
-        # nvd_range_vulnerable은 NVD의 configurations가 있으면 그 결과, 없으면 OSV의 구조화 범위
-        # (affected[].ranges)로 자바가 대신 확인한 결과다 — 어느 쪽이든 이미 결정론적으로 나온
-        # 값이라 여기까지 내려온다는 건 둘 다 구조화 데이터가 없었다는 뜻이다.
+        # 판정 룰은 시스템 프롬프트에 있고 여기는 데이터만 담는다. 영향 버전 목록이 설명 뒷부분에
+        # 나오는 경우가 많아 description은 축약하지 않는다.
         if ctx.nvd_range_vulnerable is None:
             nvd_line = "- 구조화 범위 판정(NVD/OSV): 판단 불가(구조화된 영향 범위 데이터 없음) — 아래 설명을 근거로 직접 판단할 것"
         else:
@@ -430,13 +390,11 @@ class FixPlanGeneratorClient:
         self.usage = TokenUsageTracker()
 
     def generate(self, target: AppFixPlanTarget) -> FixPlan:
-        # 출력이 길어서 큰 max_tokens가 필요하고, 큰 max_tokens는 비스트리밍에서
-        # HTTP 타임아웃에 걸릴 수 있어 스트리밍으로 받는다.
+        # 큰 max_tokens는 비스트리밍에서 HTTP 타임아웃에 걸릴 수 있어 스트리밍으로 받는다.
         with self._client.messages.stream(
             model=self._model,
             max_tokens=FIX_PLAN_MAX_TOKENS,
-            # 앱이 2건 이상인 배치에서만 캐시를 붙인다. 앱 하나의 생성이 5분(캐시 수명, 요청 시작 기준)을
-            # 넘기면 다음 앱은 어차피 못 읽지만, 그 경우 손해는 쓰기 할증 한 번뿐이다.
+            # 앱이 2건 이상인 배치에서만 캐시를 붙인다(생성이 캐시 수명을 넘겨도 손해는 쓰기 할증 한 번뿐).
             system=_system_prompt(load_prompt(FIX_PLAN_SYSTEM), self._use_cache),
             output_config={
                 "format": {"type": "json_schema", "schema": FIX_PLAN_SCHEMA},
@@ -451,10 +409,8 @@ class FixPlanGeneratorClient:
 
     @staticmethod
     def _build_findings_text(cve_findings: list["CveFinding"]) -> str:
-        """같은 아티팩트(groupId:artifactId:설치버전)에 CVE가 여러 개 걸리면(예: netty 계열
-        하나에 8개) 경로처럼 CVE마다 똑같이 반복되는 필드를 매번 다시 안 쓰고, 아티팩트당
-        블록 하나로 묶어서 CVE별로 다른 값(권장 버전/신뢰도)만 나열한다. dependency_path가
-        이미 brought_in_by를 포함하는 전체 체인이라 brought_in_by는 따로 반복하지 않는다."""
+        """같은 아티팩트에 걸린 CVE들을 블록 하나로 묶어, 경로처럼 반복되는 필드는 한 번만 쓰고
+        CVE별로 다른 값(권장 버전/신뢰도)만 나열한다."""
         groups: dict[tuple, list["CveFinding"]] = {}
         for f in cve_findings:
             key = (f.group_id, f.artifact_id, f.installed_version, f.dependency_path)
@@ -600,7 +556,7 @@ class UpgradeImpactAnalyzerClient:
 def _analyze_impact(analyzer: UpgradeImpactAnalyzerClient, backend: "CveBackendClient",
                     target: UpgradeImpactTarget) -> str:
     """업그레이드 한 건을 수집 → (근거가 있으면) 분석 → 저장하고, 저장한 상태를 한 줄로 돌려준다.
-    AI 호출이나 저장이 실패하면 예외를 그대로 올린다 — 저장하지 않았으니 다음 배치에서 다시 대기로 잡힌다."""
+    실패하면 예외를 그대로 올린다(저장하지 않았으니 다음 배치에서 다시 대기가 된다)."""
     collected = collect_release_notes(target.coordinate, target.from_version, target.to_version)
     notes = collected.notes + collected.errors
     if not collected.documents:
@@ -620,12 +576,8 @@ def _analyze_impact(analyzer: UpgradeImpactAnalyzerClient, backend: "CveBackendC
 
 
 class DescriptionSummarizerClient:
-    """stage 3: NVD 영어 설명을 한국어 2~3문장으로 요약한다.
-
-    Haiku 4.5에는 effort(output_config.effort)를 넘기면 오류가 나고, thinking은 안 넘기면 꺼진 채로 돈다 —
-    요약에는 둘 다 필요 없어서 넘기지 않는다. 여러 건을 묶어 보내므로 결과를 CVE별로 되돌려 나눌 수 있게
-    Structured Outputs(SUMMARY_SCHEMA)로 받는다. 시스템 프롬프트가 짧아 캐시 최소 길이에 못 미치므로 캐시는 붙이지 않는다.
-    """
+    """stage 3: NVD 영어 설명을 한국어 2~3문장으로 요약한다. Haiku는 effort를 넘기면 오류라 넘기지 않고,
+    묶어 보낸 결과를 CVE별로 나눌 수 있게 Structured Outputs로 받는다. 프롬프트가 짧아 캐시는 붙이지 않는다."""
 
     def __init__(self, api_key: Optional[str] = None, model: str = SUMMARY_MODEL):
         self._client = anthropic.Anthropic(api_key=api_key or os.environ["ANTHROPIC_API_KEY"])
@@ -661,9 +613,8 @@ class DescriptionSummarizerClient:
 
 def _summarize_group(summarizer: "DescriptionSummarizerClient", backend: "CveBackendClient",
                      group: list[CveSummaryTarget]) -> list[tuple[CveSummaryTarget, Optional[Exception]]]:
-    """묶음 하나를 요약하고 CVE별로 저장한다. _assess_one과 같은 이유로 예외를 잡아서 돌려준다.
-    요청 자체가 실패하면 묶음 전체가, 응답에서 빠졌거나 저장이 실패한 CVE는 그 건만 실패로 남는다 —
-    실패한 건은 요약이 없으니 다음 배치에서 다시 대기로 잡힌다."""
+    """묶음 하나를 요약하고 CVE별로 저장하며, 예외는 잡아서 돌려준다. 요청이 실패하면 묶음 전체가,
+    응답에서 빠졌거나 저장이 실패한 CVE는 그 건만 실패로 남는다."""
     try:
         summaries = summarizer.summarize_batch(group)
     except Exception as e:
@@ -695,10 +646,7 @@ def _assess_one(ai_client: "VulnAssessorClient", backend: "CveBackendClient",
 
 def run(backend: CveBackendClient) -> BatchReport:
     """stage 1~4를 차례로 돌리고 요약을 돌려준다. 한 단계가 일부 실패해도 다음 단계는 그대로 진행한다."""
-    # stage 1: CVE 하나씩 개별 판단. 시스템 프롬프트가 CVE 건마다 동일해서 2건 이상이면 프롬프트
-    # 캐시를 쓰는데, 처음부터 여러 건을 동시에 보내면 캐시가 만들어지기 전에 여러
-    # 요청이 동시에 도착해 각자 따로 캐시를 써버릴 수 있다(cache_creation 중복).
-    # 그래서 첫 건은 혼자 먼저 보내 캐시를 예열한 뒤, 나머지만 병렬로 처리한다.
+    # stage 1: CVE 하나씩 개별 판단. 캐시가 중복으로 쓰이지 않게 첫 건으로 예열한 뒤 나머지만 병렬로 처리한다.
     pending = backend.fetch_pending_vulnerabilities()
     ai_client = VulnAssessorClient(use_cache=len(pending) > 1)
     print(f"판단할 취약점 {len(pending)}건")
@@ -757,8 +705,7 @@ def run(backend: CveBackendClient) -> BatchReport:
                         skipped_summaries.append((target.cve_id, str(err)))
                         print(f"[{target.cve_id}] 요약 실패, 건너뜀: {err}")
 
-    # stage 4: 업그레이드 영향 분석. stage 2(fix-plan)가 만든 변경 목록이 입력이라 그 뒤에 돈다. 외부 문서를 받느라
-    # 건마다 수 초씩 걸리지만, GitHub 호출 한도(토큰 없으면 IP당 시간당 60회)를 나눠 쓰므로 병렬로 돌리지 않는다.
+    # stage 4: 업그레이드 영향 분석. fix-plan의 변경 목록이 입력이라 그 뒤에 돌고, GitHub 호출 한도를 나눠 쓰므로 병렬로 돌리지 않는다.
     impact_targets = backend.fetch_pending_impacts()
     impact_client = UpgradeImpactAnalyzerClient(use_cache=len(impact_targets) > 1)
     print(f"영향 분석할 업그레이드 {len(impact_targets)}건")

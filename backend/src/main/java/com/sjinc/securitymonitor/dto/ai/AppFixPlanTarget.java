@@ -18,14 +18,11 @@ public record AppFixPlanTarget(
             String installedVersion,
             String aiFixedVersion,
             String aiConfidence,
-            // dependency:tree상 이 아티팩트를 끌고 들어온 최상위 직접 의존성("groupId:artifactId").
-            // 직접 의존성 자신이면 스스로를 가리킨다. 이게 없으면 AI가 tree 텍스트만 보고 직접/전이 여부를
-            // 스스로 추론해야 해서, logstash-logback-encoder처럼 이름이 다른 경우 reasoning에서 누락되기 쉽다.
+            // 이 아티팩트를 끌고 들어온 최상위 직접 의존성("groupId:artifactId", 직접 의존성이면 자기 자신).
+            // AI가 tree만 보고 직접/전이 여부를 추론하다 누락하지 않게 미리 내려준다.
             String broughtInBy,
-            // 최상위 직접 의존성부터 이 아티팩트까지의 전체 조상 체인("A -> B -> C" 형태로 이미 조인됨).
-            // 직접 의존성이면 null. AI가 dependency:tree를 다시 훑어 경로를 재구성하다가 이름이 비슷한
-            // 형제 노드를 혼동하는 실수(예: spring-security-config/spring-security-web)를 없애기 위해
-            // 자바에서 미리 계산해서 내려준다 — reasoning의 "경로:" 줄은 이 값을 그대로 인용만 하면 된다.
+            // 최상위 직접 의존성부터 이 아티팩트까지의 조상 체인("A -> B -> C", 직접 의존성이면 null).
+            // AI가 경로를 재구성하다 비슷한 이름의 형제 노드를 혼동하지 않게 자바에서 계산해 그대로 인용하게 한다.
             String dependencyPath
     ) {
     }

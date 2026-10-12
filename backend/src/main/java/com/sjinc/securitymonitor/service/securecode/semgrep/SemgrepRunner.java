@@ -40,7 +40,7 @@ public class SemgrepRunner {
 
     /**
      * semgrep 실행 파일. 설정하지 않으면 PATH의 semgrep을 쓰고, 없으면 AI 배치와 같은 파이썬(ai.python.command)의
-     * Scripts 폴더에서 찾는다 — pip로 설치하면 거기에 들어가는데 윈도우에선 PATH에 없는 경우가 많다(이 PC가 그랬다).
+     * Scripts 폴더에서 찾는다 — pip로 설치하면 거기에 들어가는데 윈도우에선 PATH에 없는 경우가 많다.
      */
     @Value("${securecode.semgrep.command:" + DEFAULT_COMMAND + "}")
     private String semgrepCommand;
@@ -85,7 +85,7 @@ public class SemgrepRunner {
                     ".")));
             builder.directory(projectDir.toFile());
             builder.environment().put("SEMGREP_SEND_METRICS", "off");
-            // 없으면 윈도우 기본 인코딩(cp949)으로 동작해 한글이 든 경로(C:\ai 과제\...)·규칙 메시지에서 실행 자체가 실패한다(실제로 그랬다).
+            // 없으면 윈도우 기본 인코딩(cp949)으로 동작해 한글이 든 경로·규칙 메시지에서 실행 자체가 실패한다.
             builder.environment().put("PYTHONUTF8", "1");
             builder.environment().put("PYTHONIOENCODING", "utf-8");
             // 진행 표시·경고가 많아 파이프로 받으면 버퍼가 차서 프로세스가 멈출 수 있다 — 파일로 받는다.
@@ -110,9 +110,8 @@ public class SemgrepRunner {
     }
 
     /**
-     * 기동할 때 Semgrep이 실행되는지·고정 버전과 같은지 확인해 로그로 알린다. 없으면 점검 버튼을 눌러야 비로소 알게 되는데,
-     * 사람마다 로컬에서 서버를 띄우는 지금 구성에서는 "설치를 빠뜨린 PC"가 흔하다. 확인만 하고 기동을 막지는 않는다 —
-     * 코드 점검은 부가 기능이라 없다고 라이브러리 스캔·화면까지 못 쓰게 할 이유가 없다. 파이썬을 띄우느라 몇 초 걸려 따로 돌린다.
+     * 기동할 때 Semgrep 설치·고정 버전을 확인해 로그로 알린다(점검을 눌러야 알게 되지 않게). 코드 점검은 부가 기능이라
+     * 기동을 막지는 않으며, 파이썬을 띄우느라 몇 초 걸려 따로 돌린다.
      */
     @EventListener(ApplicationReadyEvent.class)
     public void checkOnStartup() {

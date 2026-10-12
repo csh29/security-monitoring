@@ -37,6 +37,7 @@
 </div>
 
 <script src="/js/grid.js"></script>
+<script src="/js/com-cd.js"></script>
 <script src="/js/search-form.js"></script>
 <script th:inline="javascript">
     (function () {
@@ -69,6 +70,9 @@
             },
             { id: 'programNm', label: '프로그램명', type: 'text' },
             { id: 'url', label: 'URL', type: 'text' },
+            // 사이드바 그룹(라이브러리 취약점·시큐어코딩·관리)과 사이드바를 접었을 때 보이는 아이콘.
+            { id: 'menuGroup', label: '메뉴 그룹', type: 'select', optionsQuery: 'MENU_GROUP', defaultValue: 'MNG', width: 140 },
+            { id: 'icon', label: '아이콘', type: 'text', width: 70 },
             { id: 'sortOrder', label: '정렬순서', type: 'number' },
             { id: 'useYn', label: '사용여부', type: 'checkbox', width: 80, align: 'center' }
         ].concat(BUTTON_YN_COLUMNS, BUTTON_ETC_COLUMNS);
@@ -88,6 +92,9 @@
         function renderRows(allPrograms) {
             const programs = (allPrograms || []).filter(function (program) {
                 return program.programId !== SELF_PROGRAM_ID && search.matches(program);
+            }).map(function (program) {
+                // 메뉴 그룹이 비어 있으면 관리 그룹이다(Program.sidebarGroup) — select가 첫 옵션으로 보여 저장 때 바뀌지 않게.
+                return Object.assign({}, program, { menuGroup: program.menuGroup || 'MNG' });
             });
             Grid.render(gridBody, COLUMNS, programs, { emptyMessage: '등록된 프로그램이 없습니다.' });
         }
@@ -130,7 +137,9 @@
                     programNm: programNm,
                     url: url,
                     sortOrder: sortOrder ? Number(sortOrder) : null,
-                    useYn: row.useYn
+                    useYn: row.useYn,
+                    menuGroup: row.menuGroup,
+                    icon: row.icon
                 };
                 BUTTON_YN_COLUMNS.concat(BUTTON_ETC_COLUMNS).forEach(function (col) {
                     payload[col.id] = row[col.id];

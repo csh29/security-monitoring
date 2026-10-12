@@ -16,14 +16,8 @@ import java.time.LocalDateTime;
 import java.util.HexFormat;
 
 /**
- * NVD 영어 설명(description)의 한국어 요약. 파이썬 배치가 Haiku로 만든다.
- *
- * <p>Vulnerability 행이 아니라 CVE ID 하나에 한 건이다 — 같은 CVE가 여러 앱·아티팩트 행에 걸리는 게
- * 흔해서(Vulnerability 복합 유니크 주석 참고) 행마다 두면 같은 문장을 여러 번 요약(과금)하게 된다.
- *
- * <p>descriptionHash는 "어느 설명을 요약했는가"다. NVD가 설명을 고치면 해시가 달라져 다시 요약 대기가 된다.
- * nvdLastModified로 판단하지 않는 이유: NVD는 설명과 무관한 CPE·참조 링크 수정에도 그 값을 바꿔서,
- * 설명이 그대로인데 다시 요약하게 된다.
+ * NVD 영어 설명의 한국어 요약(파이썬 배치가 만든다). 같은 CVE가 여러 행에 걸려 중복 과금되지 않게 CVE ID당 한 건이다.
+ * 재요약 기준은 descriptionHash다 — nvdLastModified는 설명과 무관한 수정에도 바뀌어 불필요한 재요약을 부른다.
  */
 @Entity
 @Getter

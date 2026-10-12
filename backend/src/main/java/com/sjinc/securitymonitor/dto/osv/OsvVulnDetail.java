@@ -26,10 +26,8 @@ public class OsvVulnDetail {
     public void setAffected(List<OsvAffected> affected) { this.affected = affected; }
 
     /**
-     * Maven 생태계 range들의 fixed 이벤트만 모아 중복 제거한 목록.
-     * ranges/introduced 전체를 다 파싱하지 않고 "수정 버전 후보"만 뽑아 AI 판단 입력으로 넘기기 위한 용도라,
-     * 브랜치가 여러 개면(예: 2.x/3.x 동시 패치) 여러 값이 그대로 후보로 남는다 — 그중 설치 버전과
-     * 같은 라인을 고르는 건 AI(assess.system.md 규칙)의 몫이다.
+     * Maven 생태계 range들의 fixed 이벤트만 모아 중복 제거한 "수정 버전 후보" 목록.
+     * 브랜치가 여러 개면 여러 값이 남고, 설치 버전과 같은 라인을 고르는 건 사용하는 쪽의 몫이다.
      */
     public List<String> getFixedVersions() {
         if (affected == null) return List.of();

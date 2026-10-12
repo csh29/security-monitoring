@@ -148,6 +148,22 @@ class TraceRuleChangePlannerTest {
         assertThat(b.key()).isEqualTo(a.key());
     }
 
+    /** 인증 장치 후보는 판정을 느슨하게 하므로 확인 대기 — 이미 그 시스템에 반영돼 있으면 다시 묻지 않는다. */
+    @Test
+    void 인증_장치_후보는_확인_대기이고_반영된_시스템에는_다시_묻지_않는다() {
+        Draft draft = new Draft(List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(new Evidenced("AuthInterceptor", "로그인 정보 읽기: A.java:5 / 없으면 막기: A.java:7")));
+
+        TraceRuleChangePlanner.Plan plan = TraceRuleChangePlanner.plan(TraceRules.empty(), draft, "SYS");
+        assertThat(plan.needsReview()).extracting(TraceRuleChange::type).containsExactly(Type.ADD_AUTH_DEVICE);
+        assertThat(plan.automatic()).isEmpty();
+
+        TraceRules applied = plan.needsReview().get(0).applyTo(TraceRules.empty());
+        assertThat(applied.authDevices("SYS")).containsExactly("AuthInterceptor");
+        assertThat(TraceRuleChangePlanner.plan(applied, draft, "SYS").changes()).isEmpty();
+        assertThat(TraceRuleChangePlanner.plan(applied, draft, "OTHER").needsReview()).hasSize(1);
+    }
+
     private static TraceRules rules(Set<String> keys, String firstParam) {
         return new TraceRules(List.of(new SessionOverwrite("x", "AddUser", "paramData", firstParam, keys)),
                 Set.of("getLogin"), Set.of("UserVo"), Set.of(), Map.of());

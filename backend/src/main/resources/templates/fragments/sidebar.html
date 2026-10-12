@@ -38,10 +38,8 @@
         .nav-group.is-open .nav-group-toggle .caret{ transform:rotate(90deg); }
         /* 접혀 있어도 지금 연 화면이 이 그룹 안에 있으면 그룹 제목으로 알 수 있게 한다. */
         .nav-group:has(a.is-active) .nav-group-toggle{ color:var(--accent); font-weight:700; }
-        /* 하위 메뉴는 아이콘이 없어서 들여쓰기를 작게 주면 대메뉴 글자(아이콘+간격 뒤)보다 오히려 왼쪽에서
-           시작해 2뎁스로 안 보였다. 대메뉴 아이콘 자리 아래에 트리 안내선(├ ─ / 마지막은 └ ─)을 그리고,
-           가로선이 프로그램명 바로 앞까지 오게 한다. 선은 항목마다 ::before(세로)·::after(가로)로 그려서
-           마지막 항목에서 세로선을 가로선 높이에서 끊을 수 있게 했다. */
+        /* 하위 메뉴가 2뎁스로 보이도록 대메뉴 아이콘 자리 아래에 트리 안내선(├ ─ / └ ─)을 그린다.
+           선을 항목마다 ::before(세로)·::after(가로)로 그려 마지막 항목에서 세로선을 끊을 수 있게 한다. */
         .nav-group-items{
             display:none; flex-direction:column; gap:2px; margin:4px 0 0 22px; padding-left:10px;
         }
@@ -75,35 +73,27 @@
     </style>
 
     <!--
-        tabs.js(홈 화면에서만 로드)가 이 목록을 읽어 "홈 제외 클릭 시 탭으로 연다"를 구현한다.
-        home 링크는 class="home-link"로 구분하고, 나머지는 data-menu(activeMenu 값과 동일 —
-        탭을 활성화할 때 사이드바 강조 표시를 서버 재렌더링 없이 그대로 흉내내는 데 쓴다)와
-        data-title(탭에 보여줄 라벨)을 들고 있다. tabs.js가 없는 화면(단위 화면을 직접 열었을
-        때)에서는 그냥 평범한 링크로 동작한다 — data-* 속성은 무시된다.
+        tabs.js(홈에서만 로드)가 이 목록으로 메뉴를 탭으로 연다. data-menu는 사이드바 강조용 activeMenu 값,
+        data-title은 탭 라벨이며, tabs.js가 없는 단위 화면에서는 평범한 링크로 동작한다.
     -->
     <nav class="nav">
         <a th:href="@{/}" class="home-link" th:classappend="${activeMenu == 'home'} ? 'is-active'"><span class="ico">▤</span><span class="nav-label">홈</span></a>
-        <!-- 기능 그룹: 라이브러리 취약점(CVE) / 시큐어코딩. 둘이 같은 급으로 보이도록 같은 모양의 2뎁스 그룹으로 둔다.
-             매일 쓰는 메뉴라 처음엔 펼쳐 둔다(data-default-open). 하위 링크의 아이콘은 사이드바를 접었을 때만 보인다. -->
-        <div class="nav-group nav-group--feature" id="navGroupLib" data-default-open="Y">
+        <!-- 기능 그룹: 라이브러리 취약점 / 시큐어코딩. 프로그램 관리의 메뉴 그룹(LIB·SECURE)으로 나뉘고 권한이 있는 것만 보인다.
+             매일 쓰는 메뉴라 처음엔 펼쳐 두고(data-default-open), 하위 아이콘은 사이드바를 접었을 때만 보인다. -->
+        <div class="nav-group nav-group--feature" id="navGroupLib" data-default-open="Y" th:if="${!#lists.isEmpty(libPrograms)}">
             <button type="button" class="nav-group-toggle" aria-expanded="true" aria-controls="navGroupLibItems">
                 <span class="ico">📦</span><span class="nav-label">라이브러리 취약점</span><span class="caret">›</span>
             </button>
             <div class="nav-group-items" id="navGroupLibItems">
-                <a th:href="@{/program/vulnerability-mng}" data-menu="vulnerability-mng" data-title="취약점 관리" th:classappend="${activeMenu == 'vulnerability-mng'} ? 'is-active'"><span class="ico">⚠</span><span class="nav-label">취약점 관리</span></a>
-                <a th:href="@{/program/vulnerability-search}" data-menu="vulnerability-search" data-title="취약점 조회" th:classappend="${activeMenu == 'vulnerability-search'} ? 'is-active'"><span class="ico">⌕</span><span class="nav-label">취약점 조회</span></a>
-                <a th:href="@{/program/scan-history}" data-menu="scan-history" data-title="스캔 이력" th:classappend="${activeMenu == 'scan-history'} ? 'is-active'"><span class="ico">⟲</span><span class="nav-label">스캔 이력</span></a>
-                <a th:href="@{/program/fix-plan}" data-menu="fix-plan" data-title="조치안" th:classappend="${activeMenu == 'fix-plan'} ? 'is-active'"><span class="ico">🛠</span><span class="nav-label">조치안</span></a>
-                <a th:href="@{/program/report}" data-menu="report" data-title="리포트" th:classappend="${activeMenu == 'report'} ? 'is-active'"><span class="ico">📄</span><span class="nav-label">리포트</span></a>
+                <a th:each="program : ${libPrograms}" th:attr="data-menu=${program.programId},data-title=${program.programNm}" th:classappend="${activeMenu == program.programId} ? 'is-active'" th:href="@{${program.url}}"><span class="ico" th:text="${program.icon}"></span><span class="nav-label" th:text="${program.programNm}">프로그램</span></a>
             </div>
         </div>
-        <div class="nav-group nav-group--feature" id="navGroupSecure" data-default-open="Y">
+        <div class="nav-group nav-group--feature" id="navGroupSecure" data-default-open="Y" th:if="${!#lists.isEmpty(securePrograms)}">
             <button type="button" class="nav-group-toggle" aria-expanded="true" aria-controls="navGroupSecureItems">
                 <span class="ico">⛨</span><span class="nav-label">시큐어코딩</span><span class="caret">›</span>
             </button>
             <div class="nav-group-items" id="navGroupSecureItems">
-                <a th:href="@{/program/secure-code-scan}" data-menu="secure-code-scan" data-title="코드 점검" th:classappend="${activeMenu == 'secure-code-scan'} ? 'is-active'"><span class="ico">⛨</span><span class="nav-label">코드 점검</span></a>
-                <a th:href="@{/program/secure-code-mng}" data-menu="secure-code-mng" data-title="코드 점검 결과" th:classappend="${activeMenu == 'secure-code-mng'} ? 'is-active'"><span class="ico">☑</span><span class="nav-label">코드 점검 결과</span></a>
+                <a th:each="program : ${securePrograms}" th:attr="data-menu=${program.programId},data-title=${program.programNm}" th:classappend="${activeMenu == program.programId} ? 'is-active'" th:href="@{${program.url}}"><span class="ico" th:text="${program.icon}"></span><span class="nav-label" th:text="${program.programNm}">프로그램</span></a>
             </div>
         </div>
         <!-- 권한이 있는 추가 프로그램이 하나도 없으면 그룹 자체를 그리지 않는다. -->

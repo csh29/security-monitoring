@@ -1,14 +1,9 @@
 /**
- * 압축 없이(stored) 묶는 최소 zip 작성기(외부 라이브러리 없음). loading-overlay.html이 모든 화면에 싣는다.
+ * 압축 없이(stored) 묶는 최소 zip 작성기. xlsx 생성과 폴더 업로드(서버의 zip 검사를 그대로 받게 zip으로 묶는다)가 쓴다.
+ * ZIP64 미사용이라 65,535개·4GB 미만만 만들며(넘으면 예외), 한글 경로가 깨지지 않게 파일명을 UTF-8 표시와 함께 넣는다.
  *
+ * 사용법:
  *   const blob = ZipWriter.storedBlob([{ name: 'src/A.java', data: Uint8Array }, ...], 'application/zip');
- *
- * 쓰는 곳: 엑셀 다운로드(xlsx-writer.js — xlsx는 XML 몇 개를 zip으로 묶은 것)와 코드 점검의 폴더 업로드(secure-code-scan.html —
- * 고른 폴더의 소스를 zip으로 묶어 zip 업로드와 같은 API로 보낸다. 서버의 경로 조작·압축 폭탄·빈 zip 검사를 그대로 받게 하려고).
- * 처음엔 xlsx-writer.js 안에 있었는데 두 번째로 쓰게 되어 여기로 뺐다.
- *
- * 한계: ZIP64를 쓰지 않아 파일 65,535개·전체 4GB 미만만 만든다(MAX_ENTRIES, MAX_BYTES — 넘으면 예외). 파일명은 UTF-8로 넣고
- * 그 표시(일반 목적 비트 11)를 켠다 — 한글 경로가 서버·압축 프로그램에서 깨지지 않게.
  */
 (function (global) {
     const MAX_ENTRIES = 65535;

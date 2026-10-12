@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** 화면 조회·AI 대기열 쿼리 — 지워진 앱 제외와 심각도 정렬을 쿼리가 한다(예전엔 서비스가 자바로 거르고 정렬했다). 메모리 H2로 실제 쿼리를 돌린다. */
+/** 화면 조회·AI 대기열 쿼리 — 지워진 앱 제외와 심각도 정렬을 쿼리가 한다. 메모리 H2로 실제 쿼리를 돌린다. */
 @DataJpaTest
 class SecureCodeFindingRepositoryTest {
 

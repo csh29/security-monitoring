@@ -37,10 +37,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 파이썬 AI 판단 배치가 호출하는 전용 API.
- *
- * <p>사람이 쓰는 화면이 아니라 서버 프로세스끼리 호출하는 용도라 세션 로그인 대신
- * {@code X-Internal-Token} 헤더 하나로만 인증한다(SecurityConfig에서 permitAll 처리).
+ * 파이썬 AI 판단 배치가 호출하는 전용 API. 서버 프로세스끼리 호출하므로 세션 로그인 대신
+ * {@code X-Internal-Token} 헤더로만 인증한다(SecurityConfig에서 permitAll 처리).
  */
 @RestController
 @RequiredArgsConstructor

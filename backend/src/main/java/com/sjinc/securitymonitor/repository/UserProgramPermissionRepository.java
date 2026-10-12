@@ -24,10 +24,8 @@ public interface UserProgramPermissionRepository extends JpaRepository<UserProgr
     Optional<UserProgramPermission> findByUserUsernameAndProgramProgramId(String username, String programId);
 
     /**
-     * 벌크 DELETE로 즉시 실행된다(엔티티 삭제 큐잉과 달리 flush를 기다리지 않음).
-     * 같은 트랜잭션에서 곧이어 동일 (user_id, program_id)를 다시 insert해야 하는
-     * 권한 재설정 시나리오에서, Hibernate가 삭제보다 삽입을 먼저 flush해
-     * unique 제약을 위반하는 문제를 피하기 위해 사용한다.
+     * 벌크 DELETE로 즉시 실행된다. 권한 재설정 때 같은 트랜잭션에서 같은 (user_id, program_id)를 다시 넣는데,
+     * Hibernate가 삭제보다 삽입을 먼저 flush해 unique 제약을 위반하는 문제를 피한다.
      */
     @Modifying(clearAutomatically = true)
     @Query("delete from UserProgramPermission perm where perm.user.id = :userId")

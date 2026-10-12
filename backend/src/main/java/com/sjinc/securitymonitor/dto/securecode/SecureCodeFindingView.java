@@ -11,15 +11,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 코드 점검 결과 화면 한 행. 엔티티에 없는 시스템명을 붙여 내려준다. 코드(조각·연계 추적 코드)는 넣지 않는다 — 상세보기를 열 때
- * 한 건씩 받는다(SecureCodeFindingCode).
- *
- * <p>aiVerdict는 AI 판별 결과(VULNERABLE/NOT_VULNERABLE/UNCERTAIN), 대상인데 아직 판별 전이거나 재점검으로 입력이 바뀌었으면
- * PENDING, 대상이 아니면 null이다. 옛 입력 기준 판별은 내려주지 않는다(SecureCodeAiReviewService.isReviewCurrent).
- *
- * <p>traceTarget은 연계 추적 판정의 대상 식({@code ${ym}}, {@code #{loginCompCd}}). 한 줄에 {@code ${}}가 여럿이면 탐지도 여럿인데 위치·항목이
- * 같아 화면에서 어느 행이 어느 값의 판정인지 구분되지 않았다(CRM crd020의 {@code ums_log_${loginBrndzCd}_${ym}}). 매퍼 판정의 근거는 마지막 줄이
- * 항상 "파일:줄 식 (구문)"이라(MybatisDollarTracer.verdict) 거기서 꺼낸다. 그 형식이 아닌 판정(위험 호출 지점)은 null.
+ * 코드 점검 결과 화면 한 행(시스템명 포함, 코드는 상세보기에서 따로 받는다). aiVerdict는 판별 결과, 판별 전·입력 변경이면 PENDING, 대상 밖이면 null이다.
+ * traceTarget은 판정 대상 식({@code ${ym}} 등)으로, 한 줄에 {@code ${}}가 여럿일 때 행을 구분하려고 매퍼 근거 마지막 줄 "파일:줄 식 (구문)"에서 꺼낸다.
+ * 그 형식이 아닌 판정(위험 호출 지점)은 null이다.
  */
 public record SecureCodeFindingView(
         Long id,

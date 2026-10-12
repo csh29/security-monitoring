@@ -17,14 +17,9 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 /**
- * 라이브러리 업그레이드 한 건(coordinate, from → to)의 영향 분석 결과 — 릴리스 노트 근거로 AI가 정리한 breaking
- * change, 필요한 조치, 테스트할 곳.
- *
- * <p><b>앱이 아니라 (좌표, from, to) 단위로 하나만 둔다.</b> 이 분석은 라이브러리 릴리스 노트만 보고 결정되므로,
- * 여러 앱이 같은 Spring Boot 업그레이드를 하면 결과가 같다 — 앱마다 두면 같은 릴리스 노트를 앱 수만큼 읽혀
- * 과금된다(CveSummary를 CVE ID 단위로 둔 것과 같은 이유). "우리 코드가 영향받는가"는 앱마다 다르므로 여기 두지 않는다.
- *
- * <p>목록형 필드(breakingChanges 등)는 JSON 문자열로 둔다. 화면에서 통째로 읽기만 하고 항목 단위로 조회할 일이 없다.
+ * 라이브러리 업그레이드 한 건(coordinate, from → to)의 영향 분석 결과(릴리스 노트 근거의 breaking change·조치·테스트할 곳).
+ * 릴리스 노트만으로 결정되므로 앱마다 중복 과금되지 않게 (좌표, from, to) 단위로 하나만 두고, 앱별 코드 영향은 여기 두지 않는다.
+ * 목록형 필드는 통째로 읽기만 해서 JSON 문자열로 둔다.
  */
 @Entity
 @Table(name = "upgrade_impacts",

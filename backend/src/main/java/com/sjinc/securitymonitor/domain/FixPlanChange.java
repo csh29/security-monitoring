@@ -18,8 +18,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 /**
- * fix-plan이 pom.xml에서 바꾼 버전 값 하나. 예전엔 "무엇을 몇에서 몇으로 올리는가"가 reasoning 문장 안에만
- * 있어서, 업그레이드 영향 분석이 그 문장을 다시 해석해야 했다(경로를 AI가 재구성하다 틀린 것과 같은 위험).
+ * fix-plan이 pom.xml에서 바꾼 버전 값 하나. 영향 분석이 reasoning 문장을 다시 해석하다 틀리지 않게
  * AI가 fix-plan과 같은 응답에서 구조화해 내고, 점프 폭(jump)은 자바가 계산해 붙인다.
  */
 @Entity

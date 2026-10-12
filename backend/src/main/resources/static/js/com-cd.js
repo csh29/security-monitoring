@@ -1,13 +1,9 @@
 /**
- * 화면마다 하드코딩되던 select 옵션(역할, 심각도, 처리상태 등)을 공통코드관리 화면에서 관리하고,
- * 각 화면은 이 모듈을 통해 /api/com-cds를 조회해서 select를 채운다.
+ * 공통코드(/api/com-cds)로 화면의 select 옵션을 채운다. 같은 그룹은 페이지당 한 번만 조회하도록 캐시한다.
  *
  * 사용법:
  *   ComCd.fillSelect(selectEl, 'VULN_STATUS', { withAll: true, allLabel: '전체', selected: 'OPEN' });
- *   ComCd.fetchCodes('ROLE').then(function (codes) { ... }); // select가 아니라 행마다 select를 새로
- *                                                                   // 만들어야 하는 그리드(사용자 관리 등)에서 사용.
- *
- * 같은 그룹은 페이지당 한 번만 조회하도록 캐시한다 — 여러 화면 요소가 같은 그룹을 쓰더라도 요청은 한 번뿐이다.
+ *   ComCd.fetchCodes('ROLE').then(function (codes) { ... }); // 행마다 select를 만드는 그리드용
  */
 (function (global) {
     const cache = {};

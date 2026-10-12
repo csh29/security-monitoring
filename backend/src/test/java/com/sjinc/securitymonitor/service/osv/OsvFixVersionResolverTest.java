@@ -17,9 +17,8 @@ class OsvFixVersionResolverTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /**
-     * 실제로 겪은 케이스를 그대로 재현한다: pgjdbc 42.7.2가 CVE-2026-42198에 걸려 42.7.11로
-     * 올리라고 제안됐는데, 42.7.11 자체가 CVE-2026-54291(42.7.4~42.7.11 영향, 42.7.12에서
-     * 수정)에 걸려있다. 42.7.12는 깨끗해야 한다.
+     * 제안된 수정 버전(42.7.11) 자체가 다른 CVE에 걸려 있으면 그 CVE까지 피하는
+     * 다음 버전(42.7.12)으로 올라가야 한다.
      */
     @Test
     void 제안된_버전_자체가_다른_CVE에_걸려있으면_한번_더_올라간다() throws Exception {

@@ -3,11 +3,8 @@ package com.sjinc.securitymonitor.service.securecode;
 import com.sjinc.securitymonitor.domain.SecureCodeFinding;
 
 /**
- * 같은 출처 묶음 — 한 요청값이 여러 위험 지점에 들어가면(CKEditor pgmID → 폴더 만들기 FrameFileUtil:46, 파일 쓰기 :88) 지점마다 탐지가 따로 생긴다.
- * 지점은 각각 실제 위험이라 탐지는 그대로 두고, 화면은 묶어서 보여주고 AI는 묶음당 한 번만 판별한다(같은 원인을 두 번 묻지 않게 — 비용·시간).
- *
- * <p>열쇠는 같은 앱·같은 CWE·연계 추적의 첫 걸음(값이 처음 들어온 곳, 예: "CkEditorController.java:51 요청 값 request.getParameter("pgmID")").
- * CWE를 넣는 것은 같은 값이 SQL과 파일 경로에 함께 들어가면 약점이 달라 판별을 나눠야 해서다. 근거가 없는 탐지(추적 대상이 아닌 규칙)는 묶지 않는다.
+ * 한 요청값이 여러 위험 지점에 들어간 탐지를 묶는다. 탐지는 그대로 두고 화면만 묶으며, AI는 같은 원인을 두 번 묻지 않게 묶음당 한 번 판별한다.
+ * 열쇠는 앱·CWE(약점이 다르면 판별을 나눠야 한다)·연계 추적의 첫 걸음이며, 추적 근거가 없는 탐지는 묶지 않는다.
  */
 public final class SameOrigin {
 

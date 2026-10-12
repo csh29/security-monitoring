@@ -1,11 +1,6 @@
-"""시큐어코딩 점검 AI 단계 — 코드 점검(Semgrep 행안부 규칙) 탐지가 진짜 취약한지 판별한다.
-
-HIGH·MEDIUM 탐지(연계 추적이 요청값으로 확정한 것도 — 그 뒤의 검증을 본다. 안전 확정·비밀값 규칙 제외, 대상은 자바 SecureCodeAiReviewService가 정한다), 걸린 줄을 감싼
-메서드를 보고 VULNERABLE/NOT_VULNERABLE/UNCERTAIN을 판별해 저장한다. 라이브러리 취약점 단계(cve_assessor.py)와 무관하다.
-판별은 화면 참고용이고 처리여부는 사람이 정한다. 코드는 자바가 비밀값을 가린 뒤 넘겨준다.
-
-보통은 서버가 코드 점검 뒤 진입점(`vuln_assessor.py securecode`)으로 그 앱만 띄운다(SECURITY_MONITOR_APP_ID). 사람이 이 단계만 돌리려면
-`py secure_code_reviewer.py`(전체 앱, 한 번에 서버 상한만큼) — 진입점과 같은 실행 잠금을 잡아 이미 돌고 있으면 건너뛴다.
+"""시큐어코딩 점검 AI 단계 — 코드 점검 탐지(대상은 자바 SecureCodeAiReviewService가 정함)를 감싼 메서드와 함께 보고
+VULNERABLE/NOT_VULNERABLE/UNCERTAIN을 판별해 저장한다. 판별은 참고용이고 처리여부는 사람이 정한다.
+보통은 서버가 `vuln_assessor.py securecode`로 띄우고, 직접 돌리려면 `py secure_code_reviewer.py`(같은 실행 잠금을 잡는다).
 """
 
 from __future__ import annotations
@@ -30,7 +25,7 @@ SECURE_CODE_REVIEW_SCHEMA = {
         # 값은 자바 SecureCodeAiReviewService.VERDICTS와 같아야 한다.
         "verdict": {"type": "string", "enum": ["VULNERABLE", "NOT_VULNERABLE", "UNCERTAIN"]},
         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
-        # 사람이 읽기 쉽게 나눠 받는다(2026-10-08) — 한 문단 이유는 길고 무엇을 해야 하는지가 묻혔다.
+        # 한 문단 이유는 무엇을 해야 하는지가 묻혀서, 사람이 읽기 쉽게 항목으로 나눠 받는다.
         "summary": {"type": "string"},
         "reasoning": {"type": "string"},
         "attack": {"type": "string"},
@@ -52,8 +47,8 @@ REVIEW_MAX_WORKERS = 5
 
 @dataclass
 class SecureCodeReviewTarget:
-    """판별할 코드 점검 탐지 하나(자바 SecureCodeReviewTarget). input_hash는 자바가 준 값을 그대로 되돌려준다
-    (어느 입력으로 판별했는지의 기준 — 그사이 재점검으로 코드가 바뀌면 다음 배치에서 다시 대기가 된다)."""
+    """판별할 코드 점검 탐지 하나(자바 SecureCodeReviewTarget). input_hash는 어느 입력으로 판별했는지의 기준이라
+    자바가 준 값을 그대로 되돌려준다."""
 
     id: int
     rule_id: str
@@ -72,9 +67,10 @@ class SecureCodeReviewTarget:
     input_hash: str
     # 탐지 메서드와 함께 보는 다른 메서드들(자바 AiRelatedCode — path, startLine, code, reason). .java만, 비밀값은 자바가 가렸다.
     related_code: list[dict] = field(default_factory=list)
-    # 같은 출처의 다른 지점(자바 SameOriginMember — id, inputHash, filePath, startLine, ruleId, sink, code, codeStartLine).
-    # 이 건과 한 번에 판별하고 결과·실패를 함께 보낸다(같은 원인을 두 번 묻지 않게).
+    # 같은 출처의 다른 지점(자바 SameOriginMember). 같은 원인을 두 번 묻지 않게 이 건과 한 번에 판별하고 결과를 함께 보낸다.
     same_origin: list[dict] = field(default_factory=list)
+    # 이 앱(시스템)의 구조 사실(자바 SecureCodeSystemContext — 인터셉터·필터·세션 덮어쓰기·로그인 정보 이름). 코드가 아니라 이름과 근거 한 줄.
+    system_context: list[str] = field(default_factory=list)
 
     def same_origin_refs(self) -> list[dict]:
         return [{"id": m["id"], "inputHash": m["inputHash"]} for m in self.same_origin]
@@ -99,6 +95,7 @@ class SecureCodeReviewTarget:
             input_hash=data["inputHash"],
             related_code=data.get("relatedCode") or [],
             same_origin=data.get("sameOrigin") or [],
+            system_context=data.get("systemContext") or [],
         )
 
 
@@ -196,6 +193,9 @@ class SecureCodeReviewerClient:
             related += f"\n--- {item.get('path')} ({item.get('reason')})\n{body}\n"
         related = f"\n[관련 코드]{related}" if related else ""
 
+        system = "\n".join(f"- {line}" for line in target.system_context)
+        system = f"\n[시스템 구조]\n{system}\n" if system else ""
+
         same = ""
         for member in target.same_origin:
             head = f"\n--- {member.get('filePath')}:{member.get('startLine')} ({member.get('ruleId')})"
@@ -216,7 +216,7 @@ class SecureCodeReviewerClient:
 - 등급: {target.severity}
 - 규칙 설명: {target.message}
 - 파일: {target.file_path} ({target.start_line}줄)
-{trace}
+{system}{trace}
 [코드]
 {code}
 {related}{same}"""
@@ -250,8 +250,7 @@ def classify_failure(err: Exception) -> str:
 def _review_one(reviewer: SecureCodeReviewerClient, backend: "SecureCodeBackendClient",
                 target: SecureCodeReviewTarget,
                 stop: threading.Event) -> tuple[SecureCodeReviewTarget, Optional[SecureCodeReview], Optional[Exception]]:
-    """탐지 하나를 판별하고 저장한다. _assess_one과 같은 이유로 예외를 잡아서 돌려준다 — 한 건 실패가 나머지를 막지 않도록.
-    실패한 건은 판별이 저장되지 않았으니 다음 배치에서 다시 대기로 잡힌다. 배치가 멈췄으면 보내지 않는다."""
+    """탐지 하나를 판별하고 저장한다. 한 건 실패가 나머지를 막지 않도록 예외를 잡아서 돌려주고, 배치가 멈췄으면 보내지 않는다."""
     if stop.is_set():
         return target, None, None
     try:

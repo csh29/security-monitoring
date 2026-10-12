@@ -5,10 +5,8 @@ import org.apache.maven.artifact.versioning.ComparableVersion;
 import java.util.Collection;
 
 /**
- * "설치 버전과 같은 메이저 라인 후보 중, 설치 버전보다 높은 값의 최솟값을 고른다"는 규칙 — 원래
- * assess.system.md에서 AI에게 시키던 규칙인데, 순수 버전 비교라 결정론적으로 계산 가능하다.
- * {@link com.sjinc.securitymonitor.service.osv.OsvFixVersionResolver}(재귀 검증)와 자동 판정
- * (VulnerabilityService)이 공통으로 쓴다.
+ * "설치 버전과 같은 메이저 라인 후보 중 설치 버전보다 높은 최솟값"을 고른다 — 순수 버전 비교라 AI 대신 결정론적으로 계산한다.
+ * {@link com.sjinc.securitymonitor.service.osv.OsvFixVersionResolver}와 자동 판정(VulnerabilityService)이 공통으로 쓴다.
  */
 public final class VersionLineSelector {
 

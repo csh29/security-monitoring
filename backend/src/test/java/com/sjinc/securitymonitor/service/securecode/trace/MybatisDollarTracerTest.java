@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class MybatisDollarTracerTest {
 
-    /** securecode/trace-rules.yml의 sjinc 항목과 같은 규칙. 판정 로직에는 없고 설정으로만 들어간다. */
+    /** securecode/trace-rules.yml의 시스템 항목과 같은 모양의 규칙. 판정 로직에는 없고 설정으로만 들어간다. */
     private static final TraceRules SJINC_RULES = new TraceRules(
             List.of(new TraceRules.SessionOverwrite("sjinc @AddUserInfo", "AddUserInfo", "paramData", "HttpServletRequest",
                     Set.of("loginCompCd", "loginUserId", "loginBrndzCd"))),

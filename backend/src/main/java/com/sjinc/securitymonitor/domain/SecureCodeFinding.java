@@ -20,15 +20,9 @@ import java.time.LocalDateTime;
 import java.util.Set;
 
 /**
- * 시큐어코딩 점검(Semgrep)이 앱 하나에서 찾은 보안약점 한 건.
- *
- * <p>키는 (app_id, fingerprint)다. 지문은 줄 번호가 아니라 "규칙 + 파일 + 걸린 코드 내용"으로 만든다
- * (SecureCodeSnippetBuilder) — 줄 번호를 키로 쓰면 파일 위쪽에 한 줄만 추가돼도 모든 탐지가 "해결 + 신규"로 바뀌어
- * 사람이 남긴 오탐 판단이 전부 날아간다. 반대로 걸린 코드를 고치면 지문이 바뀌어 새 건이 되는데, 코드가 바뀌었으면
- * 판단도 다시 하는 게 맞아서 그대로 둔다.
- *
- * <p>앱을 FK로 참조하지 않는다(ScanHistory와 같은 이유) — 탐지가 생긴 앱을 앱 관리에서 못 지우게 되는 걸 피한다.
- * 지워진 앱의 행은 조회에서 빠진다(SecureCodeFindingService).
+ * 시큐어코딩 점검(Semgrep)이 앱 하나에서 찾은 보안약점 한 건. 키는 (app_id, fingerprint)다.
+ * 지문은 줄 번호가 아닌 "규칙 + 파일 + 걸린 코드"라 위쪽 줄 추가로 사람의 오탐 판단이 날아가지 않는다.
+ * 앱은 FK로 참조하지 않고(앱 삭제를 막지 않게), 지워진 앱의 행은 조회에서 빠진다.
  */
 @Entity
 @Table(name = "secure_code_findings",
@@ -147,7 +141,7 @@ public class SecureCodeFinding {
     @Column(name = "ai_confidence", length = 10)
     private String aiConfidence;
 
-    /** 결론 한 문장(2026-10-08부터 — 그 전 판별은 없고 aiReasoning만 있다). */
+    /** 결론 한 문장(이 칸이 생기기 전 판별은 없고 aiReasoning만 있다). */
     @Column(name = "ai_summary", length = 300)
     private String aiSummary;
 

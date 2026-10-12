@@ -39,8 +39,7 @@
             font-size:12.5px; color:var(--text-sub); cursor:pointer;
             border-right:1px solid var(--line); white-space:nowrap; flex-shrink:0;
             user-select:none;
-            /* 비활성 탭: 흰 상단바와 구분되는 옅은 바탕으로 "열려 있는 탭"임을 드러낸다
-               (예전엔 흰 바탕에 회색 글자뿐이라 탭인지 글자인지 밋밋했다). */
+            /* 비활성 탭: 흰 상단바와 구분되는 옅은 바탕으로 "열려 있는 탭"임을 드러낸다. */
             background:#f5f5fa; color:#6f6f8f; font-weight:500;
             transition:background .15s, color .15s, box-shadow .15s;
         }
@@ -238,10 +237,8 @@
                 if (e.target === shell) shell.classList.remove('sidebar-animating');
             });
 
-            // 접힌 상태에서 그룹 제목(관리)을 누르면 하위 메뉴를 보여줄 자리가 없으니 사이드바부터 펼친다
-            // (그룹 열림 처리는 아래 그룹 스크립트가 같은 클릭에서 한다). 그룹이 여러 개라 전부에 건다 — 예전엔 첫 그룹만
-            // 잡았는데 기능 그룹(라이브러리 취약점)이 앞에 생기면서 관리 그룹이 빠졌다. 기능 그룹 제목은 접힌 상태에서 숨겨져
-            // 눌릴 일이 없지만 같은 규칙으로 둔다.
+            // 접힌 상태에서 그룹 제목을 누르면 하위 메뉴를 보여줄 자리가 없으니 사이드바부터 펼친다
+            // (그룹 열림은 아래 그룹 스크립트가 같은 클릭에서 처리한다). 그룹이 여러 개라 모든 그룹에 건다.
             document.querySelectorAll('.nav-group-toggle').forEach(function (groupToggle) {
                 groupToggle.addEventListener('click', function () {
                     if (shell.classList.contains('is-sidebar-collapsed')) {

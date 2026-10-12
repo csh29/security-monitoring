@@ -1,10 +1,6 @@
-"""코드 점검 규칙(rules/*.yml) 회귀 테스트를 규칙 파일마다 하나씩 순서대로 돌린다.
-
-`semgrep --test .`는 규칙 여러 개를 동시에 돌리면서 ~/.semgrep/settings.yml을 같이 써서, Windows에서는
-PermissionError로 일부 규칙이 테스트에서 조용히 빠지거나 전체가 죽는다(이 PC에서 실제로 그랬다). 하나씩 돌리면 나지 않는다.
-
-사용: securecode 폴더에서 `py test_rules.py` (semgrep이 PATH에 없으면 파이썬 Scripts 폴더에서 찾는다).
-규칙 파일과 이름이 같은 예제(sql-injection.java, sql-injection.xml …)를 그 규칙의 테스트 대상으로 쓴다.
+"""코드 점검 규칙(rules/*.yml) 회귀 테스트를 규칙 파일마다 하나씩, 이름이 같은 예제 파일을 대상으로 돌린다.
+`semgrep --test .`로 한꺼번에 돌리면 Windows에서 설정 파일 PermissionError로 일부 규칙이 빠지거나 죽기 때문이다.
+사용: securecode 폴더에서 `py test_rules.py`
 """
 import os
 import shutil

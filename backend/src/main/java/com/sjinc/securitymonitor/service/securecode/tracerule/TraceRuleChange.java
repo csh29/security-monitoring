@@ -11,15 +11,11 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * trace-rules.yml에 할 변경 하나(TraceRuleChangePlanner가 초안과 지금 설정을 비교해 만든다). 점검 중 바로 반영하거나,
- * 확인 대기로 DB(TraceRuleProposal)에 JSON으로 저장했다가 사람이 반영할 때 그대로 다시 적용한다.
- *
- * <p>모든 변경은 두 번 적용해도 결과가 같다(이미 있는 키를 더하거나 없는 키를 빼면 그대로) — 파일 쓰기와 DB 저장 사이에서 실패해
- * 같은 변경을 다시 반영해도 규칙이 꼬이지 않게.
+ * trace-rules.yml에 할 변경 하나. 점검 중 바로 반영하거나 확인 대기로 DB에 JSON으로 저장했다가 사람이 반영할 때 다시 적용한다.
+ * 파일 쓰기와 DB 저장 사이에서 실패해 다시 반영해도 꼬이지 않게, 모든 변경은 두 번 적용해도 결과가 같다.
  *
  * @param type               변경 종류
- * @param system             초안을 만든 시스템(앱의 시스템명). 새 세션 덮어쓰기 항목의 이름, 프레임워크 구조의 키, 그리고 로그인 정보 이름·
- *                           사용자 범위 키를 넣는 시스템 항목(systems.시스템명 — 다른 시스템에는 적용되지 않는다)
+ * @param system             초안을 만든 시스템명(시스템 항목·덮어쓰기 이름·구조 기록의 키)
  * @param annotation         세션 덮어쓰기 항목의 어노테이션(세션 덮어쓰기 변경만)
  * @param container          세션 덮어쓰기 항목의 덮어쓰는 위치(null이면 요청 맵 자체)
  * @param requiredFirstParam 첫 파라미터 조건(ADD_OVERWRITE·SET_FIRST_PARAM만, null이면 조건 없음)
@@ -45,6 +41,11 @@ public record TraceRuleChange(Type type, String system, String annotation, Strin
         ADD_LOGIN_PREFIX("로그인 getter 접두어 추가", false),
         /** 사용자 범위 키 추가 — 판정 대상이 늘어 탐지가 많아질 수 있어 사람이 본다 */
         ADD_SCOPE_KEY("사용자 범위 키 추가", false),
+        /**
+         * 인증 장치 추가 — 이 인터셉터·필터가 적용되는 경로의 요청 처리 메서드를 인증된 것으로 본다. 판정이 느슨해진다
+         * (로그인을 검사하지 않는 장치를 넣으면 열린 기능이 탐지에서 빠진다)
+         */
+        ADD_AUTH_DEVICE("인증 장치 추가", false),
         /** 프레임워크 구조 기록 — 판정에 쓰지 않는다 */
         SET_FRAMEWORK("프레임워크 구조 기록", true);
 
@@ -61,8 +62,8 @@ public record TraceRuleChange(Type type, String system, String annotation, Strin
         }
 
         /**
-         * 점검 중 바로 반영하는가. 판정을 엄격하게 하거나(놓치는 쪽이 아니다) 판정에 쓰지 않는 변경만이다. 판정을 느슨하게 하는 변경을 잘못
-         * 반영하면 진짜 취약점이 조용히 LOW로 묻히므로(regPgmId 사례) 사람이 근거를 보고 반영한다.
+         * 점검 중 바로 반영하는가. 판정을 엄격하게 하거나 판정에 쓰지 않는 변경만이다. 느슨하게 하는 변경을 잘못
+         * 반영하면 진짜 취약점이 조용히 LOW로 묻히므로 사람이 근거를 보고 반영한다.
          */
         public boolean automatic() {
             return automatic;
@@ -83,7 +84,7 @@ public record TraceRuleChange(Type type, String system, String annotation, Strin
         return switch (type) {
             case SET_FRAMEWORK -> type + "|" + system;
             // 시스템 항목에 넣는 변경이라 시스템마다 다른 변경이다 — 한 시스템에서 무시해도 다른 시스템에서는 다시 묻는다.
-            case ADD_LOGIN_TYPE, ADD_LOGIN_PREFIX, ADD_SCOPE_KEY -> type + "|" + system + "|" + String.join(",", values);
+            case ADD_LOGIN_TYPE, ADD_LOGIN_PREFIX, ADD_SCOPE_KEY, ADD_AUTH_DEVICE -> type + "|" + system + "|" + String.join(",", values);
             case SET_FIRST_PARAM -> type + "|" + annotation + "|" + container + "|" + requiredFirstParam;
             default -> type + "|" + annotation + "|" + container + "|" + String.join(",", values.stream().sorted().toList());
         };
@@ -98,7 +99,7 @@ public record TraceRuleChange(Type type, String system, String annotation, Strin
             case ADD_OVERWRITE_KEYS -> target + " 키 추가 " + values;
             case REMOVE_OVERWRITE_KEYS -> target + " 키 제외 " + values + " — 세션 값이 아님";
             case SET_FIRST_PARAM -> target + " 첫 파라미터 조건 → " + (requiredFirstParam == null ? "없음" : requiredFirstParam);
-            case ADD_LOGIN_TYPE, ADD_LOGIN_PREFIX, ADD_SCOPE_KEY -> String.join(", ", values) + " (" + system + "에만)";
+            case ADD_LOGIN_TYPE, ADD_LOGIN_PREFIX, ADD_SCOPE_KEY, ADD_AUTH_DEVICE -> String.join(", ", values) + " (" + system + "에만)";
             case SET_FRAMEWORK -> system + " 구조 " + facts.size() + "항목";
         };
     }
@@ -113,6 +114,9 @@ public record TraceRuleChange(Type type, String system, String annotation, Strin
             case ADD_LOGIN_PREFIX -> "이 시스템에서 이 이름으로 시작하는 메서드의 반환값을 로그인 정보(안전)로 판정합니다.";
             case ADD_SCOPE_KEY -> "이 시스템에서 이 키가 SQL 조건에 쓰인 곳마다 값이 클라이언트에서 오는지 판정합니다(세션 값으로 보는 설정이 아닙니다)."
                     + " 화면마다 따로 판정해 클라이언트 값이 들어가는 곳만 탐지하므로 탐지가 늘어날 수 있습니다.";
+            case ADD_AUTH_DEVICE -> "이 시스템에서 이 장치가 적용되는 경로의 요청 처리 메서드를 인증된 것으로 보고, 적용 경로 밖·제외 경로의 메서드만"
+                    + " '인증 없는 중요 기능'으로 탐지합니다. 근거에서 로그인 정보가 없을 때 실제로 막는지(return false·리다이렉트·오류) 확인하세요."
+                    + " 막지 않는 장치를 반영하면 열린 기능을 놓칩니다.";
             case SET_FRAMEWORK -> "기록만 합니다(판정에 쓰지 않음).";
         };
     }
@@ -149,14 +153,15 @@ public record TraceRuleChange(Type type, String system, String annotation, Strin
                 overwrites.set(at, new SessionOverwrite(o.name(), o.annotation(), o.container(), requiredFirstParam, o.keys()));
                 yield with(rules, overwrites);
             }
-            case ADD_LOGIN_TYPE, ADD_LOGIN_PREFIX, ADD_SCOPE_KEY -> {
-                // 공통에 이미 있으면 그대로 — 시스템 항목에 같은 것을 또 넣지 않는다.
-                if (common(rules).containsAll(values)) yield rules;
+            case ADD_LOGIN_TYPE, ADD_LOGIN_PREFIX, ADD_SCOPE_KEY, ADD_AUTH_DEVICE -> {
+                // 공통에 이미 있으면 그대로 — 시스템 항목에 같은 것을 또 넣지 않는다(인증 장치는 공통 목록이 없다).
+                if (!common(rules).isEmpty() && common(rules).containsAll(values)) yield rules;
                 SystemRules own = rules.systems().getOrDefault(system, SystemRules.empty());
                 yield rules.withSystem(system, switch (type) {
-                    case ADD_LOGIN_TYPE -> new SystemRules(own.loginMethodPrefixes(), union(own.loginTypeNames(), values), own.userScopeKeys());
-                    case ADD_LOGIN_PREFIX -> new SystemRules(union(own.loginMethodPrefixes(), values), own.loginTypeNames(), own.userScopeKeys());
-                    default -> new SystemRules(own.loginMethodPrefixes(), own.loginTypeNames(), union(own.userScopeKeys(), values));
+                    case ADD_LOGIN_TYPE -> new SystemRules(own.loginMethodPrefixes(), union(own.loginTypeNames(), values), own.userScopeKeys(), own.authDevices());
+                    case ADD_LOGIN_PREFIX -> new SystemRules(union(own.loginMethodPrefixes(), values), own.loginTypeNames(), own.userScopeKeys(), own.authDevices());
+                    case ADD_AUTH_DEVICE -> new SystemRules(own.loginMethodPrefixes(), own.loginTypeNames(), own.userScopeKeys(), union(own.authDevices(), values));
+                    default -> new SystemRules(own.loginMethodPrefixes(), own.loginTypeNames(), union(own.userScopeKeys(), values), own.authDevices());
                 });
             }
             case SET_FRAMEWORK -> rules.withFramework(system, facts);
@@ -168,6 +173,7 @@ public record TraceRuleChange(Type type, String system, String annotation, Strin
         return switch (type) {
             case ADD_LOGIN_TYPE -> rules.loginTypeNames();
             case ADD_LOGIN_PREFIX -> rules.loginMethodPrefixes();
+            case ADD_AUTH_DEVICE -> Set.of();
             default -> rules.userScopeKeys();
         };
     }

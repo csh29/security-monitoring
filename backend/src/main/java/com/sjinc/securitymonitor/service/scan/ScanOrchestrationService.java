@@ -62,12 +62,8 @@ public class ScanOrchestrationService {
 
     /** @param requestedBy 스캔을 실행한 로그인 아이디(스캔 이력에 남긴다) */
     public ScanResult scanRepository(String repoUrl, String branch, String requestedBy) throws Exception {
-        // repoUrl/branch를 검증 없이 그대로 clone하면, 앱 관리에 등록되지 않은 임의 URL도 스캔
-        // 대상이 될 수 있다 — GitLab PAT를 공격자 서버로 그대로 보내거나(자격증명 유출), 공격자가
-        // 만든 pom.xml의 <repositories>/build extension을 Maven이 그대로 실행하거나, repoUrl에
-        // 내부망 주소·file:// 경로를 넣어 SSRF/로컬 파일 접근에 악용될 수 있다. 앱 관리("app-mng"
-        // 권한이 있어야 등록 가능)에 이미 등록된 조합만 스캔을 허용해서 이 경로를 원천 차단한다.
-        // 빈 값으로 찾으면 Spring Data가 "IS NULL" 조회를 해서 저장소가 없는 소스 업로드 앱이 잡힌다 — 먼저 거른다.
+        // 임의 URL을 clone하면 자격증명 유출·악성 pom 실행·SSRF가 열리므로 앱 관리에 등록된 조합만 스캔한다.
+        // 빈 값으로 찾으면 "IS NULL" 조회가 되어 저장소 없는 소스 업로드 앱이 잡히므로 먼저 거른다.
         if (repoUrl == null || repoUrl.isBlank() || branch == null || branch.isBlank()) {
             throw new IllegalArgumentException("저장소 URL과 브랜치가 필요합니다.");
         }
@@ -126,12 +122,8 @@ public class ScanOrchestrationService {
                 });
             }
 
-            // 같은 CVE가 서로 다른 두 아티팩트에 걸리는 경우가 실제로 있다(예: micrometer-core와
-            // micrometer-registry-prometheus가 같은 CVE-2026-40984에 걸림). 예전엔 CVE ID만으로
-            // 대표 하나만 남기고 나머지 아티팩트를 통째로 버렸는데, 그러면 그 아티팩트의 실제 취약
-            // 버전이 Vulnerability 테이블에 아예 안 남아서 fix-plan이 그 라이브러리 패치를 영원히
-            // 모른다 — 실제로 겪은 버그다. (cveId, groupId, artifactId) 조합 단위로 남긴다
-            // (app_id, cve_id, group_id, artifact_id) 복합 유니크와 정확히 같은 기준이다.
+            // 같은 CVE가 여러 아티팩트에 걸릴 수 있어 CVE ID만으로 합치면 나머지 아티팩트의 패치를 fix-plan이 모른다.
+            // 복합 유니크와 같은 (cveId, groupId, artifactId) 단위로 남긴다.
             Collection<DependencyFinding> cveFindings = findings.stream()
                     .filter(finding -> isCveId(finding.identifier()))
                     .collect(Collectors.toMap(
@@ -151,12 +143,8 @@ public class ScanOrchestrationService {
                     : dependencyExtractor.buildTopLevelCauseMap(projectDir, mavenHome);
             Map<String, String> topLevelCauseByCoordinate = treeResult.topLevelCauseByCoordinate();
 
-            // NVD 조회는 외부 API라 한 건이 실패할 수 있다(호출 한도 초과, 일시 장애).
-            // 예전엔 여기에 예외 처리가 없어서 한 건만 실패해도 스캔 전체가 500으로 죽었다 — 그것도
-            // clone과 Maven 두 번을 이미 다 돌린 뒤에, 가장 비싼 작업을 버리는 시점에서. 게다가
-            // syncCveById는 건별 트랜잭션이라 앞쪽 CVE는 이미 저장된 채로 아래 해소 처리
-            // (resolveMissingVulnerabilities)만 실행되지 않아 DB가 어정쩡한 상태로 남았다.
-            // 한 건 실패는 그 건만 건너뛰고, 실패 건수는 응답으로 올려 사람이 알 수 있게 한다.
+            // NVD는 외부 API라 한 건이 실패할 수 있다 — 스캔 전체를 죽이면 비싼 작업을 버리고 해소 처리도 빠져
+            // DB가 어정쩡해지므로, 그 건만 건너뛰고 실패 건수는 응답으로 올린다.
             List<String> failedCveIds = new ArrayList<>();
             for (DependencyFinding finding : cveFindings) {
                 String coordinate = finding.groupId() + ":" + finding.artifactId();
@@ -177,11 +165,8 @@ public class ScanOrchestrationService {
                         failedCveIds.size(), String.join(", ", failedCveIds));
             }
 
-            // 라이브러리 삭제/업그레이드로 이번 스캔엔 안 걸린 기존 OPEN 건을 RESOLVED로 표시한다.
-            // cveFindings가 비어있어도(전부 해소된 경우) 실행해야 하므로 이 블록 밖에서 처리한다.
-            // CVE ID만으로 비교하면 안 된다 — 같은 CVE가 여러 아티팩트에 걸린 경우, 한쪽
-            // 아티팩트가 해소돼도 다른 아티팩트가 여전히 걸려있으면(같은 CVE ID) 잘못 RESOLVED
-            // 처리될 수 있다. (cveId, groupId, artifactId) 조합 단위로 비교해야 정확하다.
+            // 이번 스캔엔 안 걸린 기존 OPEN 건을 RESOLVED로 표시한다(전부 해소돼도 실행되게 블록 밖에서).
+            // 같은 CVE가 여러 아티팩트에 걸릴 수 있어 (cveId, groupId, artifactId) 단위로 비교한다.
             Set<String> currentKeys = cveFindings.stream()
                     .map(f -> f.identifier() + "|" + f.groupId() + ":" + f.artifactId())
                     .collect(Collectors.toSet());
@@ -211,19 +196,9 @@ public class ScanOrchestrationService {
     }
 
     /**
-     * 파이썬 AI 배치(ai/vuln_assessor.py)가 할 일이 있을 때만 백그라운드로 띄운다.
-     *
-     * <p>"새로 저장된 CVE가 있는가"가 아니라 배치가 실제로 가져갈 대기열 두 개를 기준으로 본다 —
-     * 새 CVE라도 결정론적 자동판정으로 끝나면 AI가 볼 게 없고(괜히 띄우면 할 일 없이 뜨는 프로세스),
-     * 반대로 새 CVE가 없어도 이번 스캔이 스냅샷을 갱신했으면 fix-plan이 다시 대기 상태가 된다.
-     *   - AI 판단 대기: {@link VulnerabilityService#getUnassessedVulnerabilities()} (/api/ai/vulnerabilities/pending)
-     *   - fix-plan 대기: {@link FixPlanService#getPendingFixPlanTargets()} (/api/ai/fix-plans/pending)
-     *   - 설명 요약 대기: {@link CveSummaryService#getPendingSummaryTargets()} (/api/ai/summaries/pending)
-     *   - 영향 분석 대기: {@link UpgradeImpactService#getPendingTargets()} (/api/ai/impacts/pending)
-     *
-     * <p>배치는 Claude API를 호출한다(과금). 이미 떠 있으면 {@code triggerAsync}가 건너뛰므로 스캔을
-     * 연달아 돌려도 프로세스가 쌓이지 않는다. 여기서 실패해도 스캔 결과는 이미 저장됐으니 스캔은
-     * 성공으로 끝내고 로그만 남긴다.
+     * 파이썬 AI 배치가 할 일이 있을 때만 띄운다 — 새 CVE 여부가 아니라 배치가 가져갈 대기열(판단·fix-plan·요약·영향 분석)을 본다.
+     * 새 CVE라도 자동판정으로 끝나면 할 일이 없고, 새 CVE가 없어도 스냅샷 갱신으로 fix-plan이 다시 대기가 될 수 있어서다.
+     * 여기서 실패해도 스캔 결과는 이미 저장됐으니 로그만 남긴다.
      */
     private void triggerAiAssessmentIfNeeded() {
         if (!aiAssessmentTriggerService.isAutoTriggerEnabled()) {

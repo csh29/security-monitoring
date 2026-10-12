@@ -1,5 +1,6 @@
 package com.sjinc.securitymonitor.service.ai;
 
+import com.sjinc.securitymonitor.domain.App;
 import com.sjinc.securitymonitor.domain.SecureCodeFinding;
 import com.sjinc.securitymonitor.dto.ai.SameOriginMember;
 import com.sjinc.securitymonitor.dto.ai.SameOriginRef;
@@ -7,14 +8,19 @@ import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewFailure;
 import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewRequest;
 import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewTarget;
 import com.sjinc.securitymonitor.dto.securecode.DetectedFinding;
+import com.sjinc.securitymonitor.repository.AppRepository;
 import com.sjinc.securitymonitor.repository.SecureCodeFindingRepository;
+import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRuleService;
+import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -29,10 +35,20 @@ class SecureCodeAiReviewServiceTest {
     private SecureCodeFindingRepository findingRepository;
     private SecureCodeAiReviewService service;
 
+    /** 시스템 구조 — 인터셉터 하나, 세션 덮어쓰기 장치 하나. */
+    private static final TraceRules RULES = new TraceRules(
+            List.of(new TraceRules.SessionOverwrite("@AddUserInfo", "AddUserInfo", "paramData", "HttpServletRequest", Set.of("loginCompCd"))),
+            Set.of(), Set.of("LoginUser"), Set.of(),
+            Map.of("CRM", List.of(new TraceRules.FrameworkFact("인터셉터", "TokenInterceptor", "WebConfig.java addInterceptor(TokenInterceptor)"))));
+
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
         findingRepository = mock(SecureCodeFindingRepository.class);
-        service = new SecureCodeAiReviewService(findingRepository);
+        AppRepository appRepository = mock(AppRepository.class);
+        TraceRuleService traceRuleService = mock(TraceRuleService.class);
+        when(appRepository.findById(1L)).thenReturn(Optional.of(App.builder().id(1L).systemName("CRM").build()));
+        when(traceRuleService.load()).thenReturn(RULES);
+        service = new SecureCodeAiReviewService(findingRepository, appRepository, traceRuleService);
         ReflectionTestUtils.setField(service, "severities", List.of("HIGH", "MEDIUM"));
         ReflectionTestUtils.setField(service, "extraRules", List.of("kisa-insecure-random", "kisa-xxe-parser"));
         ReflectionTestUtils.setField(service, "maxFailures", 3);
@@ -79,7 +95,7 @@ class SecureCodeAiReviewServiceTest {
         assertThat(service.isTarget(RULE, null, null)).isFalse();
     }
 
-    /** 판정 불가는 MEDIUM이라 예전엔 기본 기준(HIGH)에 안 걸려 AI도 엔진도 보지 않은 채 남았다. */
+    /** 판정 불가는 MEDIUM이라 등급 기준만 쓰면 AI도 엔진도 보지 않은 채 남는다. */
     @Test
     void 연계_추적이_판정_불가로_남긴_탐지는_등급과_무관하게_대상이다() {
         assertThat(service.isTarget("kisa-os-command-exec", "MEDIUM", "UNKNOWN")).isTrue();
@@ -169,7 +185,7 @@ class SecureCodeAiReviewServiceTest {
             assertThat(r.path()).isEqualTo("p/H.java");
             assertThat(r.code()).contains("return \"bar\";").doesNotContain("hunter2");
         });
-        // 관련 코드가 바뀌면 다시 판별 대기가 되도록 해시가 달라진다. 관련 코드가 없으면 예전과 같은 해시(기존 판별 유지).
+        // 관련 코드가 바뀌면 다시 판별 대기가 되도록 해시가 달라진다. 관련 코드가 없으면 해시가 그대로다(기존 판별 유지).
         assertThat(target.inputHash()).isNotEqualTo(SecureCodeAiReviewService.toTarget(without).inputHash());
         assertThat(SecureCodeAiReviewService.toTarget(without).relatedCode()).isEmpty();
     }
@@ -224,7 +240,21 @@ class SecureCodeAiReviewServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
-    /** CKEditor pgmID 모양 — 한 요청값이 폴더 만들기·파일 쓰기 두 지점에 들어간다. AI는 한 번만, 결과는 두 지점 모두에. */
+    /** 설정형 탐지(CSRF 끔 등)는 판단 근거가 호출로 이어지지 않은 곳에 있다 — 점검이 아는 시스템 구조를 싣되 입력 해시는 바꾸지 않는다. */
+    @Test
+    void 판별_입력에_시스템_구조를_싣고_해시는_그대로다() {
+        SecureCodeFinding f = finding(1L, detected("a", "HIGH", null, "ctx-a"));
+        when(findingRepository.findAiReviewCandidates(any())).thenReturn(List.of(f));
+
+        SecureCodeReviewTarget target = service.getPendingTargets(1L, null).get(0);
+
+        assertThat(target.systemContext()).anyMatch(line -> line.contains("TokenInterceptor"))
+                .anyMatch(line -> line.contains("@AddUserInfo") && line.contains("loginCompCd"))
+                .anyMatch(line -> line.contains("LoginUser"));
+        assertThat(target.inputHash()).isEqualTo(SecureCodeAiReviewService.toTarget(f).inputHash());
+    }
+
+    /** 업로드 경로 모양 — 한 요청값이 폴더 만들기·파일 쓰기 두 지점에 들어간다. AI는 한 번만, 결과는 두 지점 모두에. */
     @Test
     void 같은_출처는_한_번만_판별하고_결과를_함께_저장한다() {
         String evidence = "CkEditorController.java:51 요청 값 request.getParameter(\"pgmID\")\nFrameFileUtil.java:46 new File(dir)";

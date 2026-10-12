@@ -14,11 +14,7 @@ import java.util.regex.Pattern;
 
 /**
  * MyBatis 매퍼 XML에서 {@code ${}}·{@code #{}} 사용 위치와, 그 값을 XML 안에서 이미 정해 버리는 장치(bind·조건 검사)를 뽑는다.
- * {@code ${}}는 SQL 삽입 판정에, {@code #{}}는 사용자 범위 키(trace-rules.yml userScopeKeys)의 인가 판정에 쓴다.
- *
- * <p>DOM 파서를 쓰지 않고 태그를 직접 훑는다 — Semgrep 탐지와 맞추려면 {@code ${}}마다 정확한 줄 번호가 필요한데 DOM은
- * 줄 번호를 주지 않고, 매퍼 XML은 DOCTYPE(외부 DTD)을 달고 있어 파서가 DTD를 내려받으려 한다. 매퍼 XML은 구조가 단순해
- * (태그·주석·CDATA·속성뿐) 이 정도로 충분하다. 주석 안의 {@code ${}}는 MyBatis가 실행하지 않으니 Semgrep 규칙처럼 뺀다.
+ * DOM 파서 대신 태그를 직접 훑는다 — Semgrep 탐지와 맞출 정확한 줄 번호가 필요하고, DOCTYPE의 외부 DTD를 내려받지 않기 위해서다.
  */
 public final class MapperXmlIndex {
 
@@ -40,12 +36,11 @@ public final class MapperXmlIndex {
     /**
      * {@code ${expr}} 또는 {@code #{expr}} 한 개(어느 쪽인지는 담긴 목록 — Statement.dollars/hashes — 으로 안다).
      *
-     * @param key        값을 꺼내는 파라미터 키(expr의 첫 이름. {@code ym.substring(2)} → ym). foreach 항목이면 컬렉션 키로 바꾼 값
-     * @param xmlFixed   XML 안에서 값이 정해져 호출 쪽과 무관하게 안전하면 그 근거, 아니면 null
-     * @param bindFrom   {@code <bind>}가 이 키를 다른 키들로 다시 만든 경우 그 원래 키들(호출 쪽에서는 이 키들을 따라간다). 없으면 빈 집합
-     * @param condition  SQL의 조건 자리(WHERE·ON·HAVING)인가. false면 값 자리(INSERT VALUES·UPDATE SET·SELECT 목록 등) — 사용자 범위 키가
-     *                   값 자리에 쓰이면 등록자·수정자 기록이지 데이터 범위 조건이 아니다(clauseIsCondition)
-     * @param display    파일에 적힌 모양 그대로({@code ${ym}}, {@code #{compCd}}, iBatis {@code $sortCol$}, {@code #compCd#}) — 근거·메시지 표시용
+     * @param key        값을 꺼내는 파라미터 키(expr의 첫 이름, foreach 항목이면 컬렉션 키)
+     * @param xmlFixed   XML 안에서 값이 정해져 안전하면 그 근거, 아니면 null
+     * @param bindFrom   {@code <bind>}가 이 키를 만든 원래 키들(호출 쪽에서는 이 키들을 따라간다)
+     * @param condition  SQL 조건 자리(WHERE·ON·HAVING)인가 — 값 자리면 등록자·수정자 기록이지 범위 조건이 아니다
+     * @param display    파일에 적힌 모양 그대로 — 근거·메시지 표시용
      */
     public record Dollar(String path, int line, String expr, String key, String xmlFixed, Set<String> bindFrom, boolean condition,
                   String display) {
@@ -216,11 +211,9 @@ public final class MapperXmlIndex {
         }
 
         /**
-         * 이 위치의 파라미터가 SQL 조건 자리(WHERE·ON·HAVING)인가. 사용자 범위 키가 조건에 쓰이면 데이터 범위를 가르지만, INSERT 값·UPDATE SET에
-         * 쓰이면 등록자·수정자 기록이다(CRM의 거의 모든 INSERT가 #{loginEmpNo}를 등록자로 넣어, 구분하지 않으면 인가 탐지가 쏟아졌다).
-         * 동적 SQL 태그가 먼저다 — {@code <where>}·{@code <trim prefix="WHERE">} 안이면 조건, {@code <set>}·{@code <trim prefix="SET">} 안이면 값.
-         * 아니면 지금까지의 SQL에서 마지막 키워드로 가른다. 키워드가 없으면 insert는 값, 나머지(조각·select·update·delete)는 조건으로 본다 —
-         * 조각은 대개 WHERE 뒤에 include되고, 모르면 놓치지 않는 쪽(조건)으로 둔다.
+         * 이 위치의 파라미터가 SQL 조건 자리인가 — 값 자리(INSERT·SET)의 사용자 범위 키는 등록자 기록이라 인가 탐지에서 뺀다.
+         * 감싼 동적 태그(where·set·trim·prepend)가 먼저, 아니면 앞선 SQL의 마지막 키워드로 가른다.
+         * 키워드가 없으면 insert만 값으로, 나머지는 놓치지 않는 쪽(조건)으로 본다.
          */
         private boolean clauseIsCondition(Open statement, int textFrom, int at) {
             for (Open open : stack) {

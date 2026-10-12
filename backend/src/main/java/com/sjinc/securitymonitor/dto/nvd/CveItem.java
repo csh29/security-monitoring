@@ -6,11 +6,7 @@ import java.util.List;
 
 
 /**
- * 개별 CVE(취약점) 정보를 담는 핵심 도메인 DTO.
- *
- * <p>NVD 응답의 {@code vulnerabilities[].cve} 경로에 해당하며,
- * 실제로는 이보다 훨씬 많은 필드(references, configurations, weaknesses 등)가
- * 내려오지만 현재 시스템에서 필요한 필드만 선별해서 매핑한다.
+ * 개별 CVE 정보 DTO — NVD 응답의 {@code vulnerabilities[].cve}에서 이 시스템에 필요한 필드만 매핑한다.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class CveItem {
@@ -28,10 +24,8 @@ public class CveItem {
     private Metrics metrics;
 
     /**
-     * NVD가 구조화된 형태로 내려주는 실제 영향 버전 범위(CPE 매치). 이전엔 이 필드가 없어서
-     * Jackson이 조용히 버렸고, AI가 description 프로즈만 보고 영향 범위를 추측해야 했다 —
-     * 그 결과 설명에 영향 범위가 여러 줄 나올 때 일부를 놓치는 실수가 실제로 있었다.
-     * 이제 이 필드로 설치 버전이 실제 영향 범위 안에 있는지 자바가 직접 계산한다.
+     * NVD의 구조화된 영향 버전 범위(CPE 매치). AI가 설명 문장에서 범위를 추측하다 놓치지 않게
+     * 이 값으로 설치 버전이 영향 범위 안인지 자바가 직접 계산한다.
      */
     private List<NvdConfiguration> configurations;
 

@@ -1,96 +1,56 @@
 /**
- * 화면마다 반복되던 "tr/td를 하나씩 만들어 append" 코드를 대체하는 공통 그리드 렌더러.
- * 헤더(th)도 마크업에 직접 적지 않고 이 columns 정의로부터 Grid.renderHeader가 만든다.
- * .grid 공통 CSS는 이 파일이 아니라 /css/grid.css에 있다 — <head>에
- * <link rel="stylesheet" href="/css/grid.css">로 넣어야 한다(JS로 런타임에 넣으면 스크립트가
- * 실행되기 전까지 스타일이 없어 화면이 깜빡인다).
+ * 공통 그리드 렌더러. 헤더와 행을 columns 정의로 그리며, 공통 CSS는 /css/grid.css를 <link>로 싣는다.
  *
  * 사용법:
  *   Grid.renderHeader(thead, columns, { initialMessage });
- *   Grid.getRows(tbody)            // 모든 행 데이터(아래 "행 데이터")
+ *   Grid.render(tbody, columns, rows, options);
+ *   Grid.getRows(tbody)            // 모든 행 데이터
  *   Grid.getRow(tbody, rowIndex)   // rowIndex(0부터, 안내 행 제외) 번째 행 데이터. 없으면 null
- *   Grid.removeRows(tbody, rows)   // getRows로 받은 행 데이터에 해당하는 tr을 지운다(저장 전 신규 행 삭제 등)
- *   Grid.addRow(tbody, { focus })  // "신규" 버튼: 맨 위에 빈 행을 넣고 첫 입력칸(또는 focus로 준 col.id)에 커서를 둔다.
- *                                  // 컬럼은 renderHeader/render에 준 것을 그대로 쓴다. 새 행의 행 데이터를 돌려준다.
+ *   Grid.removeRows(tbody, rows)   // 행 데이터에 해당하는 tr을 지운다
+ *   Grid.addRow(tbody, { focus })  // 맨 위에 빈 행을 넣고 첫 입력칸(또는 focus col.id)에 커서. 새 행 데이터를 돌려준다
  *
- * 행 데이터: 그 행을 그릴 때 받은 원본 row 객체에, 입력 셀(type이 있는 컬럼)의 현재 값을 col.id로
- * 덮어쓴 새 객체. 화면이 tr._fields.xxx.value / tr.dataset.id를 직접 읽지 않고 이걸로 읽는다.
- *   - text/number/password : 앞뒤 공백을 뺀 문자열(number도 문자열 — 숫자가 필요하면 화면이 변환)
+ * 행 데이터: 원본 row에 입력 셀의 현재 값을 col.id로 덮어쓴 새 객체(화면은 tr._fields를 직접 읽지 않는다).
+ *   - text/number/password : 앞뒤 공백을 뺀 문자열(number도 문자열)
  *   - checkbox             : 'Y' / 'N'
  *   - select               : 선택된 value
- *   - _rowIndex            : getRow에 넘기는 그 행의 순번
- *   - _isNew               : 원본 row 없이 만든 행("신규" 버튼으로 추가해 아직 저장 전)이면 true
- *   - _selected            : row-select 체크박스로 선택된 행이면 true("삭제" 대상)
- *   Grid.render(tbody, columns, rows, options);
+ *   - _rowIndex            : getRow에 넘기는 행 순번
+ *   - _isNew               : 저장 전 신규 행이면 true
+ *   - _selected            : row-select로 선택된 행이면 true
  *
  * columns: [{ id, label, width, align, cursor, className, headerClassName, type, render(value, row, td, tr), title(value, row) }]
- *   - id        : row 객체에서 꺼낼 속성명. 값은 td.textContent로(또는 type이 있으면 그 입력 엘리먼트
- *                 값으로) 그대로 들어간다.
- *   - label     : 헤더 th에 표시할 텍스트. 생략하면 빈 th(체크박스 열 등).
- *   - width     : 컬럼 폭. 숫자면 px, 문자열이면 그대로(예: '20%') th/td에 inline style로 적용된다.
- *                 화면 <style> 태그에 ".grid th.xxx{width:...}" 식으로 적지 않고 이 값 하나로 통일한다.
- *   - align     : td의 text-align('center'/'right'/'left'). 배지·체크박스·버튼 열 정렬에 사용.
- *                 헤더(th) label은 모든 그리드에서 가운데 정렬이라(grid.css) 여기에 영향받지 않는다.
- *   - cursor    : td의 cursor 스타일(예: 'pointer'). onDblClick으로 팝업을 여는 열 등에 사용.
- *   - className : td에 적용할 클래스. headerClassName이 없으면 th에도 그대로 적용된다.
- *   - headerClassName : th에만 다른 클래스를 적용하고 싶을 때만 지정.
- *   - render    : 지정하면 기본 텍스트 대신 이 결과로 셀을 채운다. Node를 리턴하면 그대로
- *                 append(입력창/배지/버튼 등), 문자열/숫자를 리턴하면 textContent로 넣는다.
- *                 (value, row, td, tr) 네 값을 다 받으므로, 체크박스처럼 tr에 class/dataset을
- *                 걸어야 하는 셀도 이 콜백 안에서 처리하면 된다. render가 없으면 아래 type으로
- *                 화면마다 반복되던 "input 만들고 tr._fields에 담는" 코드를 대신할 수 있다.
- *   - type      : render 없이 입력 엘리먼트를 선언적으로 만든다(각 화면의 createInput류 함수 대체).
- *       - 'text' | 'number' | 'password' (기본 'text') : <input>. value는 row[col.id](신규 행이면 빈 값).
- *       - 'checkbox' : Y/N 필드용 <input type="checkbox">. checked는 기본 row[col.id]==='Y'이고,
- *                      신규 행(row가 null)이면 col.defaultChecked(기본 true). col.checked(value,row,tr)를
- *                      주면 그 값을 대신 쓴다 — 체크박스가 row[col.id]가 아닌 다른 데이터(예: 권한
- *                      부여 여부 Set)에 묶여 있는 경우에 쓴다.
- *       - 'select'   : <select>. col.options(row) 또는 [{value,label}] 배열로 옵션을 채우고, 선택값은
- *                      row[col.id](신규 행이면 col.defaultValue). col.options 대신 col.optionsQuery에
- *                      공통코드 그룹명(예: 'ROLE')을 주면, 화면이 직접 조회하지 않아도 render()가
- *                      ComCd.fetchCodes(optionsQuery) 결과로 옵션을 채워준다(codeValue→value,
- *                      codeName→label). 그리드마다 반복되던 "그룹 조회 → 캐시 변수 → options 함수"
- *                      배선을 없애는 용도라, 이 화면은 /js/com-cd.js를 같이 불러와야 한다.
- *       - 'row-select': 그리드 상단 "삭제" 버튼이 쓰는 행 선택 체크박스 — 값을 저장하지 않고
- *                      change 시 tr에 'selected' 클래스만 토글한다. col.id는 필요 없다.
- *                      헤더에는 전체 선택/해제 체크박스가 자동으로 붙는다(일부만 고르면 indeterminate).
- *     만들어진 엘리먼트는 col.id가 있으면 tr._fields[col.id]에 저장돼, 기존처럼 저장 로직에서
- *     tr._fields.xxx.value(또는 .checked)로 읽으면 된다. col.disabled(value,row)로 비활성화,
- *     col.readOnly(value,row)로 읽기전용(자연키처럼 값은 보여주되 수정은 막을 때 — disabled는
- *     클릭/포커스 자체가 안 먹어서 행 클릭이 씹히니, 클릭은 되어야 하는 셀엔 readOnly를 쓴다),
- *     col.placeholder(문자열 또는 함수)로 placeholder를 줄 수 있고, row-select에 한해
- *     col.stopPropagation을 true로 주면 클릭이 행(tr)까지 버블링되지 않는다(행 클릭에 별도
- *     동작이 걸려 있는 화면에서 체크박스 클릭과 충돌하지 않게 하기 위함).
- *   - title     : true면 텍스트 값을 그대로 title(툴팁)로 쓰고, 함수면 (value, row)의 리턴값을 쓴다.
- *   - onDblClick: (value, row)를 받는 콜백 — 더블클릭 시 실행(설명 팝업 등에 사용).
- *   - display   : select 전용 보기 모드. (value, label, row)를 받아 노드(뱃지 등)나 문자열을 돌려주면 평소엔
- *                 그걸 보여주고, 셀을 누를 때만 select로 바뀐다(포커스가 빠지면 새 값으로 다시 그림).
- *                 값 읽기(getRows)는 보통 select 셀과 같다. 예: 취약점 관리의 처리여부 뱃지.
+ *   - id        : row에서 꺼낼 속성명. textContent 또는 입력 엘리먼트 값으로 들어간다.
+ *   - label     : 헤더 th 텍스트. 생략하면 빈 th.
+ *   - width     : 컬럼 폭(숫자면 px, 문자열은 그대로). 화면 CSS 대신 이 값으로 통일한다.
+ *   - align     : td의 text-align. 헤더는 항상 가운데 정렬이라 영향받지 않는다.
+ *   - cursor    : td의 cursor 스타일(예: 'pointer').
+ *   - className : td 클래스. headerClassName이 없으면 th에도 적용된다.
+ *   - headerClassName : th에만 다른 클래스를 줄 때 지정.
+ *   - render    : (value, row, td, tr) → Node는 append, 문자열/숫자는 textContent로 넣는다.
+ *   - type      : render 없이 입력 엘리먼트를 선언적으로 만든다.
+ *       - 'text' | 'number' | 'password' (기본 'text') : <input>. 값은 row[col.id].
+ *       - 'checkbox' : Y/N 체크박스. 신규 행은 col.defaultChecked(기본 true), col.checked(value,row,tr)로 대체 가능.
+ *       - 'select'   : col.options(row|배열) 또는 col.optionsQuery(공통코드 그룹, com-cd.js 필요)로 옵션을 채운다.
+ *       - 'row-select': "삭제"용 행 선택 체크박스. tr의 'selected'만 토글하며 헤더에 전체 선택이 붙는다.
+ *     엘리먼트는 tr._fields[col.id]에 저장된다. 보조 옵션: col.disabled(value,row), col.placeholder,
+ *     col.readOnly(value,row)(disabled는 행 클릭이 막히므로 클릭이 필요하면 readOnly), col.stopPropagation(row-select 전용).
+ *   - title     : true면 텍스트 값을, 함수면 (value, row) 리턴값을 툴팁으로 쓴다.
+ *   - onDblClick: (value, row) 더블클릭 콜백.
+ *   - display   : select 보기 모드. (value, label, row) 결과를 보여주다 누르면 select로 바뀐다.
  *
- * type이 있는 셀은 전부 엔터 키로 다음 셀(우측, 마지막 셀이면 다음 행 첫 셀)로, 위/아래 방향키로
- * 윗/아랫 행의 같은 열 셀로 자동 이동한다 — 화면이 따로 처리할 필요 없이 buildRow가 붙여준다.
- * 넘어갈 셀이 없으면 그냥 끝난다. select 셀에서는 방향키가 옵션 선택이라 이동하지 않는다.
+ * type 셀은 엔터로 다음 셀, 위/아래 방향키로 같은 열 셀로 이동한다(select는 방향키 이동 없음).
  *
  * options:
- *   - emptyMessage : rows가 없을 때 보여줄 문구.
- *   - buildRow(tr, row) : 각 tr 생성 직후(셀 채우기 전) 호출 — dataset/class 지정용.
- *   - onRowClick(tr, row) : 행을 클릭하면(체크박스처럼 stopPropagation을 건 셀이 아닌 한) 호출된다.
- *                       row는 그 행의 행 데이터(getRow와 같은 값)다.
- *                       클릭한 행은 render()가 자동으로 'current' 클래스를 붙여 강조 표시하므로,
- *                       공통코드관리 화면처럼 "행을 클릭하면 우측에 상세를 보여준다" 같은 동작만
- *                       이 콜백에 얹으면 된다.
- *   - virtual : true면 행이 VIRTUAL_MIN_ROWS(100) 이상일 때 보이는 범위의 행만 붙인다(가상 스크롤 — 아래 "가상 스크롤" 설명).
- *               행이 수백 개인 그리드에서 탭 전환·창 크기 변경 때 버벅이지 않게. 셀이 줄바꿈되지 않아 행 높이가 일정하고,
- *               table의 부모(.grid-wrap/.grid-scroll)가 세로 스크롤 영역인 그리드에만 켠다. getRows·엑셀·복사·입력값은 그대로다.
+ *   - emptyMessage : rows가 없을 때 문구.
+ *   - buildRow(tr, row) : tr 생성 직후(셀 채우기 전) 호출 — dataset/class 지정용.
+ *   - onRowClick(tr, row) : 행 클릭 콜백(row는 행 데이터). 클릭한 행에는 'current' 강조가 자동으로 붙는다.
+ *   - virtual : true면 100행 이상일 때 보이는 행만 붙인다. 행 높이가 일정하고 부모가 세로 스크롤 영역일 때만 켠다.
  *
- * 모든 그리드 공통(화면이 따로 할 일 없음):
- *   - 셀을 클릭하면(엔터·방향키로 옮겨 가도) 그 셀에 'cell-current' 테두리가 표시된다.
- *   - 데이터 셀 우클릭 메뉴: 셀 복사 / 행 복사(탭 구분 — 엑셀에 붙여넣으면 칸별로 나뉜다) / 엑셀 다운로드
- *     (지금 그려진 행 전체를 .xlsx로, /js/xlsx-writer.js). 값은 화면에 보이는 값이다 — 입력 셀은 현재 입력값,
- *     select는 옵션 이름. id가 없는 컬럼(행 선택 체크박스, 버튼 열)은 행 복사·엑셀에서 빠진다.
- *     입력 셀(에디터) 위에서도 같은 메뉴가 뜨고, 우클릭으로는 입력칸에 커서가 들어가지 않는다.
- *   - 헤더(th)를 끌어다 놓으면 컬럼 순서가 바뀐다. 화면이 넘긴 컬럼 배열 자체를 제자리에서 바꾸므로 다시 조회해도
- *     유지되고(새로고침하면 원래 순서), 그려진 행은 다시 그리지 않고 셀만 옮긴다. 엔터·방향키 이동 순서도 따라간다.
+ * 모든 그리드 공통:
+ *   - 현재 셀에 'cell-current' 테두리를 표시한다.
+ *   - 우클릭 메뉴: 셀 복사 / 행 복사(탭 구분) / 엑셀 다운로드. 보이는 값 기준이며 id 없는 컬럼은 빠진다.
+ *   - 헤더를 끌어 컬럼 순서를 바꾼다. 컬럼 배열을 제자리에서 바꿔 재조회해도 유지된다.
+ *   - 헤더 오른쪽 경계를 끌어 컬럼 폭을 바꾼다(col.width에 남아 재조회해도 유지).
+ *   - 체크박스 셀은 체크박스 주변 빈 곳을 눌러도 체크가 바뀐다.
  */
 (function (global) {
     /**
@@ -218,11 +178,8 @@
     const MIN_SCROLL_HEIGHT = 200;
 
     /**
-     * .grid-scroll의 세로 한도를 "그 영역의 시작 위치부터 화면(또는 탭 iframe) 아래 끝까지"로 맞춘다.
-     * 그래야 행이 많을 때 페이지가 아니라 그리드 본문만 스크롤되고 헤더(sticky)가 고정된다.
-     * 조회영역(SearchForm)처럼 그리드보다 늦게 그려지는 것이 있어 위치가 바뀌므로, 헤더/행을 그릴
-     * 때마다와 창 크기가 바뀔 때마다 다시 계산한다. 화면이 스스로 스크롤 영역을 둔 경우(.grid-wrap)는
-     * 감싸지 않으므로 대상이 아니다.
+     * .grid-scroll의 세로 한도를 시작 위치부터 화면 아래 끝까지로 맞춰, 페이지가 아닌 그리드 본문만 스크롤되고
+     * 헤더가 고정되게 한다. 조회영역처럼 늦게 그려지는 요소로 위치가 바뀌므로 그릴 때마다·창 크기 변경 때마다 다시 계산한다.
      */
     function fitScrollHeights() {
         document.querySelectorAll('.grid-scroll').forEach(function (wrapper) {
@@ -254,12 +211,8 @@
     const DEFAULT_INITIAL_MESSAGE = '조회 중입니다...';
 
     /**
-     * columns 정의로 thead 한 줄(th 목록)을 만든다. 화면마다 <thead>에 th를 직접 적지 않고 이걸로 통일한다.
-     *
-     * 같은 table의 tbody에는 첫 조회 결과가 오기 전까지 보여줄 안내 행을 같이 넣는다 — 화면마다
-     * <tbody>에 "조회 중입니다..." 행과 colspan을 직접 적던 것을 대신한다(colspan은 컬럼 수로 자동).
-     * 문구는 options.initialMessage로 바꾼다(예: '좌측에서 그룹을 선택하세요.').
-     * tbody에 이미 행이 있으면(헤더만 다시 그리는 경우) 건드리지 않는다.
+     * columns 정의로 thead 한 줄을 만든다. tbody가 비어 있으면 첫 조회 전까지 보일 안내 행(문구는
+     * options.initialMessage, colspan은 컬럼 수)을 넣고, 이미 행이 있으면 건드리지 않는다.
      */
     function renderHeader(thead, columns, options) {
         options = options || {};
@@ -276,9 +229,12 @@
             applyColumnStyle(th, col, true);
             th.textContent = col.label || '';
             if (col.type === 'row-select') {
-                th.insertBefore(createSelectAll(thead), th.firstChild);
+                const selectAll = createSelectAll(thead);
+                th.insertBefore(selectAll, th.firstChild);
+                bindCheckCell(th, selectAll, false);
             }
             th.draggable = true;
+            th.appendChild(createResizer(thead, th, col));
             tr.appendChild(th);
         });
 
@@ -297,6 +253,72 @@
             clearAndAppendMessage(tbody, columns.length, options.initialMessage || DEFAULT_INITIAL_MESSAGE);
         }
         scheduleFitScrollHeights();
+    }
+
+    // ── 컬럼 폭 조절 ───────────────────────────────────────────────────────
+
+    const MIN_COLUMN_WIDTH = 40;
+
+    /** 헤더 오른쪽 경계의 손잡이. 끄는 동안은 순서 바꾸기 드래그를 끄고, 바꾼 폭은 컬럼 정의에 남겨 다시 조회해도 유지한다. */
+    function createResizer(thead, th, col) {
+        const handle = document.createElement('span');
+        handle.className = 'grid-col-resizer';
+        handle.addEventListener('click', function (e) { e.stopPropagation(); }); // 헤더 클릭(전체 선택 등)으로 넘기지 않는다
+        handle.addEventListener('mousedown', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const startX = e.clientX;
+            const startWidth = th.getBoundingClientRect().width;
+            let pending = null;
+            th.draggable = false;
+            document.body.classList.add('grid-col-resizing');
+
+            function move(ev) {
+                pending = Math.max(MIN_COLUMN_WIDTH, Math.round(startWidth + ev.clientX - startX));
+                global.requestAnimationFrame(function () {
+                    if (pending !== null) setColumnWidth(thead, th.cellIndex, col, pending);
+                    pending = null;
+                });
+            }
+            function up() {
+                document.removeEventListener('mousemove', move);
+                document.removeEventListener('mouseup', up);
+                th.draggable = true;
+                document.body.classList.remove('grid-col-resizing');
+            }
+            document.addEventListener('mousemove', move);
+            document.addEventListener('mouseup', up);
+        });
+        return handle;
+    }
+
+    /** 헤더와 그 열의 모든 셀(가상 스크롤로 떼어 둔 행 포함) 폭을 바꾼다. */
+    function setColumnWidth(thead, index, col, width) {
+        col.width = width;
+        applyColumnStyle(thead.rows[0].cells[index], col, true);
+        const table = thead.closest('table');
+        // 폭이 자유로운 컬럼이 없으면 표가 100%를 채우려 남는 폭을 모든 컬럼에 나눠 준다 — 그때는 표 폭을 컬럼 합으로 둔다.
+        const flexible = (thead._gridColumns || []).some(function (c) { return typeof c.width !== 'number'; });
+        if (table) table.style.width = flexible ? '' : 'auto';
+        const tbody = table && table.tBodies[0];
+        if (!tbody) return;
+        dataRows(tbody).forEach(function (tr) {
+            if (tr.cells[index]) applyColumnStyle(tr.cells[index], col, false);
+        });
+    }
+
+    // ── 체크박스 셀 ─────────────────────────────────────────────────────────
+
+    /** 체크박스 셀은 체크박스 주변 빈 곳을 눌러도 체크가 바뀐다. stopRow면 행 클릭(onRowClick)으로 넘기지 않는다. */
+    function bindCheckCell(cell, chk, stopRow) {
+        cell.classList.add('grid-check-cell');
+        cell.addEventListener('click', function (e) {
+            if (e.target === chk || chk.disabled) return;
+            // click()은 합성 클릭이 행까지 한 번 더 올라가므로 값만 바꾸고 change를 보낸다.
+            chk.checked = !chk.checked;
+            chk.dispatchEvent(new Event('change', { bubbles: true }));
+            if (stopRow) e.stopPropagation();
+        });
     }
 
     // ── 행 선택 전체 체크/해제 ─────────────────────────────────────────────
@@ -605,13 +627,9 @@
     }
 
     /**
-     * 위/아래 방향키: 윗/아랫 행의 같은 열(같은 순번의 입력 필드)로 포커스를 옮긴다. 그 행의 입력
-     * 필드가 더 적으면 마지막 필드로 간다. 입력 필드가 없는 행(빈 메시지 행 등)은 건너뛰지 않고
-     * 거기서 멈춘다 — 그리드 끝에서 누르면 아무 일도 없다.
-     *
-     * select는 방향키가 옵션을 바꾸는 키라 가로채지 않는다. number 입력은 방향키가 값 증감이지만
-     * 그리드에서는 행 이동이 우선이라 가로챈다(값은 직접 입력). 한글 조합 중에는 무시한다 —
-     * 조합이 끝나기 전에 포커스가 넘어가면 마지막 글자가 다음 셀로 새어 들어간다.
+     * 위/아래 방향키로 윗/아랫 행의 같은 순번 입력 필드로 포커스를 옮긴다(입력 필드 없는 행에서는 멈춘다).
+     * select는 옵션 선택 키라 가로채지 않고, number는 행 이동을 우선한다. 한글 조합 중에는 마지막 글자가
+     * 다음 셀로 새지 않도록 무시한다.
      */
     function moveVertical(e, field, tr) {
         if (field.tagName === 'SELECT' || e.isComposing) {
@@ -628,11 +646,8 @@
     }
 
     /**
-     * type이 있는 셀에서 엔터를 누르면 같은 행의 다음 입력 필드로, 그 행의 마지막 필드였으면
-     * 다음 tr의 첫 번째 입력 필드로 포커스를 옮긴다(스프레드시트 Tab처럼). 다음 행이 없거나
-     * 다음 행에 입력 필드가 없으면 그냥 끝낸다 — 아무 데도 안 옮기고 이벤트만 소비한다.
-     * 다음 행으로 넘어갈 때는 클릭했을 때와 똑같이 그 행을 'current'로 강조한다.
-     * 위/아래 방향키는 moveVertical이 처리한다.
+     * 엔터로 같은 행의 다음 입력 필드, 마지막이면 다음 행의 첫 입력 필드로 옮긴다(없으면 이벤트만 소비).
+     * 다음 행으로 넘어가면 그 행을 'current'로 강조한다. 위/아래 방향키는 moveVertical이 처리한다.
      */
     function bindKeyNavigation(field, tr) {
         field.addEventListener('keydown', function (e) {
@@ -698,6 +713,8 @@
                 // 입력칸이 셀을 채우는 셀은 td padding을 없앤다(grid.css .grid-editor-cell) — 체크박스는 제외.
                 if (col.type !== 'checkbox' && col.type !== 'row-select') {
                     td.classList.add('grid-editor-cell');
+                } else {
+                    bindCheckCell(td, field, col.type === 'row-select' && col.stopPropagation);
                 }
                 if (col.disabled) {
                     field.disabled = typeof col.disabled === 'function' ? !!col.disabled(value, row) : !!col.disabled;
@@ -903,8 +920,8 @@
     }
 
     /**
-     * 데이터 셀 우클릭: 그 셀·행을 선택 표시하고 공통 메뉴를 띄운다. 입력 셀(에디터) 위에서도 똑같이 공통 메뉴다 —
-     * 예전엔 수정 가능한 입력칸에서 브라우저 기본 메뉴를 남겨 뒀는데, 그리드 안에서 셀마다 메뉴가 달라져 헷갈렸다.
+     * 데이터 셀 우클릭: 그 셀·행을 선택 표시하고 공통 메뉴를 띄운다. 셀마다 메뉴가 달라지지 않도록
+     * 입력 셀(에디터) 위에서도 브라우저 기본 메뉴 대신 공통 메뉴를 쓴다.
      */
     function onContextMenu(tbody, e) {
         const td = dataCell(tbody, e.target);
@@ -925,11 +942,8 @@
     }
 
     /**
-     * tbody 하나에 한 번만 붙는 이벤트 위임 — 실제 데이터 행(빈 메시지 행 제외)을 클릭하면 다른
-     * 행의 'current'는 지우고 클릭한 행에만 붙인 뒤 options.onRowClick(tr)을 호출하고, 클릭한 셀에는
-     * 'cell-current' 테두리를 표시한다. 우클릭은 공통 메뉴(onContextMenu)를 띄운다.
-     * render()가 매번 tbody.innerHTML을 비우고 다시 그려도, 리스너는 tbody 자체에 달려 있어
-     * 다시 붙일 필요가 없다 — 최신 onRowClick 콜백만 tbody에 갱신해둔다.
+     * tbody에 한 번만 붙는 이벤트 위임. 데이터 행 클릭 시 'current'·'cell-current'를 옮기고 onRowClick을 부르며,
+     * 우클릭은 공통 메뉴를 띄운다. 리스너가 tbody에 달려 다시 그려도 유지되므로 최신 콜백만 갱신한다.
      */
     function bindRowClickHighlight(tbody) {
         tbody.addEventListener('click', function (e) {
@@ -963,12 +977,8 @@
     }
 
     // ── 가상 스크롤(options.virtual) ─────────────────────────────────────
-    //
-    // 행이 수백 개면 전부 붙인 표는 탭(iframe)을 다시 보일 때·창 크기를 바꿀 때 브라우저가 모든 행을 다시 배치해서 버벅였다
-    // (코드 점검 결과 600행). 상용 그리드처럼 보이는 범위(± 여유분)의 행만 tbody에 붙이고, 위아래는 높이만 차지하는 빈 칸 행으로 채운다.
-    // 행(tr)은 전부 만들어 tbody._gridAllRows에 들고 있다가 붙였다 뗐다 한다 — 다시 만들지 않으므로 입력 중인 값(처리여부·비고)이
-    // 스크롤해도 남고, getRows·엑셀·복사는 dataRows로 전체 행을 본다. 행 높이가 일정하다는 전제라(grid.css 32px 고정) 셀이 줄바꿈되는
-    // 그리드는 켜지 않는다. 스크롤 영역은 table의 부모(.grid-wrap 또는 .grid-scroll)여야 한다.
+    // 행이 수백 개면 재배치가 느려지므로 보이는 범위(± 여유분)만 붙이고 위아래는 빈 칸 행으로 채운다. tr은 모두 만들어
+    // tbody._gridAllRows에 두고 붙였다 떼므로 입력값이 유지되고 getRows·엑셀은 전체를 본다. 행 높이가 일정한 그리드에만 켠다.
 
     /** 이보다 적으면 다 붙인다 — 계산·빈 칸 행이 더 비싸다. */
     const VIRTUAL_MIN_ROWS = 100;
@@ -1119,13 +1129,8 @@
             syncSelectAll(tbody); // 다시 조회하면 선택이 풀리므로 헤더도 푼다
         }
 
-        // col.optionsQuery가 붙은 select 컬럼은 그리는 것보다 먼저 공통코드에서 옵션을 받아와야
-        // 한다. 한 번 받아오면 col.options에 캐시해두고(col._optionsResolved) 다음 render()부터는
-        // 다시 조회하지 않는다 — "신규" 버튼(Grid.addRow)처럼 행 하나만 따로 만드는 곳도 이
-        // col.options를 그대로 쓰므로, 조회 화면이 최초 한 번 render()를 호출한 뒤부터는 화면이
-        // 신경 쓸 필요가 없다. 이런 컬럼이 없는(대다수) 그리드는 예전처럼 완전히 동기로 그려진다
-        // — render() 호출 직후 tbody를 바로 조회하는 화면(공통코드관리 등)이 있어서, 있지도 않은
-        // 비동기 대기를 끼워 넣으면 안 된다.
+        // optionsQuery select 컬럼은 그리기 전에 공통코드 옵션을 받아 col.options에 캐시한다(addRow도 그대로 쓴다).
+        // 이런 컬럼이 없는 그리드는 동기로 그린다 — render() 직후 tbody를 바로 읽는 화면이 있어 비동기를 끼우면 안 된다.
         const pendingOptionColumns = columns.filter(function (col) {
             return col.type === 'select' && col.optionsQuery && !col._optionsResolved;
         });

@@ -12,7 +12,7 @@ class SecureCodeFindingViewTest {
 
     @Test
     void 매퍼_판정은_근거_마지막_줄에서_대상_식을_꺼낸다() {
-        // 한 줄에 ${}가 둘이면(ums_log_${loginBrndzCd}_${ym}) 행마다 자기 식이 보여야 구분된다.
+        // 한 줄에 ${}가 둘이면(예: log_${a}_${b}) 행마다 자기 식이 보여야 구분된다.
         assertThat(SecureCodeFindingView.traceTarget(DollarTraceMerger.RULE_ID, List.of(
                 "Crd020Controller.java:36 paramData.put(\"loginBrndzCd\", ...)",
                 "crd020.xml:35 ${loginBrndzCd} (crd020.selectSms)"))).isEqualTo("${loginBrndzCd}");

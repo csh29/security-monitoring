@@ -17,14 +17,7 @@ import java.util.List;
 import java.util.Properties;
 
 /**
- * fileName       : AwsSesDto
- * author         : 최세훈
- * date           : 2025-03-17
- * description    :
- * ===========================================================
- * DATE              AUTHOR             NOTE
- * -----------------------------------------------------------
- * 2025-03-17        최세훈       최초 생성
+ * AWS SES로 보낼 메일(받는 사람·제목·본문·첨부)을 담고 raw 메일 요청으로 바꾼다.
  */
 @Getter
 public class AwsSesDto {

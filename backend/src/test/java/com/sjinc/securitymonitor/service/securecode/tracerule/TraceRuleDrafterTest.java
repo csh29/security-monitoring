@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class TraceRuleDrafterTest {
 
-    /** sjinc 프레임워크와 같은 모양: aspect → util → private, 요청 인자의 paramData에 세션 값을 넣고 하나는 세션 값이 아님. */
+    /** 세션 값을 덮어쓰는 AOP 모양: aspect → util → private, 요청 인자의 paramData에 세션 값을 넣고 하나는 세션 값이 아님. */
     private static final String ASPECT = """
             package f;
             import java.util.*;

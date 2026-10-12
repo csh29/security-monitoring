@@ -7,7 +7,7 @@ package com.sjinc.securitymonitor.dto.securecode;
 public enum TraceSafety {
     /** XML 안에서 값이 정해진다(bind 상수, 상수 비교 if 안). 어느 경로로 와도 안전. */
     XML_FIXED("XML에서 결정", 0),
-    /** 세션 값으로 덮어쓴다(@AddUserInfo 등). 공통 실행 경로로 와도 덮어써져 안전. */
+    /** 세션 값으로 덮어쓴다. 공통 실행 경로로 와도 덮어써져 안전. */
     SESSION_OVERWRITE("세션 값으로 덮어씀", 1),
     /** 모든 경로에서 서버가 상수·로그인 정보·설정값으로 정한다. */
     SERVER_SET("서버가 세팅", 2),

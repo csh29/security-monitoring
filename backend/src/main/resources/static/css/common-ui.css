@@ -1,18 +1,7 @@
 /**
- * 화면마다 <style> 태그에 반복해서 적던, 그리드(.grid)가 아닌 공통 페이지 뼈대/컴포넌트
- * CSS(:root 변수, 레이아웃 셸, 버튼, 패널 헤더 등). .grid 관련 공통 스타일은 여기가 아니라
- * grid.css가 담당한다 — 역할을 나눠서 각자 이름으로 관리한다.
- *
- * 사용법: 화면 <head>에 <link rel="stylesheet" href="/css/common-ui.css">만 추가하면 되고,
- * 그 화면 자체 <style> 태그는 이 화면에서만 다른 값(예: 화면 전용 레이아웃)만 남기면 된다.
- * 단 .btn의 크기(padding/font-size/border-radius)는 모든 화면에서 같아야 하므로 화면에서 덮어쓰지 않는다.
- * 화면 자체 <style>은 이 링크보다 뒤(<head> 안 더 아래)에 두면
- * 같은 선택자를 다시 적었을 때 화면 쪽이 그대로 이긴다.
- *
- * 예전에는 이 CSS를 JS가 런타임에 <style>로 주입했었다. JS 주입은 스크립트가 실행될 때까지
- * 스타일이 없어서, 화면이 꾸밈없는 모습으로 그려졌다가 스크립트 실행 후 스타일이 적용되며
- * 한 번 더 바뀌는 깜빡임(FOUC)이 생긴다. <link rel="stylesheet">는 브라우저가 페인트하기
- * 전에 렌더링을 막고 기다려주므로, 서버 렌더링처럼 완성된 모습이 한 번에 뜬다.
+ * 그리드 외 공통 페이지 뼈대·컴포넌트 CSS(:root 변수, 레이아웃, 버튼 등). .grid는 grid.css가 맡는다.
+ * 화면 <style>은 이 링크 뒤에 두고 화면 전용 값만 남기며, .btn 크기는 덮어쓰지 않는다.
+ * JS 주입 대신 정적 <link>로 두는 것은 스타일 적용 전 깜빡임(FOUC)을 막기 위해서다.
  */
 
 :root{
@@ -106,9 +95,14 @@ body{
 }
 .search-field{ display:flex; flex-direction:row; align-items:center; gap:8px; font-size:12px; color:var(--text-sub); }
 .search-field label{ font-weight:700; white-space:nowrap; }
-.search-field select, .search-field input[type="text"]{
-    padding:5px 10px; border:1px solid var(--line); border-radius:3px;
+.search-field select, .search-field input:not([type="checkbox"]):not([type="radio"]){
+    padding:5px 10px; border:1px solid var(--line); border-radius:3px; background:#fff;
     font-size:12.5px; font-family:inherit; color:var(--text);
+}
+/* 입력 중 표시는 그리드 편집 칸(grid.css의 input:focus·cell-current)과 같은 분홍 계열. 여러 값 고르기는 목록이 열려 있는 동안도. */
+.search-field select:focus, .search-field input:not([type="checkbox"]):not([type="radio"]):focus,
+.multi-select-box:focus, .multi-select:has(.multi-select-panel:not([hidden])) .multi-select-box{
+    outline:none; border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft);
 }
 /* 조회영역 여러 값 고르기(SearchForm type 'multiselect'). 상자는 위 select와 같은 모양(오른쪽 화살표만 직접 그린다),
    누르면 아래로 체크박스 목록이 뜬다. 고른 이름이 길면 상자 폭에서 말줄임 — 전체 목록은 툴팁. */
@@ -175,6 +169,16 @@ body{
     white-space:pre-wrap; word-break:break-word; margin:0;
     padding:12px; background:var(--bg); border:1px solid var(--line); border-radius:var(--radius-box);
 }
+/* 내용 상자 우상단 복사 버튼(.copy-box > .copy-btn). 누르면 잠깐 체크 아이콘(.copied)으로 바뀐다. */
+.copy-box{ position:relative; }
+.copy-box .code-block{ padding-right:44px; }
+.copy-btn{
+    position:absolute; top:8px; right:8px; width:28px; height:28px; padding:0;
+    display:flex; align-items:center; justify-content:center;
+    background:var(--card); color:var(--text-sub); border:1px solid var(--line); border-radius:6px; cursor:pointer;
+}
+.copy-btn:hover{ color:var(--text); border-color:var(--text-sub); }
+.copy-btn.copied{ color:var(--accent); border-color:var(--accent); }
 /* 줄 단위 구조(코드 점검 결과): 줄 번호 칸(.code-no) | 코드(.code-text). 긴 줄이 꺾여도 코드가 줄 번호 칸 아래로
    파고들지 않도록 flex로 나눈다. 줄 배경은 블록 좌우 여백(padding 12px)까지 꽉 차게 음수 margin으로 넓힌다. */
 .code-block .code-line{ display:flex; margin:0 -12px; padding:0 12px 0 0; }

@@ -11,11 +11,8 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * ddl-auto=update가 하지 않는 스키마 변경을 기동 때 한 번 한다. update는 컬럼·테이블을 추가만 하고 기존 컬럼의 NOT NULL을 풀지 않는다 —
- * 엔티티에서 nullable을 바꿔도 이미 만들어진 DB(파일 DB라 재기동해도 남는다)에는 제약이 그대로 남아 insert가 실패한다.
- * 이미 적용된 변경은 다시 하지 않는다(INFORMATION_SCHEMA로 확인). 다른 초기화(DataInitializer)보다 먼저 돈다.
- *
- * <p>SQL은 H2 문법이다(이 시스템의 DB). DB를 바꾸면 여기를 그 DB 문법으로 고친다.
+ * ddl-auto=update가 하지 않는 스키마 변경(기존 컬럼의 NOT NULL 해제 등)을 기동 때 한 번 한다. 하지 않으면 기존 파일 DB에
+ * 제약이 남아 insert가 실패한다. 적용 여부는 INFORMATION_SCHEMA로 확인하고, DataInitializer보다 먼저 돈다(SQL은 H2 문법).
  */
 @Slf4j
 @Component

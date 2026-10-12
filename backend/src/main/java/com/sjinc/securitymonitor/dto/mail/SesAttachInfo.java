@@ -4,14 +4,7 @@ import lombok.Builder;
 import lombok.Getter;
 
 /**
- * fileName       : SesAttachInfo
- * author         : 최세훈
- * date           : 2025-03-18
- * description    :
- * ===========================================================
- * DATE              AUTHOR             NOTE
- * -----------------------------------------------------------
- * 2025-03-18        최세훈       최초 생성
+ * SES 메일 첨부파일 한 건(서버 경로와 메일에 보일 파일명).
  */
 
 @Getter

@@ -23,15 +23,9 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * 스캔이 끝난 뒤 파이썬 AI 배치(ai/vuln_assessor.py)를 백그라운드로 띄운다 — 라이브러리 스캔 뒤에는 CVE 단계, 코드 점검 뒤에는
- * 시큐어코딩 단계만({@link BatchKind}).
- *
- * <p>배치는 자바를 거치지 않고 /api/ai/** 를 직접 호출해 대기 중인 취약점을 스스로 가져가므로,
- * 여기서는 프로세스만 띄우고 결과를 기다리지 않는다(fire-and-forget). AI 판단이 느리거나 실패해도
- * 스캔 자체(진짜 목적)는 이미 끝난 뒤라 영향이 없다.
- *
- * <p>다만 "지금 돌고 있는지"를 물어볼 수 있도록, 마지막으로 띄운 프로세스 핸들과 시작/종료 시각을
- * 기억해뒀다가 {@link #getStatus()}로 내려준다.
+ * 스캔이 끝난 뒤 파이썬 AI 배치(ai/vuln_assessor.py)를 종류별({@link BatchKind})로 백그라운드에서 띄운다.
+ * 배치가 /api/ai/** 로 대기 건을 직접 가져가므로 결과를 기다리지 않는다 — AI가 느리거나 실패해도 스캔엔 영향이 없다.
+ * 마지막 프로세스와 시작/종료 시각은 기억해 {@link #getStatus()}로 내려준다.
  */
 @Slf4j
 @Service
@@ -77,12 +71,11 @@ public class AiAssessmentTriggerService {
     private String githubToken;
 
     /**
-     * 배치 종류. 라이브러리 스캔 뒤에는 CVE 단계만, 코드 점검 뒤에는 시큐어코딩 단계만 띄운다 — 예전엔 어느 쪽이든 전체를 돌려서
-     * 코드 점검 뒤 로그에도 할 일 없는 CVE 단계(CVE 판단 0건, fix-plan …)가 찍혔다. 둘은 동시에 돌 수 있어 로그 파일도 나눈다
-     * (같은 파일이면 두 실행의 줄이 섞인다).
+     * 배치 종류. 라이브러리 스캔 뒤에는 CVE 단계만, 코드 점검 뒤에는 시큐어코딩 단계만 띄운다.
+     * 둘은 동시에 돌 수 있어 로그 줄이 섞이지 않게 로그 파일도 나눈다.
      *
-     * @param arg     vuln_assessor.py에 넘기는 기능 인자(파이썬 STAGES의 키와 같아야 한다)
-     * @param logFile 표준출력·표준에러를 이어 붙일 파일(backend/ 기준, gitignore 대상)
+     * @param arg     vuln_assessor.py 기능 인자(파이썬 STAGES의 키)
+     * @param logFile 출력을 이어 붙일 로그 파일(backend/ 기준)
      */
     public enum BatchKind {
         CVE("cve", "ai-assessor.log", "라이브러리 취약점"),
@@ -118,12 +111,11 @@ public class AiAssessmentTriggerService {
     }
 
     /**
-     * synchronized로 "이미 떠 있으면 건너뛴다" 판단과 새 프로세스 시작 사이에 경합이 생기지
-     * 않게 한다 — 이게 없으면 스캔을 연속 호출할 때마다 파이썬 프로세스가 계속 쌓이고, 그
-     * 각각이 Claude API를 호출해서(과금) 사실상 DoS가 된다. 종류마다 최대 하나다.
-     * 서버가 모르는 배치(재기동 전에 띄웠거나 사람이 직접 띄운 것)도 PID 파일로 보고 건너뛴다 — 같은 대기를 두 번 판별(이중 과금)하지 않게.
+     * synchronized로 "이미 떠 있으면 건너뛴다" 판단과 시작 사이 경합을 막아 종류마다 최대 하나만 돌게 한다 —
+     * 없으면 연속 스캔마다 프로세스가 쌓여 Claude API 과금이 사실상 DoS가 된다.
+     * 서버가 모르는 배치(재기동 전·수동 실행)도 PID 파일로 보고 건너뛰어 이중 판별을 막는다.
      *
-     * @param appId 이 앱의 대기만 판별한다(시큐어코딩). null이면 전체. 이미 돌고 있으면 차례를 기다린다.
+     * @param appId 판별할 앱(null이면 전체), 실행 중이면 차례를 기다린다
      */
     public synchronized void triggerAsync(BatchKind kind, Long appId) {
         RunState state = states.get(kind);
@@ -155,9 +147,8 @@ public class AiAssessmentTriggerService {
     private void start(BatchKind kind, Long appId) {
         RunState state = states.get(kind);
         try {
-            // -u(unbuffered): 표준출력이 터미널이 아니라 파일로 리다이렉트되면 파이썬이 기본적으로
-            // 블록 버퍼링을 해서, 프로세스가 끝나거나 버퍼가 다 찰 때까지 로그 파일에 아무것도
-            // 안 쌓인 것처럼 보인다. 실시간으로 로그를 확인할 수 있도록 무버퍼 모드로 띄운다.
+            // -u(unbuffered): 파일로 리다이렉트하면 파이썬이 블록 버퍼링해 로그가 늦게 쌓이므로,
+            // 실시간으로 확인할 수 있게 무버퍼 모드로 띄운다.
             ProcessBuilder processBuilder = new ProcessBuilder(pythonCommand, "-u", assessorScriptPath, kind.arg);
             // 배치 로그 줄마다 붙는 실행 ID. 아래 "배치 실행 시작" 서버 로그에도 같은 값을 찍어 두 로그를 서로 찾아가게 한다.
             String traceId = UUID.randomUUID().toString().substring(0, 8);
@@ -171,8 +162,7 @@ public class AiAssessmentTriggerService {
             if (!githubToken.isBlank()) {
                 processBuilder.environment().put("GITHUB_TOKEN", githubToken);
             }
-            // 출력이 파일로 리다이렉트되면 파이썬은 윈도우 기본 인코딩(cp949)으로 쓴다. IDE는 로그 파일을 UTF-8로
-            // 열어서(.idea/encodings.xml) 한글이 전부 깨져 보였다 — UTF-8로 쓰게 맞춘다.
+            // 파일로 리다이렉트하면 파이썬은 윈도우 기본 인코딩(cp949)으로 써서 UTF-8로 여는 IDE에서 한글이 깨진다 — UTF-8로 맞춘다.
             processBuilder.environment().put("PYTHONIOENCODING", "utf-8");
             processBuilder.redirectErrorStream(true);
             processBuilder.redirectOutput(ProcessBuilder.Redirect.appendTo(new File(kind.logFile)));
@@ -233,8 +223,7 @@ public class AiAssessmentTriggerService {
     }
 
     /**
-     * 돌고 있는 배치 프로세스. 서버가 띄운 것(py 런처)이 있으면 그것, 없으면 배치가 남긴 PID 파일(ai/.batch-종류.pid —
-     * secure_code_reviewer·cve_assessor가 아니라 진입점 vuln_assessor.py가 쓴다)의 프로세스가 아직 파이썬으로 살아 있으면 그것.
+     * 돌고 있는 배치 프로세스. 서버가 띄운 것이 있으면 그것, 없으면 vuln_assessor.py가 남긴 PID 파일(ai/.batch-종류.pid)의 프로세스.
      * PID가 다른 프로그램에 재사용됐을 수 있어 실행 파일이 파이썬인지 확인한다.
      */
     private Optional<ProcessHandle> runningProcess(BatchKind kind) {

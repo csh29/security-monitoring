@@ -8,19 +8,9 @@ import java.util.Locale;
 import java.util.Optional;
 
 /**
- * clone할 저장소 주소에 붙일 Git 인증 정보를 고른다. Spring 없이 테스트할 수 있게 순수 클래스로 둔다(빈은 GitConfig가 만든다).
- *
- * <p>저장소마다 계정·토큰이 다를 수 있어 주소 앞부분(호스트·그룹)별로 설정한다({@code git.credentials[n].url-prefix/username/token}).
- * 토큰은 대개 저장소가 아니라 Git 서버나 그룹 단위로 발급되므로(GitLab 그룹 토큰, 계정 토큰) 앱마다 두지 않는다. 비밀값을 DB에 넣지 않기 위함도 있다.
- *
- * <ul>
- *   <li>주소가 가장 길게 일치하는 항목을 쓴다. 경계는 경로 단위다 — {@code .../crm}은 {@code .../crm/app.git}에 걸리지만 {@code .../crm2/...}에는 안 걸린다.</li>
- *   <li>일치하는 항목이 없으면 인증 없이 clone한다(공개 저장소). 서버 전체에 쓸 토큰은 호스트 주소({@code https://git.sejung.co.kr})를
- *       url-prefix로 둔 항목 하나로 둔다 — 따로 "기본 토큰" 설정을 두지 않는다. 예전엔 단일 설정({@code git.user.name}/{@code git.access.token})을
- *       어느 주소든 붙여서, 다른 호스트를 허용하는 순간 사내 토큰이 그쪽으로 나갈 수 있었다.</li>
- * </ul>
- * 설정이 잘못되면(https가 아닌 주소, 허용되지 않은 호스트, 빈 토큰) 기동 때 실패시킨다 — 조용히 인증 없이 clone하다 "저장소를 찾을 수 없음"으로
- * 실패하면 원인을 찾기 어렵다.
+ * clone할 저장소 주소에 붙일 Git 인증 정보를 주소 앞부분(호스트·그룹)별 설정에서 경로 단위로 가장 길게 일치하는 것으로 고른다.
+ * 일치가 없으면 인증 없이 clone한다 — 기본 토큰을 두지 않아 다른 호스트로 사내 토큰이 나가지 않는다.
+ * 설정이 잘못되면 기동 때 실패시킨다(조용히 인증 없이 clone하면 원인을 찾기 어렵다).
  */
 public class GitCredentialResolver {
 

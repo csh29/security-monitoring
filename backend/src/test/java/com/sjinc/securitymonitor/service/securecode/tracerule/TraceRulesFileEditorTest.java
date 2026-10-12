@@ -86,6 +86,21 @@ class TraceRulesFileEditorTest {
         assertThat(edited.indexOf("systems:")).isGreaterThan(edited.indexOf("userScopeKeys:"));
     }
 
+    /** 인증 장치는 사람이 반영한다 — 시스템 항목의 authDevices에 근거 주석과 함께 들어가고 그 시스템에만 적용된다. */
+    @Test
+    void 인증_장치는_시스템_항목의_authDevices에_더한다() {
+        String edited = TraceRulesFileEditor.apply(FILE, List.of(change(Type.ADD_AUTH_DEVICE, null, null, null, "AuthInterceptor")),
+                "2026-10-12 반영 admin");
+
+        TraceRules rules = TraceRules.parse(edited);
+        assertThat(rules.authDevices("NEW_SYS")).containsExactly("AuthInterceptor");
+        assertThat(rules.authDevices("OTHER")).isEmpty();
+        assertThat(edited).contains("    authDevices:\n      # 2026-10-12 반영 admin: [AuthInterceptor] 추가");
+        // 두 번 반영해도 같다.
+        assertThat(TraceRulesFileEditor.apply(edited, List.of(change(Type.ADD_AUTH_DEVICE, null, null, null, "AuthInterceptor")),
+                "2026-10-12 반영 admin")).isEqualTo(edited);
+    }
+
     @Test
     void 이미_있는_시스템_항목의_여러_줄_목록과_한_줄_목록에_더한다() {
         String withSystem = FILE + """

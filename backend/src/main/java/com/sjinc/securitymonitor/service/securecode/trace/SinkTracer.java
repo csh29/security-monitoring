@@ -21,15 +21,9 @@ import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
 import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules;
 
 /**
- * Semgrep이 "위험 호출 지점"으로 잡은 탐지(SSRF 변수 주소·명령 실행·파일 경로·업로드 저장·문자열 연결 SQL 등)에, 그 호출에 들어가는
- * 값(주소·명령·경로·SQL)이 어디서 오는지 판정을 붙인다. 무료판 Semgrep taint는 한 메서드 안만 봐서, 컨트롤러가 받은 값을 서비스에서
- * 쓰는 사내 구조에서는 이 지점들이 출처를 모르는 WARNING으로 남았다. ValueOriginTracer로 호출자를 거슬러 컨트롤러까지 따라간다.
- *
- * <p>어느 규칙을 추적할지·무엇을 따라갈지는 규칙 파일이 정한다(metadata.trace → TraceSink, RuleSetLoader가 읽음). 여기는 규칙을 모른다 —
- * 탐지 범위(줄·열)에 정확히 놓인 식을 찾아 선언대로 값을 꺼낸다. 실행 지점 규칙을 늘리거나 고칠 때 자바를 고치지 않는다.
- *
- * <p>등급은 TraceSafety.severity() — 클라이언트 값이면 HIGH로 올리고(확정), 서버 값·설정값이면 LOW, 끝까지 못 따라가면 MEDIUM.
- * 범위의 식을 찾지 못하면(열을 모르는 탐지, 파일을 구문 분석하지 못함) 판정을 붙이지 않는다(Semgrep 등급 그대로).
+ * Semgrep이 잡은 위험 호출 지점에 들어가는 값이 어디서 오는지, 호출자를 거슬러 컨트롤러까지 따라가 판정을 붙인다.
+ * 무료판 Semgrep taint는 한 메서드 안만 봐서 컨트롤러→서비스로 넘어간 값의 출처를 모르기 때문이다.
+ * 따라갈 값은 규칙 파일(metadata.trace)이 정하고, 범위의 식을 찾지 못하면 판정을 붙이지 않는다(Semgrep 등급 그대로).
  */
 public final class SinkTracer {
 

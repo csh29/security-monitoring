@@ -16,11 +16,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 앱 관리 화면(조회/저장/삭제 버튼) 및 취약점 조회 화면이 호출하는 REST API.
- * 목록 조회는 취약점 조회(고정 메뉴, 전체 사용자 대상) 화면도 같이 쓰므로 로그인만 하면 되지만,
- * 앱을 등록/수정/삭제하는 건 "app-mng" 권한이 있어야 한다. 여기서 등록한 repoUrl/branch만
- * 스캔 대상이 될 수 있으므로(ScanOrchestrationService), 사실상 스캔 가능한 저장소 목록을
- * 통제하는 진입점이다.
+ * 앱 관리·취약점 점검 화면이 호출하는 REST API. 목록 조회는 여러 화면이 쓰므로 로그인만 요구하고,
+ * 등록/수정/삭제는 "app-mng" 권한이 필요하다 — 여기 등록한 저장소만 스캔 대상이 되기 때문이다.
  */
 @RestController
 @RequiredArgsConstructor

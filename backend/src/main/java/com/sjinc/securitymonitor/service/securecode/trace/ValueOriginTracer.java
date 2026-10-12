@@ -58,15 +58,9 @@ import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
 import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules;
 
 /**
- * Java 소스에서 값 하나가 어디서 오는지(클라이언트 요청값 / 서버가 정한 값 / 모름) 따라가는 엔진. MyBatis {@code ${}} 연계 추적
- * (MybatisDollarTracer)과 위험 호출 지점 추적(SinkTracer)이 함께 쓴다.
- *
- * <p>따라가는 방법: 지역 변수는 모든 대입, 파라미터는 모든 호출자(호출 문맥 Frame으로 인자를 묶어 감), 맵은 실행 직전까지
- * 모든 경로에서 일어나는 {@code put("key", 값)}(조건부 put이면 원래 값도 본다), 우리 메서드는 반환문, 컨트롤러 요청 매핑
- * 파라미터는 클라이언트 값, 세션 덮어쓰기·로그인 정보는 trace-rules.yml(TraceRules). 끝까지 못 따라가면 UNKNOWN이다
- * — 안전하다고 하지 않는다.
- *
- * <p>Spring 없이 도는 순수 클래스다. 상태(걸음 수·방문 표시)를 들고 있으니 판정 하나를 시작할 때 resetBudget을 부른다.
+ * Java 소스에서 값 하나가 클라이언트 요청값·서버가 정한 값·모름 중 어디서 오는지 대입·호출자·맵 put·반환문을 따라가 판정한다.
+ * 끝까지 못 따라가면 UNKNOWN이다 — 안전하다고 하지 않는다.
+ * 걸음 수·방문 표시 상태를 들고 있으니 판정 하나를 시작할 때 resetBudget을 부른다.
  */
 final class ValueOriginTracer {
 
@@ -82,13 +76,9 @@ final class ValueOriginTracer {
     static final Set<String> ASSEMBLING_TYPES = Set.of(
             "String", "StringBuilder", "StringBuffer", "File", "URL", "URI", "FileSystemResource", "UrlResource");
     /**
-     * 외부와 통신하지 않는 JDK 값 객체(날짜·시간·난수·UUID·숫자). 만든 값·꺼낸 값의 출처는 재료(받는 쪽·인자)의 출처다 —
-     * 서버가 날짜·난수로 만든 파일명({@code FrameDateUtil.getTimeLocale(...) + new Random().nextInt()})을 "판정 불가"로 두지 않기 위함.
-     * RestTemplate·SqlSession처럼 외부에서 값을 가져오는 객체는 넣지 않는다(응답은 서버가 정한 값이 아니다).
-     * String·StringBuilder도 넣는다 — {@code param.getBytes()}·{@code param.charAt(0)}처럼 PROPAGATING_METHODS에 없는 문자열 메서드에서
-     * 추적이 멈춰 판정 불가가 됐다(OWASP Benchmark sqli: 상수를 돌려주는 헬퍼 값을 getBytes()로 바꿔 SQL에 붙임). ClassLoader·Class도
-     * 넣는다 — 클래스패스 자원 위치({@code classLoader.getResource("insecureCmd.sh")})는 서버가 정한 이름으로 찾는다. URL·URI는 넣지 않는다 —
-     * {@code url.openStream()}처럼 원격 내용을 읽는 결과까지 서버 값이 된다(경로 꺼내기 toURI·getPath는 PROPAGATING_METHODS로 따라간다).
+     * 외부와 통신하지 않는 JDK 값 객체(날짜·난수·숫자·문자열·클래스 로더 등) — 만든 값·꺼낸 값의 출처는 받는 쪽·인자의 출처다.
+     * 서버가 날짜·난수로 만든 값을 "판정 불가"로 두지 않기 위함이다.
+     * 외부에서 값을 가져오는 객체(RestTemplate·SqlSession·URL)는 응답이 서버 값이 아니라 넣지 않는다.
      */
     static final Set<String> PURE_VALUE_TYPES = Set.of(
             "Calendar", "GregorianCalendar", "Date", "TimeZone", "SimpleDateFormat", "DateFormat", "DateTimeFormatter",
@@ -103,7 +93,7 @@ final class ValueOriginTracer {
             "getInputStream", "getReader");
     /**
      * 지역 컬렉션(List·Set·Deque 등). 꺼낸 값의 출처는 넣은 값들 중 가장 나쁜 것이다 — 몇 번째를 꺼내는지는 따지지 않는다(모르면 위험한 쪽).
-     * 서블릿 레거시 코드가 요청값을 리스트에 담았다 꺼내는 모양이 흔하다(OWASP Benchmark에서 "판정 불가"의 큰 원인이었다).
+     * 서블릿 레거시 코드가 요청값을 리스트에 담았다 꺼내는 모양이 흔하다.
      */
     static final Set<String> COLLECTION_TYPES = Set.of("List", "ArrayList", "LinkedList", "Collection", "Set", "HashSet",
             "LinkedHashSet", "TreeSet", "Deque", "ArrayDeque", "Queue", "Stack", "Vector");
@@ -123,7 +113,7 @@ final class ValueOriginTracer {
             "Map", "HashMap", "LinkedHashMap", "TreeMap", "ConcurrentHashMap");
     /** 실제 저장소에서 갈래가 수십 개로 퍼질 수 있어 한 {@code ${}}당 따라가는 걸음 수를 제한한다. 넘기면 판정 불가. */
     static final int MAX_STEPS = 20_000;
-    // 문자열·경로를 .append() 체인으로 조립하면 식 깊이만으로 14단계를 넘었다(CRM 업로드 경로). 폭주는 MAX_STEPS·방문 표시가 막는다.
+    // .append() 체인으로 조립한 경로는 식 깊이가 깊어 넉넉히 둔다. 폭주는 MAX_STEPS·방문 표시가 막는다.
     static final int MAX_DEPTH = 40;
 
     final JavaSourceIndex java;
@@ -170,7 +160,7 @@ final class ValueOriginTracer {
 
     /**
      * 메서드 하나의 실행 문맥. 호출자에서 내려왔으면 파라미터 이름 → 호출 인자가 묶여 있고(bindings),
-     * 인스턴스 메서드면 받는 쪽 식(receiver — {@code param.getStatement()}의 param)도 들고 있다.
+     * 인스턴스 메서드면 받는 쪽 식(receiver)도 들고 있다.
      */
     static final class Frame {
         final CallableDeclaration<?> method;
@@ -225,8 +215,7 @@ final class ValueOriginTracer {
     // ================================================================ 맵의 키 값 따라가기
 
     /**
-     * 맵 식의 키 값이 at 시점에 어디서 왔는가. path는 꺼내는 키 경로다 — {@code param.get("paramData")}의 "loginBrndzCd"면
-     * param에 대해 [paramData, loginBrndzCd].
+     * 맵 식의 키 값이 at 시점에 어디서 왔는가. path는 꺼내는 키 경로다 — {@code param.get("a")}의 "b"면 param에 대해 [a, b].
      */
     V keyOf(Expression mapExpression, List<String> path, Node at, Frame frame, int depth) {
         if (++steps > MAX_STEPS || depth > MAX_DEPTH) {
@@ -266,8 +255,7 @@ final class ValueOriginTracer {
             return V.of(TraceSafety.CLIENT, java.location(call) + " 요청 값 " + abbreviate(call.toString()) + " 의 " + String.join(".", path));
         }
         if (e instanceof MethodCallExpr call) {
-            // 맵을 만들어 돌려주는 우리 메서드(txtSaveFile = FrameFileUtil.excelToTxt(...)) — 반환문의 맵에서 같은 키를 따라간다
-            // (valueOf의 반환문 처리와 같은 방식). 이게 없어 CRM fileMapper의 #{loginEmpNo}가 "맵 출처를 모름"(판정 불가)이 됐다.
+            // 맵을 만들어 돌려주는 우리 메서드 — 반환문의 맵에서 같은 키를 따라간다(valueOf의 반환문 처리와 같은 방식).
             V worst = null;
             for (MethodDeclaration callee : java.resolve(call)) {
                 Frame calleeFrame = Frame.call(callee, call, frame);
@@ -378,7 +366,7 @@ final class ValueOriginTracer {
         if (decl instanceof LocalDecl local) {
             if (local.forEach() != null) {
                 // for (Map row : list)의 row — 원소의 키는 리스트를 거쳐 온다(리스트 자체는 키 경로에 넣지 않는다).
-                // 세션 덮어쓰기 규칙도 container가 맵 목록이면 각 행에 덮어쓴다고 보고 같은 경로로 판정한다(sjinc @AddUserInfo가 그렇다).
+                // 세션 덮어쓰기 규칙도 container가 맵 목록이면 각 행에 덮어쓴다고 보고 같은 경로로 판정한다.
                 return keyOf(local.forEach().getIterable(), path, local.forEach(), frame, depth + 1);
             }
             List<Expression> sources = new ArrayList<>();
@@ -481,9 +469,8 @@ final class ValueOriginTracer {
         if (e.isArrayAccessExpr()) {
             return valueOf(e.asArrayAccessExpr().getName(), frame, depth + 1);
         }
-        // 배열 초기화({cmd}, new String[]{a, b})는 원소 중 가장 나쁜 출처다. 원소 없이 만든 배열(new String[n])은 빈 값이고,
-        // 나중에 넣는 원소(arr[0] = x)는 지역 변수 쪽에서 대입으로 따로 모은다(valueOfName). 예전엔 "해석하지 못한 식"이라
-        // exec(args, argsEnv)의 환경 변수에 요청 헤더가 들어가도 판정 불가였다(OWASP Benchmark cmdi).
+        // 배열 초기화({cmd}, new String[]{a, b})는 원소 중 가장 나쁜 출처, 원소 없이 만든 배열은 빈 값이다.
+        // 나중에 넣는 원소(arr[0] = x)는 지역 변수 쪽에서 대입으로 따로 모은다(valueOfName).
         if (e instanceof ArrayInitializerExpr initializer) {
             return worstOf(initializer.getValues(), frame, depth, V.of(TraceSafety.SERVER_SET, java.location(e) + " 빈 배열"));
         }
@@ -545,7 +532,7 @@ final class ValueOriginTracer {
             if (local.forEach() != null) {
                 return valueOf(local.forEach().getIterable(), frame, depth + 1);
             }
-            // 지역 변수는 선언 값과 모든 대입 값 중 가장 나쁜 것 — switch·if로 나눠 대입해도 모두 상수면 상수다(getTableNm).
+            // 지역 변수는 선언 값과 모든 대입 값 중 가장 나쁜 것 — switch·if로 나눠 대입해도 모두 상수면 상수다.
             List<Expression> sources = new ArrayList<>();
             boolean collection = isCollectionLocal(local);
             local.variable().getInitializer()
@@ -626,7 +613,7 @@ final class ValueOriginTracer {
             }
             return v;
         }
-        // 로그인 정보: 세션 속성(Servlet 표준)과 trace-rules.yml의 이름 규칙(loginUserVo.getLoginBrndzCd() 등)
+        // 로그인 정보: 세션 속성(Servlet 표준)과 trace-rules.yml의 이름 규칙
         String scopeType = scope.map(this::scopeTypeOf).orElse(null);
         if (isLoginInfo(name, scopeType)
                 || (name.equals("getAttribute") && scope.map(s -> s.toString().contains("getSession")).orElse(false))) {
@@ -635,13 +622,13 @@ final class ValueOriginTracer {
         if (REQUEST_GETTERS.contains(name) && "HttpServletRequest".equals(scopeType)) {
             return V.of(TraceSafety.CLIENT, location + " 요청 값 " + abbreviate(call.toString()));
         }
-        // this.getClass().getClassLoader() — 예전엔 "외부 메서드"라 그 클래스 로더로 찾은 명령 경로 전체가 판정 불가였다(Benchmark cmdi).
+        // this.getClass().getClassLoader() — JVM이 정하는 값이라 클라이언트가 바꿀 수 없다.
         if (JVM_METADATA_METHODS.contains(name) && call.getArguments().isEmpty()) {
             return V.of(TraceSafety.SERVER_SET, location + " JVM 클래스 정보 " + abbreviate(call.toString()));
         }
         List<MethodDeclaration> callees = java.resolve(call);
         if (!callees.isEmpty()) {
-            // 우리 메서드면 반환문들을 본다(getTableNm처럼 모든 분기가 상수를 반환하면 상수).
+            // 우리 메서드면 반환문들을 본다(모든 분기가 상수를 반환하면 상수).
             V worst = null;
             for (MethodDeclaration callee : callees) {
                 Frame calleeFrame = Frame.call(callee, call, frame);
@@ -693,9 +680,8 @@ final class ValueOriginTracer {
     }
 
     /**
-     * 메서드를 부르는 쪽의 타입. 이름·필드·new는 선언 타입, 호출을 이어 붙인 경우(scr.getTheValue("x").getBytes(),
-     * getClass().getClassLoader().getResource(...))는 우리 메서드의 반환 타입이나 JVM 클래스 정보의 타입 — 예전엔 이어 붙인 호출의 타입을 몰라
-     * 값 타입 규칙(PURE_VALUE_TYPES)·로그인 정보 이름 규칙이 지역 변수로 받았을 때만 적용됐다. 모르면 null.
+     * 메서드를 부르는 쪽의 타입. 이름·필드·new는 선언 타입, 이어 붙인 호출은 우리 메서드의 반환 타입이나 JVM 클래스 정보의 타입이다.
+     * 이어 붙인 호출에도 값 타입·로그인 정보 규칙을 적용하기 위함이다. 모르면 null.
      */
     String scopeTypeOf(Expression scope) {
         Expression e = unwrap(scope);
@@ -788,7 +774,7 @@ final class ValueOriginTracer {
                 && unwrap(call.getArgument(0)) instanceof StringLiteralExpr literal && literal.getValue().equals(key);
     }
 
-    /** {@code map.get("key")} / {@code getOrDefault("key", …)}. 받는 쪽이 없으면 this(BaseParam.getStatement의 this.get). */
+    /** {@code map.get("key")} / {@code getOrDefault("key", …)}. 받는 쪽이 없으면 this. */
     static boolean isMapGet(MethodCallExpr call) {
         String name = call.getNameAsString();
         int args = call.getArguments().size();

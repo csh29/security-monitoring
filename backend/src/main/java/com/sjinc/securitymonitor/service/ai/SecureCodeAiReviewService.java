@@ -1,5 +1,6 @@
 package com.sjinc.securitymonitor.service.ai;
 
+import com.sjinc.securitymonitor.domain.App;
 import com.sjinc.securitymonitor.domain.SecureCodeFinding;
 import com.sjinc.securitymonitor.dto.ai.SameOriginMember;
 import com.sjinc.securitymonitor.dto.ai.SameOriginRef;
@@ -7,23 +8,29 @@ import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewFailure;
 import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewRequest;
 import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewTarget;
 import com.sjinc.securitymonitor.dto.securecode.AiRelatedCode;
+import com.sjinc.securitymonitor.repository.AppRepository;
 import com.sjinc.securitymonitor.repository.SecureCodeFindingRepository;
 import com.sjinc.securitymonitor.service.securecode.SameOrigin;
 import com.sjinc.securitymonitor.service.securecode.SecureCodeSnippetBuilder;
+import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRuleService;
+import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules;
 import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -35,24 +42,11 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 /**
- * 코드 점검 탐지의 AI 판별(파이썬 배치 stage 5) 대기열과 저장 — Semgrep(행안부 규칙)이 잡은 것이 진짜 취약한지 AI가 코드를 보고 판별한다.
- *
- * <p>대상은 OPEN 중 등급이 {@code ai.securecode.severities}(기본 HIGH·MEDIUM)이거나 규칙이 {@code ai.securecode.extra-rules}인 것 —
- * <b>연계 추적이 확정한 HIGH(클라이언트 값)도 보낸다</b>(2026-10-08). 엔진이 확정하는 건 값의 출처뿐이고, 출처가 요청값이어도 그 뒤에 허용 목록·
- * 정규화 후 기준 폴더 검사·확장자 검사가 있으면 실제로는 안전하다 — 엔진은 검증을 보지 않고 AI는 읽어낸다. 판별은 참고용이라 확정 등급을 바꾸지 않는다.
- * 연계 추적이 안전(서버 세팅 등, LOW)으로 확정한 건은 보내지 않는다 — 확정된 안전을 다시 물을 이유가 없다.
- * 추가 규칙(기본: 난수·취약한 해시·솔트 없는 해시·XXE)은 MEDIUM이지만 판정의 핵심이 "그 코드를 무엇에 쓰는가"(난수가 인증번호용인지 화면 샘플링용인지,
- * SHA-1이 비밀번호용인지 캐시 키용인지)라 값 출처 추적으로는 못 정하고 메서드를 읽으면 대개 보인다 — 오탐이 가장 많고 AI가 가장 잘 가르는 묶음이다.
- * 하드코드된 비밀값 규칙은 보내지 않는다 — 점검 단계에서 값을 {@code ****}로 가려 두므로 AI가 평문인지 {@code ENC(...)}·
- * {@code ${}} 참조인지 구분할 근거가 없다(첫 실행에서 22건이 "규칙이 걸렸으니 취약"만 되풀이했다). 값 자체를 보낼 수는 없다.
- *
- * <p>판별은 화면에 참고로만 보여준다. 처리여부(오탐 등)는 사람이 정한다 — 연계 추적이 안전으로 판정해도 자동 오탐 처리를 하지 않는 것과 같은 이유.
- *
- * <p>연계 추적이 판정 불가로 남긴 탐지는 등급과 무관하게 대상이다(2026-10-08 확대 — 엔진이 못 정한 것을 AI가 보는 취지).
- *
- * <p>소스 코드가 AI로 나가는 유일한 곳이다(사내 정책 예외, 2026-10-06 승인 — 2026-10-07 추가 규칙, 2026-10-08 판정 불가 전체·HIGH·MEDIUM 전체(추적 확정 포함)까지 범위 확대). 걸린 줄을 감싼 메서드(최대 80줄)만 보내고,
- * 보내기 직전에 비밀값을 가린다(SecretMasker — fix-plan의 pom.xml과 같은 방식). 결과는 판별·이유뿐이라 되돌릴 원문이 없다.
+ * 코드 점검 탐지의 AI 판별(파이썬 배치 stage 5) 대기열과 저장 — 소스 코드가 AI로 나가는 유일한 곳이라 감싼 메서드만 비밀값을 가려 보낸다.
+ * 엔진은 값의 출처만 확정하고 그 뒤의 검증은 못 보므로 추적이 확정한 HIGH·판정 불가도 보내고, 안전 확정과 가려진 비밀값 규칙은 보내지 않는다.
+ * 판별은 참고용이다 — 등급도 처리여부도 바꾸지 않고 사람이 정한다.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SecureCodeAiReviewService {
@@ -75,6 +69,8 @@ public class SecureCodeAiReviewService {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final SecureCodeFindingRepository findingRepository;
+    private final AppRepository appRepository;
+    private final TraceRuleService traceRuleService;
 
     /** AI 판별 대상 등급(쉼표 구분). 코드 점검 등급은 HIGH/MEDIUM/LOW다(공통코드 SC_SEVERITY). */
     @Value("#{'${ai.securecode.severities:HIGH,MEDIUM}'.split(',')}")
@@ -96,10 +92,8 @@ public class SecureCodeAiReviewService {
     private List<String> extraRules;
 
     /**
-     * AI 판별 대상인가 — 비밀값 규칙이 아니고 연계 추적이 안전으로 확정하지 않았으며, 다음 중 하나다: 등급이 기준 안(추적이 클라이언트 값으로
-     * 확정한 HIGH 포함 — 출처는 확정이지만 그 뒤의 검증은 AI가 본다), 추가 규칙, 또는 <b>연계 추적이 판정 불가로 남긴 것</b>(등급 무관 —
-     * 예전엔 판정 불가가 MEDIUM이라 기준 HIGH에 걸리지 않아 AI도 엔진도 보지 않은 채 남았다). 처리여부와 무관하다
-     * (점검 중 코드 문맥을 만들 때는 아직 처리여부를 모른다). 대기열은 여기에 OPEN 조건을 더한다.
+     * AI 판별 대상인가 — 비밀값 규칙·안전 확정이 아니면서 등급이 기준 안이거나, 추가 규칙이거나, 판정 불가(등급 무관)인 것.
+     * 점검 중엔 처리여부를 모르므로 여기선 보지 않고, 대기열이 OPEN 조건을 더한다.
      */
     public boolean isTarget(String ruleId, String severity, String traceSafety) {
         if (SecureCodeSnippetBuilder.isSecretRule(ruleId)) return false;
@@ -121,8 +115,7 @@ public class SecureCodeAiReviewService {
 
     /**
      * 아직 판별하지 않았거나, 판별한 뒤 재점검으로 입력(코드·연계 추적 근거)이 바뀐 탐지. 지워진 앱의 탐지는 뺀다.
-     * 점검 때 만든 코드 문맥(메서드)이 없는 탐지는 다음 점검까지 기다린다 — 대상 기준을 넓힌 직후 기존 탐지에는 문맥이 없는데, 화면용 조각(앞뒤 5줄)으로
-     * 판별하면 근거가 부족하고, 다음 점검에서 문맥이 생기면 입력이 바뀌어 같은 탐지를 다시 판별(과금)하게 된다.
+     * 코드 문맥(메서드)이 없는 탐지는 다음 점검까지 기다린다 — 조각으로 판별하면 근거가 부족하고, 문맥이 생기면 다시 과금된다.
      */
     @Transactional(readOnly = true)
     public List<SecureCodeReviewTarget> getPendingTargets() {
@@ -130,10 +123,8 @@ public class SecureCodeAiReviewService {
     }
 
     /**
-     * 대기 중 이번에 판별할 것 — appId가 있으면 그 앱만(점검한 앱의 대기만 판별한다. 예전엔 앱 하나를 점검해도 모든 앱의 대기를 한꺼번에
-     * 판별해 테스트 앱 대기 수천 건이 과금됐다), 높은 등급부터 limit(최대 ai.securecode.max-per-run)건. 같은 입력으로 상한만큼 실패한 건은 뺀다.
-     * <b>같은 출처(SameOrigin)의 대기는 한 건으로 묶는다</b> — 가장 높은 등급이 대표가 되고 나머지 지점은 sameOrigin으로 실려 한 번에 판별된다
-     * (한 요청값이 폴더 만들기·파일 쓰기 두 지점에 들어가면 같은 원인을 두 번 묻지 않게). 건수 상한은 묶음 기준이다.
+     * 이번에 판별할 대기 — appId가 있으면 그 앱만(다른 앱 대기까지 과금하지 않게), 높은 등급부터 limit 묶음, 실패 상한 건 제외.
+     * 같은 출처(SameOrigin) 대기는 한 묶음으로 실어 같은 원인을 두 번 묻지 않고, 앱의 구조 사실(SecureCodeSystemContext)도 함께 싣는다.
      */
     @Transactional(readOnly = true)
     public List<SecureCodeReviewTarget> getPendingTargets(Long appId, Integer limit) {
@@ -143,11 +134,27 @@ public class SecureCodeAiReviewService {
             String key = SameOrigin.key(p.finding());
             groups.computeIfAbsent(key == null ? p.finding() : key, k -> new ArrayList<>()).add(p);
         });
+        if (groups.isEmpty()) return List.of();
+        TraceRules rules = loadTraceRules();
+        Map<Long, List<String>> contextByApp = new HashMap<>();
         return groups.values().stream()
                 .limit(max)
-                .map(group -> group.get(0).target().withSameOrigin(
-                        IntStream.range(1, group.size()).mapToObj(i -> member(group.get(i), i <= MAX_SAME_ORIGIN_WITH_CODE)).toList()))
+                .map(group -> group.get(0).target()
+                        .withSameOrigin(IntStream.range(1, group.size())
+                                .mapToObj(i -> member(group.get(i), i <= MAX_SAME_ORIGIN_WITH_CODE)).toList())
+                        .withSystemContext(contextByApp.computeIfAbsent(group.get(0).finding().getAppId(),
+                                id -> SecureCodeSystemContext.lines(rules, appRepository.findById(id).map(App::getSystemName).orElse(null)))))
                 .toList();
+    }
+
+    /** 구조 사실의 출처. 못 읽으면 빈 규칙 — 구조 없이 판별한다(판별을 멈출 일은 아니다). */
+    private TraceRules loadTraceRules() {
+        try {
+            return traceRuleService.load();
+        } catch (IOException | RuntimeException e) {
+            log.warn("추적 규칙을 읽지 못해 AI 판별에 시스템 구조를 싣지 않습니다", e);
+            return TraceRules.empty();
+        }
     }
 
     /** 이 앱에 판별할 대기가 있는가(배치를 띄울지 — 대상 전체를 만들지 않고 첫 건에서 멈춘다). */
@@ -301,9 +308,8 @@ public class SecureCodeAiReviewService {
     }
 
     /**
-     * 배치로 넘길 입력. 코드 문맥이 없으면(대상 기준이 바뀌어 점검 때 만들지 않은 탐지) 화면용 조각을 보낸다.
-     * 해시는 가린 뒤의 입력으로 만든다 — 비밀값의 해시를 남기지 않는다(SecretMasker와 같은 이유). 줄 번호는 넣지 않는다 —
-     * 위쪽에 한 줄이 추가됐다고 다시 판별(과금)하지 않게(지문에 줄 번호를 넣지 않는 것과 같은 이유).
+     * 배치로 넘길 입력. 코드 문맥이 없으면 화면용 조각을 보낸다.
+     * 해시는 가린 뒤의 입력으로 만들어 비밀값 해시를 남기지 않고, 위쪽 줄 추가로 재과금되지 않게 줄 번호는 넣지 않는다.
      */
     static SecureCodeReviewTarget toTarget(SecureCodeFinding f) {
         boolean hasContext = f.getAiContext() != null && !f.getAiContext().isBlank();
@@ -319,7 +325,7 @@ public class SecureCodeAiReviewService {
                 traceLabel == null ? "" : traceLabel, String.join("\n", evidence)) + (relatedText.isEmpty() ? "" : "\u0000" + relatedText));
         return new SecureCodeReviewTarget(f.getId(), f.getRuleId(), f.getKisaCategory(), f.getKisaName(), f.getCwe(),
                 f.getSeverity(), f.getMessage(), f.getFilePath(), nz(f.getStartLine()), nz(f.getEndLine()),
-                code, codeStart, traceLabel, evidence, related, hash, List.of());
+                code, codeStart, traceLabel, evidence, related, hash, List.of(), List.of());
     }
 
     /** 점검 때 저장한 관련 코드(JSON)를 읽고 비밀값을 가린다. 못 읽으면 없는 것으로(탐지 메서드만 보낸다). */

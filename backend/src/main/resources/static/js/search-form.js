@@ -1,48 +1,32 @@
 /**
- * 화면마다 마크업으로 직접 쓰던 조회영역(<section class="search-row"> 안의 label + input/select)을
- * grid.js처럼 필드 정의 하나로 만드는 공통 렌더러. 모양(.search-row/.search-field, label과 입력이
- * 한 줄로 가로 정렬)은 common-ui.css에 있다.
+ * 조회영역(.search-row 안의 label + 입력)을 필드 정의로 만드는 공통 렌더러. 모양은 common-ui.css에 있다.
  *
  * 사용법:
- *   <section class="search-row" id="searchArea"></section>
+ *   const search = SearchForm.render(sectionEl, [{ id, label, type, ... }, ...], { onSearch: searchFn });
+ *   search.values()     // { id: 값 } — text는 trim, multiselect는 값 배열([] = 전체)
+ *   search.reset()      // 모든 필드를 기본값으로
+ *   search.field(id)    // 그 필드의 엘리먼트
+ *   search.matches(row) // 행이 조회조건에 맞는지(화면에서 거를 때)
+ *   search.ready        // select 옵션이 다 채워지면 resolve되는 Promise — 첫 조회는 이걸 기다린다
  *
- *   const search = SearchForm.render(document.getElementById('searchArea'), [
- *       { id: 'programId', label: '프로그램ID', type: 'text' },
- *       { id: 'severity',  label: '심각도', type: 'select', optionsQuery: 'SEVERITY', withAll: true }
- *   ], { onSearch: searchPrograms });
- *
- *   search.values()   // { programId: '...', severity: '...' } — text는 trim한 값, multiselect는 고른 값 배열(안 고르면 [] = 전체)
- *   search.reset()    // 모든 필드를 기본값으로 되돌린다(초기화 버튼)
- *   search.field(id)  // 그 필드의 input/select 엘리먼트
- *   search.matches(row) // 행 하나가 조회조건에 맞는지 — 목록을 화면에서 거를 때 쓴다(아래 설명)
- *   search.ready      // select 옵션이 다 채워지면 resolve되는 Promise — 첫 조회는 이걸 기다린 뒤 한다
- *
- * fields: [{ id, label, type, width, placeholder, defaultValue, options, optionsQuery, withAll, allLabel, onChange, match }]
- *   - id           : values()의 키이자 엘리먼트 id("fld" + 첫 글자 대문자, 예: fldProgramId).
- *   - label        : 입력 앞에 붙는 라벨.
- *   - type         : 'text'(기본) | 'select' | 'multiselect'. multiselect는 select처럼 보이는 상자를 누르면 체크박스 목록이
- *                    펼쳐진다(여러 값 고르기). 옵션은 select와 같은 방법(options·optionsQuery)으로 주고 withAll은 쓰지 않는다 —
- *                    아무것도 안 고르면 "전체"다. 상자에는 고른 이름들이, 안 골랐으면 allLabel(기본 "전체")이 보인다.
- *   - width        : 입력 폭. 숫자면 px, 문자열이면 그대로. 생략하면 180px.
+ * fields:
+ *   - id           : values()의 키이자 엘리먼트 id("fld" + 첫 글자 대문자).
+ *   - label        : 입력 앞 라벨.
+ *   - type         : 'text'(기본) | 'select' | 'multiselect'(체크박스 목록, 안 고르면 전체).
+ *   - width        : 입력 폭(숫자면 px, 생략하면 180px).
  *   - placeholder  : text의 placeholder.
- *   - defaultValue : 처음 값이자 reset() 때 돌아갈 값. select에서 생략하면 첫 옵션. multiselect는 값 배열(생략하면 전체).
- *   - options      : select 옵션. [{value,label}] 배열, 또는 그 배열(이나 그 배열의 Promise)을 돌려주는
- *                    함수 — 앱 목록·사용자 목록처럼 API로 받아오는 옵션은 함수로 준다.
- *   - optionsQuery : options 대신 공통코드 그룹명(예: 'SEVERITY'). ComCd로 채우므로 이 화면은
- *                    /js/com-cd.js를 같이 불러와야 한다(grid.js의 optionsQuery와 같은 규칙).
- *   - withAll      : select 맨 앞에 값이 빈 "전체" 옵션을 넣는다. allLabel로 문구를 바꾼다.
- *   - onChange     : (value, values) — select처럼 값이 바뀌자마자 조회해야 하는 필드에 쓴다.
- *   - match        : (value, keyword) → boolean. text 필드를 matches()에서 부분 일치 대신 이 함수로 비교한다
- *                    (예: CWE 번호처럼 "89"가 "CWE-189"까지 걸리면 안 되는 값). 빈 입력값은 부르지 않고 통과.
+ *   - defaultValue : 처음 값이자 reset() 값. select는 생략하면 첫 옵션, multiselect는 값 배열.
+ *   - options      : [{value,label}] 배열, 또는 그 배열(Promise 포함)을 돌려주는 함수.
+ *   - optionsQuery : options 대신 공통코드 그룹명(com-cd.js 필요).
+ *   - withAll      : select 맨 앞에 빈 값 "전체" 옵션을 넣는다(문구는 allLabel).
+ *   - onChange     : (value, values) — 값이 바뀌자마자 조회할 필드에 쓴다.
+ *   - match        : (value, keyword) → boolean. matches()에서 부분 일치 대신 쓸 비교 함수.
  *
  * options:
- *   - onSearch : text 필드에서 Enter를 누르면 호출된다(보통 조회 함수).
+ *   - onSearch : text 필드에서 Enter를 누르면 호출된다.
  *
- * matches(row): API가 전체 목록만 주는 화면(프로그램·사용자·공통코드 관리)이 조회조건을 화면에서 거를 때
- *   쓴다. text 필드마다 row[field.id]가 입력값을 대소문자 구분 없이 부분 일치로 포함하는지 본다(빈 값은
- *   통과). multiselect 필드는 row[field.id]가 고른 값 중 하나인지 본다(안 골랐으면 통과). select 필드는 보지 않는다
- *   (서버 조회조건으로 쓰는 경우가 많다). 그래서 필드 id를 행 데이터의 키와 같게 준다. 화면마다 복사되던
- *   contains/matchesCondition을 대신한다.
+ * matches(row): text는 row[id]의 대소문자 무시 부분 일치, multiselect는 고른 값 포함 여부를 보고 select는 보지 않는다
+ *   (빈 조건은 통과). 그래서 필드 id를 행 데이터 키와 같게 준다.
  */
 (function (global) {
     const DEFAULT_WIDTH = 180;

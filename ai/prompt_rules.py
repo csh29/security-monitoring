@@ -1,7 +1,5 @@
 """prompts/ 아래 md 룰 파일을 읽어서 시스템 프롬프트 문자열로 만들어 준다.
-
-`{{include: rules/xxx.md}}` 한 줄을 그 파일 내용으로 치환한다. 룰을 성격별로
-나눠 두고 여러 프롬프트에서 재사용하기 위한 것이다.
+룰을 나눠 재사용하려고 `{{include: rules/xxx.md}}` 한 줄을 그 파일 내용으로 치환한다.
 """
 
 from __future__ import annotations

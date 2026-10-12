@@ -10,17 +10,9 @@ import com.sjinc.securitymonitor.dto.securecode.DollarVerdict;
 import com.sjinc.securitymonitor.service.securecode.SecureCodeSnippetBuilder;
 
 /**
- * 사용자 범위 키(trace-rules.yml userScopeKeys)가 쓰인 매퍼 SQL의 연계 추적 판정(MybatisDollarTracer.Result.scopeVerdicts)을 탐지로 만든다.
- *
- * <p>약점은 "회사·브랜드·사용자로 데이터를 가르는 SQL 조건의 값을 클라이언트가 정할 수 있다"이다(행안부 "부적절한 인가", CWE-639 — 사용자가
- * 정하는 키로 인가 우회). 예전 Semgrep 규칙(kisa-authz-missing-user-scope)은 "특정 시스템의 장치(@AddUserInfo)가 없는 컨트롤러 메서드"를
- * 찾아서, 그 장치를 쓰지 않는 시스템은 전부 오탐이 되고, 사용자 범위 조건을 쓰지 않는 메서드도 걸렸다. 여기서는 조건이 실제로 쓰인 SQL 줄에서
- * 값의 출처를 판정하므로 시스템마다 다른 것은 키 이름(설정)뿐이다.
- *
- * <p>위험한 판정만 탐지로 낸다 — 클라이언트 값·공통 경로로 우회 가능(HIGH), 판정 불가(MEDIUM). 세션 덮어쓰기·서버 세팅·XML 결정은 안전이라
- * 내지 않는다(Semgrep 탐지가 아니라 판정에서 만든 탐지라, 안전한 것까지 내면 거의 모든 SQL이 목록에 오른다).
- *
- * <p>코드 조각·지문은 Semgrep 탐지와 같은 방법(SecureCodeSnippetBuilder)으로 만든다 — 재점검 비교·처리여부 유지가 똑같이 동작해야 한다.
+ * 사용자 범위 키(userScopeKeys)가 쓰인 매퍼 SQL 조건의 값을 클라이언트가 정할 수 있으면 "부적절한 인가"(CWE-639) 탐지로 만든다.
+ * 위험 판정(HIGH·MEDIUM)만 낸다 — 안전한 것까지 내면 거의 모든 SQL이 목록에 오른다.
+ * 코드 조각·지문은 Semgrep 탐지와 같은 방법으로 만들어 재점검 비교·처리여부 유지가 똑같이 동작하게 한다.
  */
 public final class UserScopeFindings {
 

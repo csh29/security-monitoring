@@ -23,11 +23,8 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
- * clone한 저장소에서 import 문과 설정 키를 뽑는다. 스캔이 끝나면 clone 디렉터리는 지워지므로 그 전에 부른다.
- *
- * <p>정규식으로 import 줄만 읽는다 — 컴파일도 파싱도 하지 않으므로 빠르고, 빌드가 안 되는 저장소에서도 동작한다.
- * 그만큼 import 없이 전체 이름으로 쓰거나 리플렉션·XML 설정으로 쓰는 경우는 못 잡는다(CodeUsageMatcher가 "안 보임"을
- * "영향 없음"으로 말하지 않는 이유).
+ * clone한 저장소에서 import 문과 설정 키를 뽑는다(clone 디렉터리가 지워지기 전에 부른다).
+ * 정규식으로 import 줄만 읽어 빠르고 빌드가 안 되는 저장소에서도 되지만, 전체 이름·리플렉션·XML 사용은 못 잡는다.
  */
 @Slf4j
 @Component

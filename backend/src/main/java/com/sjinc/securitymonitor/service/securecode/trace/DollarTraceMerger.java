@@ -10,14 +10,9 @@ import java.util.Map;
 import com.sjinc.securitymonitor.dto.securecode.DollarVerdict;
 
 /**
- * Semgrep의 MyBatis {@code ${}} 탐지에 연계 추적 판정(MybatisDollarTracer)을 붙이고 심각도를 다시 매긴다.
- *
- * <p>둘은 (파일, 줄)로 맞춘다. 한 줄에 {@code ${}}가 여럿이면({@code ums_log_${loginBrndzCd}_${ym}}) 줄 안의 등장 순서로
- * 맞춘다 — Semgrep 결과와 추적기 모두 위치 순이다. 그 줄의 개수가 서로 다르면(속성 값 안의 ${} 등) 어느 것이 어느
- * 것인지 추측하지 않고 판정을 붙이지 않는다. 그러면 Semgrep 등급(HIGH)이 그대로 남는다 — 모르면 위험한 쪽으로.
- *
- * <p>등급은 TraceSafety.severity() — 클라이언트 값·공통 경로 우회 HIGH, 판정 불가 MEDIUM, 안전 판정 LOW. 안전해도 자동으로
- * 오탐 처리하지는 않는다 — 추적기가 틀렸을 때 사람이 근거를 보고 바로잡을 수 있어야 한다.
+ * Semgrep의 MyBatis {@code ${}} 탐지에 연계 추적 판정을 (파일, 줄, 줄 안 등장 순서)로 맞춰 붙이고 심각도를 다시 매긴다.
+ * 줄 안 개수가 서로 다르면 추측하지 않고 Semgrep 등급(HIGH)을 그대로 둔다 — 모르면 위험한 쪽으로.
+ * 안전 판정도 자동 오탐 처리하지 않는다 — 추적기가 틀렸을 때 사람이 근거를 보고 바로잡아야 한다.
  */
 public final class DollarTraceMerger {
 

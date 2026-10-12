@@ -10,16 +10,9 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * breaking change의 관련 이름(symbols)을 앱의 import·설정 키 목록과 대조한다. AI를 부르지 않고, 코드 정보도 서버 밖으로
- * 나가지 않는다.
- *
- * <p><b>"사용 발견"은 보수적으로 준다.</b> 정확한 클래스 전체 이름, 패키지, 설정 키가 일치할 때만 USED다. 패키지 이름은 프롬프트가
- * "패키지 전체가 옮겨지거나 제거됐을 때만" 쓰게 하므로(javax.servlet 등) 그 패키지에서 import하면 확실히 영향을 받는다. 짧은 클래스
- * 이름("Configuration")은 이름만 같은 다른 패키지의 클래스일 수 있고, 와일드카드 import(p.*)는 그 패키지의 다른 클래스만 쓰는
- * 것일 수 있어서 POSSIBLE로 낮춘다 — 틀린 "사용 발견"은 개발자가 없는 문제를 찾게 만든다.
- *
- * <p><b>반대로 NOT_FOUND는 "영향 없음"이 아니다.</b> import 없이 전체 이름으로 쓰거나, 리플렉션·XML·어노테이션 문자열로 쓰거나, 다른
- * 라이브러리를 거쳐 영향받는 경우는 import 목록에 나타나지 않는다. 화면도 "import에서 안 보임"으로만 보여준다.
+ * breaking change의 관련 이름(symbols)을 앱의 import·설정 키 목록과 AI 없이 서버 안에서 대조한다.
+ * 정확한 클래스·패키지·설정 키가 일치할 때만 USED이고, 짧은 이름·와일드카드 import는 POSSIBLE로 낮춘다 — 틀린 "사용 발견"은 없는 문제를 찾게 만든다.
+ * NOT_FOUND는 "영향 없음"이 아니다(리플렉션·XML·전체 이름 사용은 import에 안 보인다).
  */
 public final class CodeUsageMatcher {
 
@@ -75,10 +68,8 @@ public final class CodeUsageMatcher {
             return;
         }
 
-        // 설정 키: 정확히 같거나, 이름이 바뀐 접두어(spring.redis → spring.redis.host)를 쓰면 사용이다. Spring은 kebab/camel/밑줄을
-        // 같은 키로 보므로(relaxed binding) 그 차이는 무시한다.
-        // 점이 없는 이름("server")은 접두어로 거의 모든 키에 걸리고, 클래스처럼 보이는 이름("Server")은 대소문자를 무시하는 비교에서
-        // 엉뚱한 키와 맞으므로 설정 키 대조에서 뺀다.
+        // 설정 키: 정확히 같거나 접두어로 쓰면 사용이다(relaxed binding이라 kebab/camel/밑줄 차이는 무시).
+        // 점이 없는 이름은 거의 모든 키에, 클래스처럼 보이는 이름은 엉뚱한 키에 걸리므로 설정 키 대조에서 뺀다.
         boolean isQualified = symbol.contains(".");
         boolean isClass = startsWithUpper(lastSegment(symbol));
         if (isQualified && !isClass) {

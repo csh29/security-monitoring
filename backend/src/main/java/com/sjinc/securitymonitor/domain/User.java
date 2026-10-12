@@ -39,6 +39,15 @@ public class User {
     @Column(nullable = false)
     private String role;
 
+    /** 사용여부(Y/N). N이면 로그인할 수 없다. 기존 행은 컬럼 기본값 Y로 채워진다. */
+    @Builder.Default
+    @Column(name = "use_yn", nullable = false, columnDefinition = "varchar(1) default 'Y' not null")
+    private String useYn = "Y";
+
+    public boolean isActive() {
+        return !"N".equals(useYn);
+    }
+
     /** 본인 비밀번호 변경(UserService.changeMyPassword). 인코딩된 값을 받는다. */
     public void changePassword(String encodedPassword) {
         this.password = encodedPassword;

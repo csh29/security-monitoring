@@ -44,19 +44,35 @@
         const API_URL = '/api/users';
         const gridBody = document.getElementById('userGridBody');
 
+        // 자기 자신·자신보다 높은 역할의 계정은 서버가 editable=false로 내려준다. 잠그고 저장에서도 뺀다.
+        // 자기 자신(self)은 비밀번호만 열어 둔다.
+        function locked(value, row) {
+            return !!(row && row.id && !row.editable);
+        }
+
+        function passwordLocked(value, row) {
+            return locked(value, row) && !row.self;
+        }
+
+        // 역할 옵션: 잠긴 행은 현재 값을 보여 주도록 전체, 나머지는 내가 줄 수 있는 역할만.
+        let roleOptions = [];
+        let assignableRoleOptions = [];
+
         const COLUMNS = [
-            { type: 'row-select', width: 36, align: 'center' },
-            { id: 'username', label: '아이디', type: 'text' },
-            { id: 'userNm', label: '사용자명', type: 'text' },
+            { type: 'row-select', width: 36, align: 'center', disabled: locked },
+            { id: 'username', label: '아이디', type: 'text', disabled: locked },
+            { id: 'userNm', label: '사용자명', type: 'text', disabled: locked },
             {
-                id: 'password', label: '비밀번호', type: 'password',
+                id: 'password', label: '비밀번호', type: 'password', disabled: passwordLocked,
                 placeholder: function (user) { return (user && user.id) ? '변경 시에만 입력' : '필수 입력'; }
             },
             {
-                // 역할 select 옵션은 공통코드관리 화면(그룹 "ROLE")에서 관리한다. 화면이 직접
-                // 조회하지 않고, optionsQuery만 주면 render()가 공통코드에서 채워온다.
-                id: 'role', label: '역할', type: 'select', optionsQuery: 'ROLE', defaultValue: 'USER'
-            }
+                // 역할 값은 공통코드관리 화면(그룹 "ROLE")에서 관리한다.
+                id: 'role', label: '역할', type: 'select', defaultValue: 'USER', disabled: locked,
+                options: function (row) { return locked(null, row) ? roleOptions : assignableRoleOptions; }
+            },
+            // 끄면 그 계정은 로그인할 수 없다.
+            { id: 'useYn', label: '사용여부', type: 'checkbox', width: 80, align: 'center', disabled: locked }
         ];
 
         Grid.renderHeader(document.getElementById('userGridHead'), COLUMNS);
@@ -70,6 +86,20 @@
         // 목록으로 쓰므로 API는 그대로 둔다(프로그램 관리 화면과 같은 방식).
         function renderRows(users) {
             Grid.render(gridBody, COLUMNS, (users || []).filter(search.matches), { emptyMessage: '등록된 사용자가 없습니다.' });
+        }
+
+        /** 역할 공통코드와 내가 줄 수 있는 역할을 한 번 받아 둔다. */
+        function loadRoleOptions() {
+            return Promise.all([
+                ComCd.fetchCodes('ROLE'),
+                fetch(API_URL + '/assignable-roles').then(function (res) {
+                    if (!res.ok) throw new Error('역할 조회에 실패했습니다.');
+                    return res.json();
+                })
+            ]).then(function (results) {
+                roleOptions = results[0].map(function (code) { return { value: code.codeValue, label: code.codeName }; });
+                assignableRoleOptions = roleOptions.filter(function (opt) { return results[1].includes(opt.value); });
+            });
         }
 
         function searchUsers() {
@@ -92,6 +122,20 @@
             const requests = [];
 
             for (const row of Grid.getRows(gridBody)) {
+                if (row.self) {
+                    // 본인은 비밀번호를 입력했을 때만 보낸다(서버도 비밀번호 외 값은 무시).
+                    if (row.password) {
+                        requests.push(fetch(API_URL, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ id: row.id, password: row.password })
+                        }));
+                    }
+                    continue;
+                }
+                if (locked(null, row)) {
+                    continue;
+                }
                 const username = row.username;
                 const userNm = row.userNm;
                 const password = row.password;
@@ -115,7 +159,8 @@
                     username: username,
                     userNm: userNm,
                     password: password,
-                    role: role
+                    role: role,
+                    useYn: row.useYn
                 };
 
                 requests.push(fetch(API_URL, {
@@ -185,8 +230,11 @@
             }
         });
 
-        // 역할 select 옵션(공통코드 "ROLE") 조회는 Grid.render가 알아서 하므로 바로 조회하면 된다.
-        searchUsers();
+        loadRoleOptions()
+            .then(searchUsers)
+            .catch(function (err) {
+                alert(err.message);
+            });
     })();
 </script>
 </body>

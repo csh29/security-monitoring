@@ -31,42 +31,33 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import com.sjinc.securitymonitor.service.securecode.trace.AuthCoverage;
 import com.sjinc.securitymonitor.service.securecode.trace.JavaSourceIndex;
 import com.sjinc.securitymonitor.service.securecode.trace.MapperXmlIndex;
 
 /**
- * 점검 대상 저장소의 Java 소스와 설정 파일을 읽어 trace-rules.yml 초안(세션 덮어쓰기 장치·로그인 정보 타입·사용자 범위 키 후보·프레임워크 구조)을
- * 만든다. 결정론이고 소스는 서버 밖으로 나가지 않는다. 초안을 지금 설정과 비교해 무엇을 바로 반영하고 무엇을 사람에게 묻는지는
- * TraceRuleChangePlanner가 정한다 — 판정을 느슨하게 만드는 항목은 사람이 근거를 보고 반영한다.
- *
- * <p>찾는 것:
- * <ul>
- *   <li>AOP 어드바이스({@code @Aspect} 클래스의 {@code @Before}/{@code @Around}, 그리고 XML {@code <aop:config>}의 before·around —
- *       FrameworkProfiler.xmlAdvices)의 포인트컷 {@code @annotation(X)} → 어노테이션, {@code args(request, ..)} → 첫 파라미터 조건</li>
- *   <li>어드바이스 본문에서 호출을 따라가며 요청 인자(또는 그 안의 {@code get("k")} 맵·맵 목록의 행)에 하는
- *       {@code put("key", 값)} 중 <b>값이 세션에서 온 것</b>만 → 덮어쓰는 키와 위치(container)</li>
- *   <li>{@code (T) session.getAttribute(...)}로 꺼내는 타입 T → 로그인 정보 타입, T의 getter 공통 접두어 → 로그인 getter 접두어</li>
- *   <li>위 장치가 세션 값으로 넣는 키, 그리고 서비스 코드가 로그인 정보로 직접 넣는 키({@code param.put("compCd", user.getLoginCompCd())})
- *       중 매퍼 SQL의 조건 자리(WHERE·ON·HAVING)에 쓰이는 것 → 사용자 범위 키 후보</li>
- *   <li>설정 파일·소스의 프레임워크 구조(FrameworkProfiler.profile) — 판정에는 쓰지 않는 기록</li>
- * </ul>
- * 세션 값이 아닌 put(예: 구문 id 앞 6자리)은 키에 넣지 않고 "세션 값 아님"으로 따로 보여준다 — 그 키를 덮어쓰기로 등록하면
- * 클라이언트가 바꿀 수 있는 값을 안전하다고 판정하게 된다.
- *
- * <p>리플렉션, 요청을 감싸는 필터는 찾지 못한다 — 흔적이 보이면 안내만 남긴다.
+ * 저장소 소스·설정에서 trace-rules.yml 초안(AOP 세션 덮어쓰기 장치·로그인 정보 타입과 getter 접두어·사용자 범위 키·인증 장치·구조)을 결정론으로 만든다.
+ * 세션 값이 아닌 put은 등록하면 클라이언트 값을 안전으로 판정하게 되므로 "세션 값 아님"으로 따로 보여준다.
+ * 반영 여부는 TraceRuleChangePlanner가 정하며, 리플렉션·요청 래퍼 필터는 찾지 못해 안내만 남긴다.
  */
 public final class TraceRuleDrafter {
 
     /**
      * 초안 결과.
      *
-     * @param scopeKeys 사용자 범위 키 후보 — 세션 덮어쓰기 장치나 서비스 코드가 로그인 정보로 넣는 키 중 매퍼 SQL 조건 자리에 쓰인 것
-     *                  (근거는 그 SQL 위치, 서비스가 넣는 키면 넣는 줄도)
+     * @param scopeKeys 로그인 정보로 넣는 키 중 매퍼 SQL 조건 자리에 쓰인 사용자 범위 키 후보
      * @param framework 프레임워크 구조 기록(판정에는 쓰지 않는다)
+     * @param authDevices 로그인 정보를 읽고 없으면 막는 인터셉터·필터 후보
      */
     public record Draft(List<OverwriteCandidate> overwrites, List<Evidenced> loginTypeNames,
                         List<Evidenced> loginMethodPrefixes, List<Evidenced> scopeKeys,
-                        List<TraceRules.FrameworkFact> framework, List<String> notes, List<String> failedFiles) {
+                        List<TraceRules.FrameworkFact> framework, List<String> notes, List<String> failedFiles,
+                        List<Evidenced> authDevices) {
+
+        public Draft(List<OverwriteCandidate> overwrites, List<Evidenced> loginTypeNames, List<Evidenced> loginMethodPrefixes,
+                     List<Evidenced> scopeKeys, List<TraceRules.FrameworkFact> framework, List<String> notes, List<String> failedFiles) {
+            this(overwrites, loginTypeNames, loginMethodPrefixes, scopeKeys, framework, notes, failedFiles, List.of());
+        }
     }
 
     /**
@@ -143,11 +134,27 @@ public final class TraceRuleDrafter {
         }
         List<Evidenced> prefixes = loginMethodPrefixes();
         return new Draft(overwrites, loginTypes, prefixes, scopeKeyCandidates(sources, overwrites, loginPuts(prefixes)),
-                FrameworkProfiler.profile(sources, java), notes, java.failedFiles());
+                FrameworkProfiler.profile(sources, java), notes, java.failedFiles(), authDevices(sources, notes));
+    }
+
+    /** 인증 장치 후보 — 사람이 근거를 보고 인정한다(인정하면 그 장치의 적용 경로 밖 요청 처리 메서드만 "인증 없는 기능"으로 탐지). */
+    private List<Evidenced> authDevices(Map<String, String> sources, List<String> notes) {
+        List<AuthCoverage.Hook> hooks = AuthCoverage.hooks(sources, java);
+        if (hooks.isEmpty()) {
+            notes.add("인증을 끼울 인터셉터·필터 등록(addInterceptor·<mvc:interceptor>·<filter-mapping>·@WebFilter)을 찾지 못했습니다."
+                    + " Spring Security·AOP·컨트롤러 직접 검사·앱 밖 인증이면 엔드포인트별 인증 판정을 하지 않습니다.");
+            return List.of();
+        }
+        List<AuthCoverage.Candidate> candidates = AuthCoverage.candidates(hooks, sources, java);
+        if (candidates.isEmpty()) {
+            notes.add("등록된 인터셉터·필터(" + hooks.stream().map(AuthCoverage.Hook::className).distinct().toList()
+                    + ")에서 로그인 정보를 읽고 없으면 막는 코드를 찾지 못했습니다. 인증을 하는 장치가 있으면 직접 확인하세요.");
+        }
+        return candidates.stream().map(c -> new Evidenced(c.className(), String.join(" / ", c.evidence()))).toList();
     }
 
     /**
-     * 서비스·컨트롤러가 로그인 정보로 직접 넣는 맵 키({@code param.put("compCd", user.getLoginCompCd())}) → 그 put 줄.
+     * 서비스·컨트롤러가 로그인 정보로 직접 넣는 맵 키({@code param.put("userId", user.getLoginUserId())}) → 그 put 줄.
      * 공통 장치(AOP) 없이 서비스마다 세션에서 꺼내 넣는 시스템은 이것으로만 사용자 범위 키를 찾을 수 있다.
      * 로그인 정보는 세션에서 꺼낸 값·세션에서 꺼낸 타입의 getter·로그인 getter 접두어(getLogin 등)로 시작하는 메서드의 반환값이다.
      */
@@ -258,7 +265,7 @@ public final class TraceRuleDrafter {
         return List.of(new Evidenced(prefix, String.join(", ", sessionTypes) + "의 getter " + getters.size() + "개 공통 접두어"));
     }
 
-    /** 카멜 표기 단어 경계 기준 공통 접두어(getLoginCompCd, getLoginUserId → getLogin). */
+    /** 카멜 표기 단어 경계 기준 공통 접두어(getLoginDeptId, getLoginUserId → getLogin). */
     static String commonCamelPrefix(Set<String> names) {
         if (names.isEmpty()) return null;
         String prefix = null;
@@ -325,7 +332,7 @@ public final class TraceRuleDrafter {
         Matcher annotationMatch = ANNOTATION_POINTCUT.matcher(pointcut);
         if (!annotationMatch.find()) return List.of();
         String annotation = annotationMatch.group(1);
-        // @annotation(addUserInfo)처럼 어드바이스 파라미터 이름이면 그 파라미터의 타입이 어노테이션이다.
+        // @annotation(marker)처럼 어드바이스 파라미터 이름이면 그 파라미터의 타입이 어노테이션이다.
         for (Parameter p : advice.getParameters()) {
             if (p.getNameAsString().equals(annotation)) annotation = JavaSourceIndex.simpleName(p.getType());
         }

@@ -32,25 +32,9 @@ import com.sjinc.securitymonitor.service.securecode.tracerule.FrameworkProfiler;
 import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules;
 
 /**
- * MyBatis {@code ${}}마다 그 값이 어디서 오는지 Java 소스를 따라가 판정한다. Semgrep(무료판)은 한 메서드 안만 보고 XML과 Java를
- * 잇지 못해 {@code ${}}를 전부 같은 등급으로 내는데, 실제로는 서버가 상수·로그인 정보로 채우는 것이 대부분이라
- * 사람이 매번 연계 코드를 열어 봐야 했다.
- *
- * <p>순서: 매퍼 XML의 {@code ${key}} → 그 구문을 실행하는 곳({@code sqlSession.selectList("ns.id", map)}, 감싼 메서드면 그 호출자까지)
- * → 실행 직전까지 {@code map.put("key", 값)}이 <b>모든 경로에서</b> 일어나는가 → 그 값은 상수·로그인 정보인가, 요청 값인가.
- * 맵이 파라미터로 들어왔으면 호출자로 올라가고, 컨트롤러 요청 매핑까지 가면 클라이언트 값이다.
- *
- * <p>"모든 경로에서"가 핵심이다. {@code @RequestBody Map}으로 받은 맵에는 클라이언트가 보낸 키가 이미 들어 있어서,
- * {@code if (x) map.put("k", "A")}처럼 else가 없으면 조건이 거짓일 때 클라이언트 값이 그대로 남는다.
- *
- * <p>클라이언트가 구문 id까지 정하는 공통 실행 경로(CRM의 {@code /common/selectList}: {@code selectList(param.getStatement(), paramData)})가
- * 있으면 서비스에서 세팅한 값은 그 경로로 우회된다. 그래서 그런 경로를 찾아 모든 구문의 추가 호출처로 함께 판정한다.
- * XML 안에서 정해지는 값(bind 상수, 상수 비교 if)과 세션 덮어쓰기(trace-rules.yml의 sessionOverwrites)만 그 경로로 와도 안전하다.
- *
- * <p>시스템마다 다른 프레임워크 장치(세션 값을 요청 맵에 덮어쓰는 AOP, 로그인 정보 객체 이름)는 판정 로직에 넣지 않고
- * {@link TraceRules}(securecode/trace-rules.yml)로 받는다.
- *
- * <p>Spring 없이 도는 순수 클래스다. 출처를 끝까지 못 따라가면 "판정 불가"로 남기고 안전하다고 하지 않는다.
+ * MyBatis {@code ${}}마다 구문 실행 지점에서 호출자를 거슬러 그 키가 <b>모든 경로에서</b> 서버 값으로 채워지는지 판정한다.
+ * 클라이언트가 구문 id를 정하는 공통 실행 경로는 서비스 세팅을 우회하므로 모든 구문의 추가 호출처로 함께 본다.
+ * 시스템마다 다른 장치는 {@link TraceRules}로 받고, 끝까지 못 따라가면 "판정 불가"로 남긴다.
  */
 public final class MybatisDollarTracer {
 
@@ -58,9 +42,8 @@ public final class MybatisDollarTracer {
      * @param verdicts      {@code ${}} 한 곳마다 판정 하나(경로·줄 순)
      * @param failedFiles   구문 분석에 실패한 파일 — 그 안의 세팅·호출을 못 봤으니 판정이 덜 정확하다
      * @param genericRoutes 클라이언트가 구문 id를 정하는 공통 실행 경로(근거 표시용)
-     * @param scopeVerdicts 사용자 범위 키(TraceRules.userScopeKeys)가 SQL 조건 자리(WHERE·ON·HAVING)에 {@code #{}}로 쓰인 곳마다 판정 하나(경로·줄 순).
-     *                      값 자리(INSERT VALUES·UPDATE SET)는 등록자·수정자 기록이라, {@code ${}}는 위 verdicts가 SQL 삽입으로 이미 판정하므로 넣지 않는다
-     * @param scopeKeysUsed 이 저장소의 매퍼에 사용자 범위 키가 하나라도 쓰였는가 — 키가 설정돼 있는데 false면 이 시스템의 키가 설정에 없다는 뜻이다
+     * @param scopeVerdicts 사용자 범위 키가 SQL 조건 자리에 {@code #{}}로 쓰인 곳마다 판정 하나(경로·줄 순)
+     * @param scopeKeysUsed 매퍼에 사용자 범위 키가 하나라도 쓰였는가 — false면 이 시스템의 키가 설정에 없다는 뜻이다
      */
     public record Result(List<DollarVerdict> verdicts, List<String> failedFiles, List<String> genericRoutes,
                          List<DollarVerdict> scopeVerdicts, boolean scopeKeysUsed) {
@@ -303,8 +286,7 @@ public final class MybatisDollarTracer {
         if (directV.safety() == TraceSafety.CLIENT || genericV == null || genericV.safety() != TraceSafety.CLIENT) {
             V worst = V.worst(directV, genericV);
             if (worst == directV && genericV != null && worst.safety().isSafe()) {
-                // 안전 판정의 근거가 직접 경로뿐이면 "공통 실행 경로는 봤나?"를 알 수 없다(CRM crd020의 ${loginBrndzCd}를 보고 물었다).
-                // 그 경로로 와도 안전한 이유(세션 값으로 덮어씀 등)를 한 줄 덧붙인다.
+                // 안전 근거가 직접 경로뿐이면 공통 실행 경로를 봤는지 알 수 없으니, 그 경로로 와도 안전한 이유를 덧붙인다.
                 return worst.append("공통 실행 경로로 이 구문을 직접 불러도 " + genericV.safety().label() + ": "
                         + String.join(" → ", genericV.evidence()));
             }
@@ -324,8 +306,7 @@ public final class MybatisDollarTracer {
         if (sink.getArguments().size() < 2) {
             v = V.of(TraceSafety.SERVER_SET, "파라미터 없이 실행");
         } else if (origin.isCollectionArgument(sink.getArgument(1), site.frame())) {
-            // MyBatis는 List·배열 파라미터를 list/collection/array 키로 감싼다 — ${key}는 원소에 닿지 않는다
-            // (CRM Syc020Service.saveMenu의 insert(statement, menuData)를 클라이언트 경로로 잘못 잡았었다).
+            // MyBatis는 List·배열 파라미터를 list/collection/array 키로 감싸 ${key}가 원소에 닿지 않는다.
             // 이 실행 경로로는 이 키에 값을 넣을 수 없으니 판정에서 뺀다(null).
             return null;
         } else {
@@ -367,7 +348,7 @@ public final class MybatisDollarTracer {
             if (declaration.isPresent() && declaration.get() instanceof ParamDecl param
                     && param.callable() == frame.method && !java.isHandler(param.callable())
                     && param.callable() instanceof MethodDeclaration method) {
-                // 구문 id를 파라미터로 받는 감싼 메서드(CommonService.selectList(statement, param)) — 호출자마다 따로 본다.
+                // 구문 id를 파라미터로 받는 감싼 메서드 — 호출자마다 따로 본다.
                 List<StatementRef> refs = new ArrayList<>();
                 for (MethodCallExpr call : java.callersOf(method)) {
                     CallableDeclaration<?> caller = call.findAncestor(CallableDeclaration.class).orElse(null);

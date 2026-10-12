@@ -9,14 +9,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 같은 규칙이 한 식 안에 겹쳐 걸린 탐지를 바깥 한 건으로 합친다. 규칙은 위험한 지점을 빠짐없이 적어 두므로
- * ({@code new File(...)}·{@code new FileInputStream(...)} 둘 다 실행 지점) {@code new FileInputStream(new File(fileName))}은
- * 같은 값 하나가 두 지점에 걸려 두 건이 된다(OWASP Benchmark 경로 조작). 걸린 범위가 다른 범위 안에 통째로 들어가면 안쪽을 뺀다.
- *
- * <p>나란히 걸린 것(한 줄의 {@code ${a}}·{@code ${b}})은 범위가 겹치지 않아 그대로 둔다 — 값마다 판정이 다르다.
- * 다른 규칙끼리는 여기서 보지 않는다(같은 줄·같은 CWE는 DuplicateCweMerger). 열을 모르는 탐지(0)도 그대로 둔다.
- *
- * <p>지문은 걸린 모든 탐지로 만든 뒤에 뺀다 — 파일 안 등장 순서가 지문에 들어가서(SecureCodeSnippetBuilder), 먼저 빼면 남는 건의 지문이 바뀐다.
+ * 같은 규칙이 한 식 안에 겹쳐 걸린 탐지({@code new FileInputStream(new File(x))})는 범위가 통째로 들어간 안쪽을 빼 한 건으로 합친다.
+ * 나란히 걸린 것·다른 규칙·열을 모르는 탐지는 그대로 둔다. 지문에 등장 순서가 들어가므로 지문을 다 만든 뒤에 뺀다.
  */
 public final class NestedMatchMerger {
 
@@ -26,7 +20,7 @@ public final class NestedMatchMerger {
     /**
      * @param matches  Semgrep 결과(열 포함)
      * @param detected matches로 만든 탐지 — 같은 순서·같은 개수(SecureCodeSnippetBuilder.build)
-     * @return 안쪽을 뺀 탐지와, 빠진 탐지의 지문 → 남은 규칙 id(기존 탐지는 "고쳐서 해결"이 아니라 합친 것으로 정리된다)
+     * @return 안쪽을 뺀 탐지와, 빠진 탐지의 지문 → 남은 규칙 id
      */
     public static DuplicateCweMerger.Merged merge(List<SemgrepMatch> matches, List<DetectedFinding> detected) {
         if (matches.size() != detected.size()) {

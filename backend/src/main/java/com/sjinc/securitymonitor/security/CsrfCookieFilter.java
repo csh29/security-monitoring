@@ -10,15 +10,9 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 
 /**
- * 요청마다 CSRF 토큰을 화면을 그리기 전에 먼저 읽어서, XSRF-TOKEN 쿠키가 응답 헤더에 확실히 실리게 한다.
- *
- * <p>Spring Security 6은 토큰을 "누군가 값을 읽을 때" 만들고 그때 쿠키를 심는다. 로그인에 성공하면 기존
- * 토큰(쿠키)을 지우는데, 그 뒤 첫 화면에서 토큰을 처음 읽는 곳이 상단바 로그아웃 폼(페이지 중간)이다.
- * 거기까지 출력이 Tomcat 응답 버퍼(8KB)를 넘어 헤더가 이미 나간 뒤라 Set-Cookie가 조용히 버려졌고,
- * 쿠키가 없으니 공통 fetch 래퍼가 X-XSRF-TOKEN을 못 붙여 <b>로그인 직후 첫 저장·삭제가 403</b>이 났다
- * (그 403 응답에서야 쿠키가 심어져 한 번 더 누르면 됐다 — "가끔 403"으로 보인 이유).
- *
- * <p>SecurityConfig가 CsrfFilter 뒤에 등록한다. 검증 자체는 그대로 CsrfFilter가 한다.
+ * 요청마다 CSRF 토큰을 화면 출력 전에 읽어 XSRF-TOKEN 쿠키가 응답 헤더에 확실히 실리게 한다. 토큰은 처음 읽힐 때
+ * 쿠키로 심기는데, 페이지 중간에서 읽으면 응답 버퍼를 넘겨 헤더가 이미 나간 뒤라 쿠키가 버려지고 로그인 직후 첫 POST가
+ * 403이 나기 때문이다. SecurityConfig가 CsrfFilter 뒤에 등록하며, 검증은 CsrfFilter가 한다.
  */
 public class CsrfCookieFilter extends OncePerRequestFilter {
 

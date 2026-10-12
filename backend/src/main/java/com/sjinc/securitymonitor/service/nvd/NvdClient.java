@@ -13,15 +13,7 @@ import reactor.util.retry.Retry;
 import java.time.Duration;
 
 /**
- * fileName       : NvdClient
- * author         : 최세훈
- * date           : 26. 9. 2.
- * description    : NVD API 통신 전담
- * ===========================================================
- * DATE              AUTHOR             NOTE
- * -----------------------------------------------------------
- * 26. 9. 2.        최세훈       최초 생성
- * 26. 9. 28.       최세훈       호출 간격 제어 + 재시도 + 타임아웃 추가
+ * NVD API 통신 전담 — 호출 간격 제어·재시도·타임아웃을 함께 맡는다.
  */
 @Service
 @Slf4j
@@ -30,11 +22,8 @@ public class NvdClient {
     private final WebClient nvdWebClient;
 
     /**
-     * 호출 사이 최소 간격(ms).
-     *
-     * <p>스캔은 CVE 건수만큼 이 API를 연속으로 부른다(100건이면 100회). NVD는 API 키가 있어도
-     * 30초당 50회가 상한이라, 간격을 두지 않으면 수십 건째에서 반드시 429를 맞는다.
-     * 30초/50회 = 600ms가 이론상 하한이라 여유를 둬서 700ms를 기본값으로 한다.
+     * 호출 사이 최소 간격(ms). NVD는 API 키가 있어도 30초당 50회가 상한이라 연속 호출하면 429를 맞는다.
+     * 이론상 하한 600ms에 여유를 둬 700ms를 기본값으로 한다.
      */
     @Value("${nvd.api.min-interval-ms:700}")
     private long minIntervalMs;

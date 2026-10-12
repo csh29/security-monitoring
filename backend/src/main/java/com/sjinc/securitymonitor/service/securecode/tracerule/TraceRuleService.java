@@ -28,17 +28,9 @@ import java.util.Set;
 import com.sjinc.securitymonitor.service.securecode.trace.JavaSourceIndex;
 
 /**
- * 추적 규칙(trace-rules.yml)을 읽고, 코드 점검 때 만든 초안을 반영한다.
- *
- * <p>점검마다(연계 추적 단계) 그 저장소의 프레임워크 장치·설정 파일을 읽어 초안을 만들고(TraceRuleDrafter) 지금 규칙과 비교해
- * (TraceRuleChangePlanner):
- * <ul>
- *   <li>판정을 엄격하게 하거나 판정에 쓰지 않는 변경은 <b>바로 파일에 반영</b>하고 그 점검부터 쓴다(AUTO_APPLIED로 기록).</li>
- *   <li>판정을 느슨하게 하는 변경은 <b>확인 대기</b>(PENDING)로 저장한다. 사람이 코드 점검 화면에서 근거를 보고 반영하면 그때 파일에 쓰고
- *       다음 점검부터 쓴다. 잘못 반영하면 진짜 취약점이 조용히 LOW가 되기 때문이다(CRM regPgmId 사례).</li>
- * </ul>
- * 파일은 바꿀 줄만 고치고 주석을 남긴다(TraceRulesFileEditor) — 서버가 고친 내용도 사람이 git으로 확인·커밋한다.
- * 점검(점검 잠금 안)과 화면의 반영이 동시에 파일을 쓰지 않게 파일 쓰기는 한 번에 하나만 한다.
+ * 추적 규칙(trace-rules.yml)을 읽고, 점검 때 만든 초안 중 엄격한 변경은 바로 반영하고 느슨한 변경은 확인 대기로 둔다
+ * (잘못 반영하면 진짜 취약점이 조용히 LOW가 된다). 파일은 사람이 git으로 확인하도록 바꿀 줄만 고치고 주석을 남기며,
+ * 점검과 화면의 반영이 겹치지 않게 한 번에 하나만 쓴다.
  */
 @Slf4j
 @Service

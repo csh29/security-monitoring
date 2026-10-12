@@ -7,11 +7,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * fix-plan이 제안한 버전 변경(from → to)이 패치/마이너/메이저 중 어느 폭의 점프인지 결정론적으로 분류한다.
- *
- * <p>업그레이드 영향 분석에서 AI를 부를지 말지를 이 결과로 먼저 거른다 — 패치 점프는 하위 호환이 원칙이라
- * AI 분석 없이 "회귀 테스트만"으로 끝내고, 마이너·메이저만 릴리스 노트를 읽혀 분석한다. 점프 폭은 순수 버전
- * 비교라 AI에게 맡길 이유가 없다(VersionLineSelector와 같은 이유).
+ * fix-plan이 제안한 버전 변경(from → to)이 패치/마이너/메이저 중 어느 폭인지 결정론적으로 분류한다.
+ * 업그레이드 영향 분석은 이 결과로 패치는 AI 없이 "회귀 테스트만"으로 끝내고, 마이너·메이저만 AI로 분석한다.
  */
 public final class VersionJumpClassifier {
 

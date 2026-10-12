@@ -11,16 +11,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * trace-rules.yml에 변경(TraceRuleChange)을 글자 단위로 적용한다. YAML을 읽어 통째로 다시 쓰지 않는 이유는 주석 때문이다 — 이 파일의 주석은
- * "왜 이 키는 빼 두었나"(regPgmId) 같은 판단 기록이라, 다시 쓰면서 지워지면 다음 사람이 같은 실수를 한다. 그래서 바꿀 줄만 고치고,
- * 고친 곳 위에 언제·누가·왜 고쳤는지 주석을 한 줄 단다.
- *
- * <p>고친 결과를 다시 읽어 "지금 규칙에 변경을 적용한 규칙"과 같은지 확인하고, 다르면 예외를 던진다(파일은 쓰지 않는다). 사람이 손으로 쓴
- * 파일 모양이 예상과 달라(키 목록을 여러 줄로 썼다 등) 엉뚱한 곳을 고치는 일을 막는다.
- *
- * <p>로그인 정보 이름·사용자 범위 키는 공통 목록이 아니라 그 초안을 만든 시스템 항목(systems.시스템명)에 더한다 — 한 시스템에서 반영한 키가
- * 다른 시스템에 적용되지 않게(TraceRules.forSystem). frameworks(프레임워크 구조)는 서버가 쓰는 기록이라 섹션을 통째로 다시 쓰고,
- * 항상 파일 맨 끝에 둔다.
+ * trace-rules.yml에 변경을 글자 단위로 적용한다 — 주석에 담긴 판단 기록이 지워지지 않게 바꿀 줄만 고치고 언제·왜 고쳤는지 주석을 단다.
+ * 고친 결과를 다시 읽어 의도한 규칙과 다르면 예외를 던져, 파일 모양이 예상과 달라 엉뚱한 곳을 고치는 일을 막는다.
+ * 시스템별 값은 systems.시스템명에 더하고, frameworks 섹션은 서버 기록이라 통째로 다시 써 맨 끝에 둔다.
  */
 public final class TraceRulesFileEditor {
 
@@ -41,7 +34,7 @@ public final class TraceRulesFileEditor {
 
     /**
      * @param content 지금 파일 내용(파일이 없으면 빈 문자열)
-     * @param stamp   고친 곳에 남길 표시(예: "2026-10-08 자동 반영", "2026-10-08 반영 admin")
+     * @param stamp   고친 곳에 남길 표시(날짜·반영 방식·반영자)
      * @return 고친 내용
      * @throws IllegalStateException 고친 결과가 의도한 규칙과 다를 때(파일 모양이 예상과 다름)
      */
@@ -64,6 +57,7 @@ public final class TraceRulesFileEditor {
                 case ADD_LOGIN_TYPE -> addToSystemList(lines, "loginTypeNames", change, stamp);
                 case ADD_LOGIN_PREFIX -> addToSystemList(lines, "loginMethodPrefixes", change, stamp);
                 case ADD_SCOPE_KEY -> addToSystemList(lines, "userScopeKeys", change, stamp);
+                case ADD_AUTH_DEVICE -> addToSystemList(lines, "authDevices", change, stamp);
                 case SET_FRAMEWORK -> writeFrameworks(lines, expected.frameworks());
             }
         }

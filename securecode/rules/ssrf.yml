@@ -51,7 +51,7 @@ rules:
     patterns:
       - pattern-either:
           - pattern: new java.net.URL($U)
-          # 메서드 이름 조건은 RestTemplate 쪽에만 둔다 — 바깥에 두면 $M이 없는 URL 패턴까지 조건에 걸려 new URL(변수)를 놓친다(실제로 그랬다).
+          # 메서드 이름 조건은 RestTemplate 쪽에만 둔다 — 바깥에 두면 $M이 없는 URL 패턴까지 조건에 걸려 new URL(변수)를 놓친다.
           - patterns:
               - pattern: (org.springframework.web.client.RestTemplate $RT).$M($U, ...)
               - metavariable-regex:

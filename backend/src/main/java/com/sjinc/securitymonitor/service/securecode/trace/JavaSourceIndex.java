@@ -42,12 +42,9 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * 점검 대상 저장소의 Java 소스를 구문 분석해 두고, 추적에 필요한 질문(이 이름은 어디서 선언됐나, 이 호출은 어느 메서드인가,
- * 이 메서드를 누가 부르나)에 답한다.
- *
- * <p>타입 해석기(symbol solver)를 쓰지 않는다 — 대상 앱의 의존 라이브러리 jar 없이 소스만 있는 상태라 정확한 해석이 안 되고,
- * 느리다. 대신 "변수·필드·파라미터의 선언 타입 이름 = 우리 소스의 클래스 이름"으로 호출을 잇는다. Spring 주입 필드
- * ({@code private final Crc020Service crc020Service})가 대부분이라 이 정도로 충분하고, 못 이으면 추적기가 "판정 불가"로 남긴다.
+ * 점검 대상 Java 소스를 구문 분석해 두고 선언 위치·호출 대상·호출자 같은 추적 질문에 답한다.
+ * 의존 jar 없이 소스만 있어 타입 해석기는 쓰지 않고, 선언 타입 이름을 우리 소스의 클래스 이름으로 이어 호출을 잇는다.
+ * 대부분 Spring 주입 필드라 이 정도로 충분하고, 못 이으면 추적기가 "판정 불가"로 남긴다.
  */
 public final class JavaSourceIndex {
 
@@ -181,7 +178,7 @@ public final class JavaSourceIndex {
         return callsByName.getOrDefault(name, List.of());
     }
 
-    /** "Crc020Service.java:102" — 근거 표시용. */
+    /** "파일명.java:줄" — 근거 표시용. */
     public String location(Node node) {
         String path = node.findCompilationUnit().map(paths::get).orElse("?");
         String file = path.substring(path.lastIndexOf('/') + 1);
@@ -299,7 +296,7 @@ public final class JavaSourceIndex {
             Expression scope = call.getScope().get();
             String typeName = typeNameOf(scope);
             if (typeName == null && scope instanceof NameExpr n && Character.isUpperCase(n.getNameAsString().charAt(0))) {
-                typeName = n.getNameAsString(); // 정적 호출(FrameEtcUtil.addUserInfo)
+                typeName = n.getNameAsString(); // 정적 호출(클래스명.메서드)
             }
             if (typeName == null) return List.of();
             owners = visibleFrom(call, classesByName.getOrDefault(typeName, List.of()));
@@ -314,10 +311,9 @@ public final class JavaSourceIndex {
     }
 
     /**
-     * 같은 이름의 클래스가 여럿이면 호출 지점에서 보이는 것만 — 같은 파일(내부 클래스 포함) → 단일 import → 같은 패키지 순(Java 이름 규칙).
-     * 이름만 보면 파일마다 있는 내부 클래스(private class Test)나 패키지만 다른 동명 클래스의 메서드가 모두 후보가 돼, 다른 파일의
-     * 취약한 본문이 판정에 섞였다(OWASP Benchmark에서 new Test().doSomething(...)이 다른 테스트 파일들의 doSomething까지 이어졌다).
-     * 어느 규칙으로도 못 고르면 지금처럼 전부 — 모르는 것을 안전 쪽으로 버리지 않는다.
+     * 같은 이름의 클래스가 여럿이면 호출 지점에서 보이는 것만 — 같은 파일 → 단일 import → 같은 패키지 순(Java 이름 규칙).
+     * 이름만 보면 다른 파일의 동명 클래스 본문이 판정에 섞이기 때문이다.
+     * 어느 규칙으로도 못 고르면 전부 — 모르는 것을 안전 쪽으로 버리지 않는다.
      */
     private List<ClassOrInterfaceDeclaration> visibleFrom(Node at, List<ClassOrInterfaceDeclaration> candidates) {
         if (candidates.size() < 2) return candidates;
@@ -364,7 +360,7 @@ public final class JavaSourceIndex {
         return new ArrayList<>(result);
     }
 
-    /** 우리 소스의 클래스 type이 상속 사슬 어딘가에서 bases 중 하나를 상속하는가(class BaseParam extends HashMap). */
+    /** 우리 소스의 클래스 type이 상속 사슬 어딘가에서 bases 중 하나를 상속하는가. */
     public boolean extendsAny(String type, Set<String> bases) {
         Set<String> seen = new LinkedHashSet<>();
         List<String> queue = new ArrayList<>(List.of(type));
@@ -401,7 +397,7 @@ public final class JavaSourceIndex {
         return mapped && controller;
     }
 
-    /** "POST /crc020/extra" 같은 표시. 값을 못 읽으면 메서드 이름. */
+    /** "POST /경로" 같은 표시. 값을 못 읽으면 메서드 이름. */
     String handlerLabel(CallableDeclaration<?> callable) {
         String prefix = callable.findAncestor(TypeDeclaration.class)
                 .flatMap(type -> mappingValue(((TypeDeclaration<?>) type).getAnnotations())).orElse("");

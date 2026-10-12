@@ -50,17 +50,16 @@ import com.sjinc.securitymonitor.service.securecode.trace.JavaSourceIndex;
 import com.sjinc.securitymonitor.service.securecode.trace.MybatisDollarTracer;
 import com.sjinc.securitymonitor.service.securecode.trace.SinkTracer;
 import com.sjinc.securitymonitor.service.securecode.trace.TraceSink;
+import com.sjinc.securitymonitor.service.securecode.trace.AuthCoverage;
 import com.sjinc.securitymonitor.service.securecode.trace.UserScopeFindings;
 import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRuleDraftPreview;
 import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRuleService;
 import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules;
 
 /**
- * 시큐어코딩 점검 1회를 처음부터 끝까지 잇는다: 등록 확인 → clone → Semgrep → 코드 조각·지문 → 기존 탐지와 비교·저장 → 이력.
- *
- * <p>라이브러리 스캔(ScanOrchestrationService)과 서로 부르지 않는다. 공유하는 것은 앱 등록과 clone뿐이다 — 한쪽이 실패하거나
- * 바뀌어도 다른 쪽에 영향이 없게 하기 위함이다. 판정은 결정론(Semgrep + 연계 추적)으로 끝내고, 그래도 못 정한 높은 등급만
- * 점검 뒤 AI 배치가 판별한다(SecureCodeAiReviewService — 여기서는 보낼 코드 문맥을 만들고 배치를 띄우기만 한다).
+ * 시큐어코딩 점검 1회를 잇는다: 등록 확인 → clone → Semgrep → 조각·지문 → 기존 탐지와 비교·저장 → 이력.
+ * 라이브러리 스캔과는 서로 영향이 없게 앱 등록·clone만 공유한다. 판정은 결정론(Semgrep + 연계 추적)으로 하고,
+ * 못 정한 높은 등급만 점검 뒤 AI 배치가 판별한다(여기서는 문맥을 붙이고 배치를 띄우기만 한다).
  */
 @Slf4j
 @Service
@@ -80,8 +79,8 @@ public class SecureCodeScanService {
     private final TraceRuleService traceRuleService;
 
     /**
-     * 한 번에 하나만 돈다. Semgrep은 메모리를 많이 쓰고, 여러 개가 동시에 돌면 사용자 홈의 Semgrep 설정 파일
-     * (~/.semgrep/settings.yml)을 같이 쓰다 PermissionError로 실패한다(규칙 테스트 중 실제로 났다).
+     * 한 번에 하나만 돈다. Semgrep은 메모리를 많이 쓰고, 동시에 돌면 사용자 홈의 설정 파일
+     * (~/.semgrep/settings.yml)을 같이 쓰다 PermissionError로 실패한다.
      */
     private final ReentrantLock scanLock = new ReentrantLock();
 
@@ -132,9 +131,8 @@ public class SecureCodeScanService {
     }
 
     /**
-     * 소스 업로드 앱 점검 — Git으로 접근할 수 없는 앱의 소스 zip을 받아 풀고 Git 점검과 같은 과정을 돈다(SourceArchiveExtractor).
-     * 업로드 앱만 받는다 — Git 앱을 zip으로 점검하면 경로 기준이 달라져 탐지가 "해결+신규"로 뒤섞인다. 점검할 소스 파일이 하나도 없는 zip은 거부한다
-     * — 받아들이면 기존 탐지가 전부 "해결"이 된다(빈 zip 하나로 결과를 지울 수 있게 된다). 올린 zip과 푼 폴더는 점검이 끝나면 지운다.
+     * 소스 업로드 앱의 zip을 풀어 Git 점검과 같은 과정을 돈다. Git 앱은 경로 기준이 달라 탐지가 뒤섞이므로 받지 않고,
+     * 소스가 없는 zip은 기존 탐지를 전부 "해결"로 지울 수 있어 거부한다. 올린 zip과 푼 폴더는 점검 뒤 지운다.
      *
      * @param fileName 올린 파일 이름(이력에 남긴다)
      * @param content  zip 내용
@@ -249,6 +247,7 @@ public class SecureCodeScanService {
         Set<String> activeRuleIds = new HashSet<>(ruleSet.ruleIds());
         if (trace.rulesChanged()) ruleSet = reloadRuleSet(app, rules, ruleSet);
         if (trace.userScopeJudged()) activeRuleIds.add(UserScopeFindings.RULE_ID);
+        if (trace.authJudged()) activeRuleIds.add(AuthCoverage.RULE_ID);
 
         SecureCodeApplyResult applied = findingService.applyScan(
                 app.getId(), detected, report.failedFiles(), activeRuleIds, mergedAway);
@@ -272,7 +271,7 @@ public class SecureCodeScanService {
      * rulesChanged는 이번 점검이 추적 규칙 파일을 고쳤는가(TraceRuleService.review) — 고쳤으면 규칙셋 버전을 다시 계산한다.
      */
     private record TraceOutcome(List<DetectedFinding> findings, String note, boolean userScopeJudged, boolean rulesChanged,
-                                JavaSourceIndex java) {
+                                JavaSourceIndex java, boolean authJudged) {
     }
 
     /** 점검 중 추적 규칙을 고쳤으면 이력의 규칙셋 버전도 고친 규칙 기준으로 — 같은 코드라도 판정이 달라진 이유를 이력에서 찾을 수 있게. */
@@ -286,19 +285,9 @@ public class SecureCodeScanService {
     }
 
     /**
-     * 출처를 따라갈 수 있는 탐지에 연계 추적 판정·근거를 붙이고 등급을 다시 매긴다.
-     * <ul>
-     *   <li>MyBatis ${}(MybatisDollarTracer) — 값이 클라이언트에서 오는지, 서버가 세팅하는지, 공통 실행 경로로 우회되는지</li>
-     *   <li>위험 호출 지점(SinkTracer) — SSRF 변수 주소·명령 실행·다운로드 경로·업로드 저장·문자열 연결 SQL에 들어가는 값의 출처</li>
-     *   <li>사용자 범위(UserScopeFindings) — trace-rules.yml userScopeKeys가 쓰인 매퍼 SQL마다 그 값을 클라이언트가 정할 수 있는지.
-     *       Semgrep 탐지에 판정을 붙이는 게 아니라 판정에서 탐지를 만든다</li>
-     * </ul>
-     * Java 구문 분석은 한 번만 하고 모두 같은 색인을 쓴다. 추적은 부가 판정이라 실패해도 점검을 실패시키지 않는다 — 대신 Semgrep 등급을
-     * 그대로 두고(모르면 위험한 쪽), 그 사실을 화면 알림으로 올린다. "추적이 돌아서 안전해 보이는 것"과 "추적을 못 한 것"을 구분할 수 있어야 한다.
-     *
-     * <p>추적 전에 이 저장소의 프레임워크 장치·설정 파일로 추적 규칙을 확인한다(TraceRuleService.review) — 판정을 엄격하게 하는 변경은
-     * 바로 반영해 이번 추적부터 쓰고, 느슨하게 하는 변경은 확인 대기로 남긴다. 새 시스템은 사용자 범위 키가 설정에 없어도 초안이 후보를
-     * 찾아야 해서, 추적할 탐지가 없어도 소스는 읽는다.
+     * 탐지에 연계 추적 판정(MyBatis ${}·위험 호출 지점)을 붙여 등급을 다시 매기고, 사용자 범위·인증 판정에서 탐지를 만든다.
+     * 추적이 실패하면 Semgrep 등급을 그대로 두고(모르면 위험한 쪽) 화면에 알려 "안전해 보임"과 "추적 못 함"을 구분한다.
+     * 추적 전에 추적 규칙을 확인해 엄격한 변경은 바로 쓰고 느슨한 변경은 확인 대기로 둔다(초안을 위해 탐지가 없어도 소스는 읽는다).
      */
     private TraceOutcome traceFindings(App app, Path projectDir, List<DetectedFinding> detected, TraceRules traceRules,
                                       Map<String, TraceSink> sinks, SecureCodeSnippetBuilder snippetBuilder) {
@@ -312,7 +301,7 @@ public class SecureCodeScanService {
         } catch (Exception e) {
             log.warn("[{}] 연계 추적용 소스 읽기 실패 — Semgrep 등급 그대로 저장", app.getSystemName(), e);
             return new TraceOutcome(detected, "연계 추적에 실패해 탐지는 Semgrep 등급 그대로 두었고 사용자 범위(인가) 판정은 하지 못했습니다. "
-                    + "서버 로그를 확인하세요.", false, false, null);
+                    + "서버 로그를 확인하세요.", false, false, null, false);
         }
         List<String> notes = new ArrayList<>();
         TraceRuleService.Review review = traceRuleService.review(app, sources, java, traceRules);
@@ -379,9 +368,33 @@ public class SecureCodeScanService {
                 notes.add("위험 호출 지점(SSRF·명령 실행·파일 경로 등) 연계 추적에 실패해 그 탐지는 Semgrep 등급 그대로 두었습니다. 서버 로그를 확인하세요.");
             }
         }
+        boolean authJudged = false;
+        Set<String> authDevices = traceRules.authDevices(app.getSystemName());
+        if (authDevices.isEmpty()) {
+            notes.add("trace-rules.yml에 이 시스템의 인증 장치(systems." + app.getSystemName() + ".authDevices)가 없어 엔드포인트별 인증"
+                    + "(적절한 인증 없는 중요 기능) 판정을 하지 않았습니다. 추적 규칙 초안의 '인증 장치 추가'를 근거와 함께 확인하세요.");
+        } else {
+            // 판정에서 만드는 탐지(사용자 범위와 같은 방식) — 사람이 인정한 인증 장치가 적용되지 않는 요청 처리 메서드.
+            try {
+                AuthCoverage.Result auth = AuthCoverage.judge(sources, java, authDevices);
+                notes.addAll(auth.notes());
+                if (auth.judged()) {
+                    List<DetectedFinding> unprotected = AuthCoverage.findings(auth, snippetBuilder);
+                    findings = new ArrayList<>(findings);
+                    findings.addAll(unprotected);
+                    authJudged = true;
+                    log.info("[{}] 엔드포인트 인증 판정: 요청 처리 메서드 {}개 중 인증 장치 미적용 {}개", app.getSystemName(),
+                            auth.endpoints(), unprotected.size());
+                }
+            } catch (Exception e) {
+                log.warn("[{}] 엔드포인트 인증 판정 실패", app.getSystemName(), e);
+                notes.add("엔드포인트별 인증 판정에 실패했습니다. 서버 로그를 확인하세요.");
+            }
+        }
         String pendingNote = pendingRuleNote(app, sources, java, review, result);
         if (pendingNote != null) notes.add(pendingNote);
-        return new TraceOutcome(findings, notes.isEmpty() ? null : String.join("\n", notes), userScopeJudged, review.rulesChanged(), java);
+        return new TraceOutcome(findings, notes.isEmpty() ? null : String.join("\n", notes), userScopeJudged, review.rulesChanged(), java,
+                authJudged);
     }
 
     /**
@@ -492,10 +505,8 @@ public class SecureCodeScanService {
     }
 
     /**
-     * 이 앱에 판별 대기가 있으면 시큐어코딩 AI 배치만 띄운다(로그는 ai-securecode.log — CVE 단계는 돌리지 않는다). 점검한 앱의 대기만
-     * 판별한다 — 예전엔 전체 앱 대기를 한꺼번에 가져가 테스트 앱 수천 건까지 과금됐다. 한 번에 최대 ai.securecode.max-per-run건.
-     * 라이브러리 스캔과 같은 자동 실행 스위치(공통코드 AI_CONFIG/AUTO_TRIGGER)를 따른다 — 배치는 Claude API를 호출해 과금된다.
-     * 시큐어코딩 배치가 이미 떠 있으면 이 앱은 차례를 기다렸다가 그 배치가 끝난 뒤 이어서 돈다(triggerAsync).
+     * 이 앱에 판별 대기가 있으면 이 앱만 대상으로 시큐어코딩 AI 배치를 띄운다(다른 앱 대기까지 과금되지 않게).
+     * 과금되는 호출이라 자동 실행 스위치(공통코드 AI_CONFIG/AUTO_TRIGGER)를 따르고, 이미 떠 있으면 끝난 뒤 이어서 돈다.
      * 실패해도 점검 결과는 이미 저장됐으니 로그만 남긴다.
      */
     private void triggerAiReviewIfNeeded(App app) {

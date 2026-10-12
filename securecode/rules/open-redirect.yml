@@ -25,9 +25,8 @@ rules:
                   $RET $M(..., @RequestBody $T $P, ...) { ... }
           - pattern: $P
     pattern-sanitizers:
-      # 앞부분이 고정 호스트·경로인 연결은 요청값이 쿼리 문자열에만 들어가 다른 사이트로 보낼 수 없다
-      # (ext-api의 KAKAO_APP_GATEWAY + "/kakao/...?data=" + data가 5건 오탐이었다). 단 "/" + 값(→ //evil.com),
-      # 상수 + 값(→ https://gw.com@evil.com)은 호스트를 바꿀 수 있어 그대로 잡는다.
+      # 앞부분이 고정 호스트·경로인 연결은 요청값이 쿼리 문자열에만 들어가 다른 사이트로 보낼 수 없다.
+      # 단 "/" + 값(→ //evil.com), 상수 + 값(→ https://gw.com@evil.com)은 호스트를 바꿀 수 있어 그대로 잡는다.
       - patterns:
           - pattern: $PREFIX + $REST
           - metavariable-regex:

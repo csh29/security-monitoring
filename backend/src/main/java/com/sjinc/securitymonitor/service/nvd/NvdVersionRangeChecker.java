@@ -9,14 +9,9 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * NVD가 구조화된 형태로 내려주는 영향 버전 범위(cpeMatch)와 설치 버전을 직접 비교해서
- * 취약 여부를 계산한다. AI가 description 프로즈를 읽고 범위를 추측하게 하면, 설명 뒷부분에
- * 나오는 "Affected versions" 목록을 놓치거나(특히 설명이 축약될 때) 여러 브랜치가 나열된
- * 경우 일부를 빠뜨리는 실수가 실제로 있었다 — 이 계산은 그 자리를 대체하는 결정론적 판정이다.
- *
- * <p>AND 조합(다른 제품과 함께 쓰일 때만 취약한 조건부 케이스)은 다루지 않는다 — 이 시스템이
- * 다루는 CVE는 거의 다 "이 컴포넌트의 이 버전 범위면 취약"이라는 단일 조건이라, 모든
- * cpeMatch를 하나의 OR 조합으로 취급한다.
+ * NVD의 구조화된 영향 버전 범위(cpeMatch)와 설치 버전을 직접 비교해 취약 여부를 결정론적으로 계산한다.
+ * AI가 설명 문장에서 범위를 추측하면 일부 브랜치를 빠뜨리는 실수가 있어 그 자리를 대체한다.
+ * 다루는 CVE가 거의 단일 조건이라 AND 조합은 다루지 않고 모든 cpeMatch를 OR로 취급한다.
  */
 @Component
 public class NvdVersionRangeChecker {

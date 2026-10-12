@@ -1,18 +1,6 @@
-"""업그레이드 영향 분석(stage 4)의 근거 문서 수집. AI를 부르지 않는다.
-
-라이브러리 하나의 버전 범위(from → to)에 해당하는 릴리스 노트·마이그레이션 가이드를 모은다. 어디서 찾을지는
-세 경로를 차례로 본다.
-
-  1) 규칙 파일(release_note_sources.json) — groupId로 공식 문서 URL을 직접 지정한다. Spring Boot의 breaking
-     change는 GitHub Releases가 아니라 위키의 Release Notes·Migration Guide에 있어서, 자동 경로만으로는 가장
-     중요한 문서를 놓친다.
-  2) 1)에서 문서를 못 찾았을 때만: Maven Central POM의 <scm> → GitHub/GitLab Releases, 없으면 저장소의 CHANGELOG 파일
-     (1)을 찾았는데 패치 노트까지 더하면 버그 수정 목록이 근거 대부분을 차지해 비용만 커진다 — collect 주석 참고)
-  3) POM의 <issueManagement>가 JIRA면 해당 버전들에서 해결된 이슈 목록 — 앞 경로에서 아무것도 못 찾았을 때만.
-     "무엇이 깨지나"가 잘 드러나지 않는 근거라 자바가 신뢰도를 낮춘다(UpgradeImpactService.adjustConfidence).
-
-모델이 아는 지식으로 채우지 않기 위해, 여기서 못 찾으면 AI를 부르지 않고 "근거 없음"으로 끝낸다.
-일시 오류(GitHub 호출 한도, 네트워크)는 errors로 따로 올려서 "근거 없음"과 구분한다 — 전자는 다음 배치에서 다시 시도한다.
+"""업그레이드 영향 분석(stage 4)의 근거 문서 수집(AI 없음). 규칙 파일의 공식 문서 → POM <scm>의 Releases/CHANGELOG
+→ JIRA 해결 이슈 순으로, 앞에서 못 찾았을 때만 다음 경로를 본다. 못 찾으면 모델 지식으로 채우지 않게 "근거 없음"으로
+끝내고, 일시 오류는 errors로 따로 올려 다음 배치에서 다시 시도한다.
 """
 
 from __future__ import annotations
@@ -35,11 +23,9 @@ GITHUB_API = "https://api.github.com"
 TIMEOUT = 20
 USER_AGENT = "security-monitoring-impact-collector"
 
-# 한 업그레이드에 AI로 넘기는 근거의 총 글자 수 상한(대략 3~4만 토큰). 넘치면 오래된 문서부터 빼고 note에 남긴다 —
-# 잘린 줄 모르고 분석하면 "breaking change 없음"이 근거 부족 때문인지 알 수 없다.
+# 한 업그레이드에 AI로 넘기는 근거의 총 글자 수 상한. 넘치면 오래된 문서부터 빼고, 근거 부족을 알 수 있게 note에 남긴다.
 MAX_TOTAL_CHARS = 120_000
-# 문서 하나의 상한. 처음엔 4만 자였는데 Tomcat 10.0→10.1 changelog(범위만 잘라도 6만 자)가 잘리면서, 라인이 바뀌는
-# 업그레이드에서 가장 중요한 x.y.0 절(문서 맨 끝)이 빠졌다. 총량 상한 안에서 한 문서가 대부분을 써도 되게 둔다.
+# 문서 하나의 상한. 긴 changelog에서 중요한 x.y.0 절이 잘리지 않게 총량 안에서 한 문서가 대부분을 써도 되게 둔다.
 MAX_DOC_CHARS = 80_000
 # GitHub Releases는 한 페이지 100개. 오래된 릴리스를 찾아 너무 깊이 내려가지 않는다.
 MAX_RELEASE_PAGES = 3
@@ -93,8 +79,8 @@ def is_final(version: tuple[tuple[int, ...], str]) -> bool:
 
 def is_relevant_release(version: tuple[tuple[int, ...], str], from_version: tuple[int, ...],
                         to_version: tuple[int, ...]) -> bool:
-    """정식 버전이면 범위만 본다. 마일스톤·RC는 원칙적으로 빼지만, 라인이 바뀌는 업그레이드의 새 라인 x.y.0 사전 릴리스는
-    넣는다 — Tomcat 10.1처럼 breaking change가 10.1.0-M1~M17 노트에만 있고 10.1.0 정식 노트에는 없는 경우가 있다."""
+    """정식 버전이면 범위만 본다. 마일스톤·RC는 빼되, breaking change가 사전 릴리스 노트에만 있는 경우가 있어
+    라인이 바뀌는 업그레이드의 새 라인 x.y.0 사전 릴리스는 넣는다."""
     numbers = version[0]
     if is_final(version):
         return in_upgrade_range(numbers, from_version, to_version)
@@ -114,11 +100,8 @@ def line_of(numbers: tuple[int, ...]) -> tuple[int, int]:
 
 
 def in_upgrade_range(version: tuple[int, ...], from_version: tuple[int, ...], to_version: tuple[int, ...]) -> bool:
-    """from 초과 ~ to 이하이면서, 옛 라인의 뒤늦은 패치는 뺀다.
-
-    3.1.5 → 3.2.12로 올릴 때 3.1.6~3.1.12(옛 3.1 라인의 백포트 패치)는 이 업그레이드가 지나가는 길이 아니다 — 넣으면
-    같은 수정이 두 번 보이고 근거만 길어진다. 같은 라인 안의 업그레이드(패치)면 라인 조건 없이 범위만 본다.
-    """
+    """from 초과 ~ to 이하이면서, 옛 라인의 백포트 패치는 뺀다(같은 수정이 두 번 보이고 근거만 길어진다).
+    같은 라인 안의 업그레이드면 범위만 본다."""
     v, f, t = _pad(version), _pad(from_version), _pad(to_version)
     if not (f < v <= t):
         return False
@@ -148,11 +131,8 @@ def lines_between(from_version: tuple[int, ...], to_version: tuple[int, ...]) ->
 # ---------------------------------------------------------------------------
 
 class _HtmlToText(HTMLParser):
-    """HTML에서 본문 텍스트만. 제목 태그는 "# "를 붙여 slice_by_version_headings가 절 구분으로 쓸 수 있게 한다.
-
-    container_id를 주면 그 id를 가진 요소 안의 텍스트만 모은다. GitHub 위키 페이지는 1MB 가까운 HTML 대부분이
-    메뉴·사이드바라, 본문(#wiki-body)만 골라내지 않으면 근거 총량 상한을 메뉴 텍스트가 채운다.
-    """
+    """HTML에서 본문 텍스트만. 제목 태그는 "# "를 붙여 slice_by_version_headings가 절 구분으로 쓰게 한다.
+    container_id를 주면 메뉴 텍스트가 근거 상한을 채우지 않게 그 id를 가진 요소 안의 텍스트만 모은다."""
 
     _BLOCK = {"p", "div", "li", "tr", "br", "ul", "ol", "table", "section", "pre"}
     _HEADINGS = {"h1", "h2", "h3", "h4", "h5"}
@@ -217,11 +197,8 @@ _HEADING = re.compile(r"^\s*(#{1,6}\s|={1,6}\s|v?\d+\.\d+|[A-Za-z][\w .-]{0,40}\
 
 
 def slice_by_version_headings(text: str, from_version: tuple[int, ...], to_version: tuple[int, ...]) -> Optional[str]:
-    """CHANGELOG·changelog 페이지처럼 여러 버전이 한 문서에 있을 때, 범위 안 버전의 절만 이어 붙인다.
-
-    절 = 버전이 적힌 제목 줄부터 다음 제목 줄 전까지. 목록 항목("- Bump foo to 1.2.3")은 제목이 아니다. 오름차순·내림차순
-    문서 모두 같은 방식으로 처리된다. 범위 안 절이 하나도 없으면 None — 문서 전체를 넘기지 않는다(엉뚱한 버전이 근거가 된다).
-    """
+    """여러 버전이 한 문서에 있을 때 범위 안 버전의 절(버전 제목 줄부터 다음 제목 줄 전까지)만 이어 붙인다.
+    범위 안 절이 없으면 엉뚱한 버전이 근거가 되지 않게 문서 전체 대신 None을 낸다."""
     lines = text.splitlines()
     headings: list[tuple[int, tuple[tuple[int, ...], str]]] = []
     for index, line in enumerate(lines):
@@ -229,14 +206,12 @@ def slice_by_version_headings(text: str, from_version: tuple[int, ...], to_versi
         if len(stripped) > 150 or stripped.startswith(("-", "*", "+")) or not _HEADING.match(stripped):
             continue
         version = parse_version(stripped)
-        # 버전이 없는 제목("### Bug Fixes", Tomcat의 "Catalina")은 절 안의 소제목이라 경계로 삼지 않는다 — 경계로 삼으면
-        # 버전 절이 첫 소제목에서 끊겨 본문이 통째로 빠진다. 버전이 있는 제목은 모두 경계이고, 넣을지는 is_relevant_release가 정한다.
+        # 버전이 없는 제목("### Bug Fixes")은 절 안의 소제목이라 경계로 삼지 않는다(삼으면 본문이 첫 소제목에서 끊긴다).
         if version is None:
             continue
         headings.append((index, version))
 
-    # 새 라인의 x.y.0 절(마일스톤·RC 포함)을 앞에 둔다. 라인이 바뀌는 업그레이드의 breaking change는 거의 여기 있는데,
-    # 최신순 문서에서는 맨 끝이라 길이 상한(_cap)에 걸리면 먼저 잘려 나갔다. 나머지 패치 절은 문서 순서 그대로 뒤에 붙인다.
+    # breaking change가 모인 새 라인의 x.y.0 절을 앞에 둬 길이 상한(_cap)에 먼저 잘리지 않게 한다. 나머지는 문서 순서대로.
     line_start_sections, other_sections = [], []
     for position, (start, version) in enumerate(headings):
         if not is_relevant_release(version, from_version, to_version):
@@ -335,8 +310,7 @@ def _find_text(root: ET.Element, path: str) -> Optional[str]:
 
 
 def find_project_links(http: _Http, group_id: str, artifact_id: str, version: str) -> tuple[Optional[str], Optional[str]]:
-    """(scm URL, JIRA URL). 모듈 POM엔 대개 없고 부모 POM에서 물려받으므로, 없으면 <parent>를 따라 올라간다.
-    받은 원문 POM을 읽으므로(유효 POM이 아님) 부모의 값이 그대로 나온다 — Maven이 상속 시 붙이는 모듈 경로는 없다."""
+    """(scm URL, JIRA URL). 모듈 POM엔 대개 없고 부모에서 물려받으므로 없으면 <parent>를 따라 올라간다."""
     scm_url = jira_url = None
     coords: Optional[tuple[str, str, str]] = (group_id, artifact_id, version)
     for _ in range(MAX_PARENT_DEPTH + 1):
@@ -503,10 +477,8 @@ def collect(coordinate: str, from_version: str, to_version: str,
 
     attempt("규칙 파일", lambda: _collect_from_rules(http, coordinate, from_v, to_v, result) or False)
 
-    # 규칙 파일의 공식 문서(릴리스 노트·마이그레이션 가이드)를 찾았으면 저장소 릴리스 노트는 읽지 않는다. 실측(Spring Boot
-    # 3.1.5→3.2.12)에서 GitHub의 3.2.1~3.2.12 패치 노트 12건이 대부분 버그 수정 목록이었는데, 그게 근거 총량(12만 자)을 채워
-    # 입력 토큰의 3/4을 차지했다. breaking change는 공식 문서에 모여 있으므로 빼도 잃는 게 적다 — 대신 패치 노트의
-    # "Noteworthy"(동반 라이브러리 버전 변경 알림 등)는 못 보므로, 그 사실을 AI와 사람에게 메모로 알린다.
+    # 공식 문서를 찾았으면 버그 수정 목록이 대부분인 패치 노트가 근거 총량을 채우지 않게 저장소 릴리스 노트는 읽지 않고,
+    # 그 사실을 메모로 알린다.
     if result.documents:
         result.notes.append("공식 문서를 찾아 저장소의 개별 릴리스 노트(패치 노트)는 읽지 않음")
         _fit_budget(result)

@@ -10,14 +10,8 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * OSV의 구조화된 영향 버전 범위(affected[].ranges[].events[] - introduced/fixed/last_affected)로
- * 설치 버전이 실제 영향 범위 안에 있는지 판단한다.
- *
- * <p>NVD의 configurations가 없을 때(흔하다) description 프로즈를 다시 해석하는 대신 이걸 먼저
- * 쓴다. 실제로 겪은 문제: micrometer-core 1.12.6 / CVE-2026-40984에서 NVD 설명 프로즈만 보고
- * "1.10~1.12는 영향 범위 공백"이라고 잘못 판단했는데, OSV의 구조화 데이터엔 "introduced: 1.10.0,
- * last_affected: 1.13.15"라는 범위가 명시돼 있었다 — 이 CVE를 애초에 스캔이 잡아낸 근거이기도
- * 하다. 이미 스캔 때 받아온 OSV 상세 데이터를 그대로 쓰면 이런 프로즈 오독을 원천 차단한다.
+ * OSV의 구조화된 영향 버전 범위(introduced/fixed/last_affected)로 설치 버전이 영향 범위 안에 있는지 판단한다.
+ * NVD configurations가 없을 때 설명 문장을 해석하다 범위를 오독하지 않도록, 스캔 때 받은 OSV 데이터를 먼저 쓴다.
  */
 @Component
 public class OsvVersionRangeChecker {

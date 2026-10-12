@@ -1,18 +1,9 @@
 /**
- * 표 데이터 하나를 .xlsx 파일로 만들어 내려받게 하는 최소 구현(외부 라이브러리 없음). 그리드 우클릭
- * "엑셀 다운로드"(grid.js)가 쓴다. loading-overlay.html이 모든 화면에 싣는다.
+ * 표 데이터를 .xlsx로 만들어 내려받게 하는 최소 구현(외부 라이브러리 없음, zip은 zip-writer.js 사용).
+ * CSV는 엑셀이 버전 "1.10"을 숫자로 바꾸는 등 값을 추측 변환하므로, 모든 셀을 문자열(inlineStr)로 넣는다.
  *
- *   XlsxWriter.download('취약점 관리_20260929.xlsx', {
- *       sheetName: '취약점 관리',
- *       headers: ['CVE ID', 'Version'],
- *       widths: [120, 90],                  // 선택. 화면 px 폭 — 엑셀 열 너비로 대략 환산한다
- *       rows: [['CVE-2022-22965', '5.3.17'], ...]
- *   });
- *
- * CSV가 아니라 xlsx로 만드는 이유: CSV는 엑셀이 열 때 값을 추측 변환한다 — 버전 "1.10"이 숫자 1.1로,
- * "2024-01-01"이 날짜로 바뀐다. 버전 문자열이 핵심인 화면이라 모든 셀을 문자열(inlineStr)로 넣는다.
- *
- * xlsx는 XML 몇 개를 zip으로 묶은 것이라 공통 zip 작성기(zip-writer.js — loading-overlay.html이 이 파일보다 먼저 싣는다)로 묶는다.
+ * 사용법:
+ *   XlsxWriter.download('파일명.xlsx', { sheetName, headers: [...], widths: [px...](선택), rows: [[...], ...] });
  */
 (function (global) {
     const MAX_CELL_LENGTH = 32767; // 엑셀 셀 한 칸의 최대 글자 수

@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="/css/grid.css">
     <style>
         /* 화면 공통 뼈대·뱃지·모달·상세 표·코드 블록은 common-ui.css, .grid는 grid.css. 여기는 이 화면에서만 다른 값만.
-           그리드가 남는 높이를 채우는 배치는 취약점 관리 화면과 같다. */
+           그리드가 남는 높이를 채우는 배치는 취약점 점검 결과 화면과 같다. */
         .area-main{ overflow:hidden; }
         .grid-section{ flex:1; min-height:0; display:flex; flex-direction:column; gap:8px; }
         .grid-wrap{ flex:1; min-height:0; overflow-y:auto; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-box); }
@@ -16,8 +16,7 @@
         .grid td{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .grid .empty{ white-space:normal; }
 
-        /* 제목 옆 "총 N건" — 항목별 건수는 필요할 때만 본다. 예전엔 제목 아래 한 줄에 모든 항목을 나열해 항목이 많으면 여러 줄로 꺾여 난잡했다.
-           링크처럼 밑줄·손 모양 커서를 두고, 마우스를 올리거나(키보드로 초점이 가면) 아래로 항목별 건수 목록을 띄운다. */
+        /* 제목 옆 "총 N건" — 항목이 많으면 줄이 꺾이므로 항목별 건수는 마우스를 올리거나 초점이 갈 때만 목록으로 띄운다. */
         .count-anchor{ position:relative; display:inline-block; margin-left:8px; font-size:12px; font-weight:400; }
         .count-link{ color:var(--text); text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
         .count-link:hover, .count-link:focus{ color:var(--accent); outline:none; }
@@ -142,7 +141,7 @@
         const modalBackdrop = document.getElementById('findingModalBackdrop');
 
         // 조회해 온 시점의 처리여부·비고(id -> { status, remark }). 저장할 때 바뀐 행만 골라 보내는 기준이다
-        // — 행 데이터는 입력 셀의 현재 값으로 덮인다(Grid.getRows). 취약점 관리 화면과 같은 방식.
+        // — 행 데이터는 입력 셀의 현재 값으로 덮인다(Grid.getRows). 취약점 점검 결과 화면과 같은 방식.
         let loaded = {};
         let currentRow = null;
 
@@ -212,8 +211,8 @@
         const TRACE_BADGE = { CLIENT: 'high', BYPASSABLE: 'high', UNKNOWN: 'medium' };
 
         /**
-         * 판정 뱃지. withTarget이면 매퍼 판정의 대상 식을 붙인다("서버가 세팅 · ${loginBrndzCd}") — 상세 모달용. 한 줄에 ${}가 여럿이면 탐지도 여럿인데
-         * 위치·항목이 같아 어느 행이 어느 값의 판정인지 구분되지 않았다. 그리드 열은 판정만 보이고 대상 식은 마우스를 올리면(툴팁) 보인다.
+         * 판정 뱃지. withTarget이면 매퍼 판정의 대상 식을 붙인다("서버가 세팅 · ${name}", 상세 모달용) — 한 줄에 ${}가 여럿이면
+         * 위치·항목이 같아 어느 값의 판정인지 구분되지 않기 때문이다. 그리드 열은 판정만 보이고 대상 식은 툴팁으로 보인다.
          */
         function traceBadge(row, withTarget) {
             if (!row.traceSafety) return '';

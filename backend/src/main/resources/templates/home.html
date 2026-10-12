@@ -9,8 +9,7 @@
         /* 화면 공통 뼈대(:root, .app-shell 등)는 common-ui.css가 담당한다. 여기는 이 화면 전용
            위젯(KPI 카드, 막대 차트, 검색바)만 남긴다. */
 
-        /* 홈은 두 기능(라이브러리 취약점 / 시큐어코딩)을 좌우 카드로 나란히 둔다. 예전엔 같은 KPI 3칸 묶음을 위아래로
-           두 번 쌓아서 복사해 붙인 것처럼 보였고, 두 기능을 비교하려면 위아래를 오가야 했다. */
+        /* 홈은 두 기능(라이브러리 취약점 / 시큐어코딩)을 좌우 카드로 나란히 두어 한눈에 비교하게 한다. */
         #homePanel{ display:flex; flex-direction:column; gap:20px; }
 
         /* 자동 새로고침 — 카드 위 오른쪽에 작게. 갱신 실패는 경고색으로 시각과 함께 남긴다. */
@@ -106,7 +105,7 @@
                             <div class="domain-title">라이브러리 취약점</div>
                             <div class="domain-desc">의존성의 알려진 CVE (NVD·OSV)</div>
                         </div>
-                        <button type="button" class="domain-link" data-open-menu="vulnerability-mng">취약점 관리 ›</button>
+                        <button type="button" class="domain-link" data-open-menu="vulnerability-mng">취약점 점검 결과 ›</button>
                     </div>
                     <div class="domain-main" th:classappend="${totalOpenVulnerabilities == 0} ? 'is-zero'">
                         <span class="big" th:text="${totalOpenVulnerabilities}">0</span><span class="unit">건</span>
@@ -170,10 +169,8 @@
     });
 
     /**
-     * 자동 새로고침. 홈은 탭 셸이라(열린 메뉴가 이 안의 iframe 탭) 페이지를 다시 읽으면 열린 탭이 전부 닫힌다 — 그래서 서버가 그린
-     * 홈을 받아 카드 영역(.overview)만 바꿔 끼운다. 수치를 JS로 다시 그리지 않으므로 화면 모양은 Thymeleaf 한 곳에만 있다.
-     * 홈이 보일 때만 돈다(다른 탭을 보거나 브라우저 탭이 가려져 있으면 쉬고, 다시 보일 때 주기가 지났으면 바로 갱신).
-     * 켜고 끈 상태는 이 브라우저에만 기억한다.
+     * 자동 새로고침. 페이지를 다시 읽으면 열린 탭이 닫히므로 서버가 그린 홈을 받아 카드 영역(.overview)만 바꿔 끼운다.
+     * 홈이 보일 때만 돌고(다시 보일 때 주기가 지났으면 바로 갱신), 켜고 끈 상태는 이 브라우저에만 기억한다.
      */
     (function () {
         const INTERVAL_MS = 60 * 1000;

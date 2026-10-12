@@ -14,18 +14,9 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * 추적 규칙 초안(TraceRuleDrafter)을 지금 설정과 비교해 trace-rules.yml에 할 변경을 만들고, 바로 반영할 것과 사람에게 물을 것을 가른다.
- *
- * <p>가르는 기준은 "잘못 반영했을 때 무엇을 잃는가"다(TraceRuleChange.Type.automatic).
- * <ul>
- *   <li>바로 반영 — 판정을 엄격하게 하는 변경(코드에서 세션 값이 아닌 값을 넣는 것으로 확인된 키 빼기)과 판정에 쓰지 않는 기록(프레임워크 구조).
- *       틀려도 오탐이 늘 뿐 위험을 놓치지 않는다.</li>
- *   <li>확인 대기 — 판정을 느슨하게 하는 변경(새 장치·키·로그인 정보 이름). 틀리면 진짜 취약점이 조용히 LOW가 된다.
- *       사용자 범위 키 추가는 엄격한 쪽이지만 탐지가 한꺼번에 늘 수 있어 함께 묻는다.</li>
- * </ul>
- *
- * <p>규칙은 여러 시스템이 같이 쓴다. 다른 시스템에서 넣은 키를 이 저장소 코드에서 못 찾았다고 빼지 않는다 — 같은 어노테이션이라도
- * 시스템마다 넣는 키가 다를 수 있다. 빼는 것은 이 저장소 코드가 <b>세션 값이 아닌 값</b>을 넣는다고 확인된 키뿐이다.
+ * 추적 규칙 초안을 지금 설정과 비교해 변경을 만들고, "잘못 반영했을 때 무엇을 잃는가"로 바로 반영할 것과 물을 것을 가른다.
+ * 엄격하게 하는 변경·구조 기록은 틀려도 오탐만 늘어 바로 반영하고, 느슨하게 하는 변경과 탐지가 크게 늘 수 있는 범위 키는 묻는다.
+ * 규칙은 여러 시스템이 같이 쓰므로, 이 저장소 코드가 세션 값이 아닌 값을 넣는다고 확인된 키만 뺀다.
  */
 public final class TraceRuleChangePlanner {
 
@@ -94,6 +85,11 @@ public final class TraceRuleChangePlanner {
         for (Evidenced e : draft.scopeKeys()) {
             if (!effective.userScopeKeys().contains(e.value())) {
                 put(changes, single(Type.ADD_SCOPE_KEY, system, e));
+            }
+        }
+        for (Evidenced e : draft.authDevices()) {
+            if (!current.authDevices(system).contains(e.value())) {
+                put(changes, single(Type.ADD_AUTH_DEVICE, system, e));
             }
         }
         List<TraceRules.FrameworkFact> recorded = current.frameworks().getOrDefault(system, List.of());

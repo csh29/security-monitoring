@@ -18,11 +18,8 @@ import java.security.Principal;
 import java.util.List;
 
 /**
- * 사용자 관리 화면(조회/저장/삭제 버튼)과, 사용자별 권한관리 화면의 사용자 select가 호출하는
- * REST API. 목록 조회는 두 화면이 같이 쓰므로 둘 중 하나의 권한만 있어도 되지만, 계정을
- * 추가/수정(비밀번호·역할 변경 포함)/삭제하는 건 "user-mng" 권한이 있어야 한다 —
- * 그렇지 않으면 임의 계정의 비밀번호/역할을 바꿀 수 있는(POST에 id 지정) 심각한 권한 상승
- * 경로가 된다.
+ * 사용자 관리·사용자별 권한관리 화면이 호출하는 REST API. 목록 조회는 두 화면 중 하나의 권한이면 되지만,
+ * 추가/수정/삭제는 "user-mng" 권한이 필요하다 — 아니면 임의 계정의 비밀번호·역할을 바꾸는 권한 상승 경로가 된다.
  */
 @RestController
 @RequiredArgsConstructor
@@ -33,14 +30,20 @@ public class UserController {
 
     @GetMapping
     @RequiresProgram({"user-mng", "user-permission-mng"})
-    public List<UserResponse> getUsers() {
-        return userService.getAllUsers();
+    public List<UserResponse> getUsers(Principal principal) {
+        return userService.getAllUsers(principal.getName());
+    }
+
+    @GetMapping("/assignable-roles")
+    @RequiresProgram("user-mng")
+    public List<String> getAssignableRoles(Principal principal) {
+        return userService.getAssignableRoles(principal.getName());
     }
 
     @PostMapping
     @RequiresProgram("user-mng")
-    public UserResponse saveUser(@RequestBody UserRequest request) {
-        return userService.saveUser(request);
+    public UserResponse saveUser(@RequestBody UserRequest request, Principal principal) {
+        return userService.saveUser(request, principal.getName());
     }
 
     /**

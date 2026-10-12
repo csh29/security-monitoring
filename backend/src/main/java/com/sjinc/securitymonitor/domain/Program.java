@@ -9,7 +9,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
-/** 사이드바 고정 메뉴(홈/취약점 관리/취약점 조회/리포트) 외에, 권한을 가진 사용자에게만 노출되는 추가 프로그램(메뉴). */
+/** 사이드바 메뉴(홈 제외) 하나. 권한을 가진 사용자에게만 보이고, menuGroup으로 사이드바 그룹이 정해진다. */
 @Entity
 @Table(name = "programs")
 @Getter
@@ -36,6 +36,23 @@ public class Program {
     /** 사용여부. "Y" 또는 "N". */
     @Column(name = "use_yn", nullable = false)
     private String useYn;
+
+    /** 사이드바 그룹(공통코드 MENU_GROUP — LIB·SECURE·MNG). 비어 있으면 관리 그룹이다. */
+    @Column(name = "menu_group", length = 20)
+    private String menuGroup;
+
+    /** 사이드바를 접었을 때 보이는 아이콘(문자 하나). 비어 있으면 아이콘 없이 이름만. */
+    @Column(name = "icon", length = 10)
+    private String icon;
+
+    public static final String GROUP_LIB = "LIB";
+    public static final String GROUP_SECURE = "SECURE";
+    public static final String GROUP_MNG = "MNG";
+
+    /** 사이드바에서 들어갈 그룹. 그룹을 안 정한 프로그램은 관리 그룹이다. */
+    public String sidebarGroup() {
+        return menuGroup == null || menuGroup.isBlank() ? GROUP_MNG : menuGroup;
+    }
 
     // ── 화면 공통 버튼 사용 여부("Y"/"N"). 기타1~5는 이름을 넣으면 그 이름으로 버튼이 생긴다. ──
     @Builder.Default

@@ -13,11 +13,8 @@ import java.util.Set;
 import java.util.TreeSet;
 
 /**
- * Semgrep {@code --json} 결과를 해석한다. Spring 없이 테스트할 수 있게 순수 클래스로 둔다.
- *
- * <p>무료판 Semgrep은 결과의 코드 줄({@code extra.lines})과 지문({@code extra.fingerprint})에 실제 값 대신
- * {@code "requires login"}을 넣는다(1.178.0에서 확인). 그래서 여기서는 위치만 받고, 코드 조각과 지문은
- * SecureCodeSnippetBuilder가 clone한 파일을 직접 읽어 만든다.
+ * Semgrep {@code --json} 결과를 해석한다(Spring 없이 테스트하려고 순수 클래스). 무료판은 코드 줄·지문 대신
+ * {@code "requires login"}을 넣으므로 위치만 받고, 조각과 지문은 SecureCodeSnippetBuilder가 파일을 직접 읽어 만든다.
  */
 @Slf4j
 public class SemgrepReportParser {
@@ -80,7 +77,7 @@ public class SemgrepReportParser {
         return normalized.startsWith("./") ? normalized.substring(2) : normalized;
     }
 
-    /** 공통코드 SEVERITY 값으로 바꾼다 — 화면의 심각도 뱃지·조회조건을 취약점 관리와 같이 쓰기 위함. */
+    /** 공통코드 SEVERITY 값으로 바꾼다 — 화면의 심각도 뱃지·조회조건을 취약점 점검 결과와 같이 쓰기 위함. */
     static String severity(String semgrepSeverity) {
         if (semgrepSeverity == null) return null;
         return switch (semgrepSeverity) {

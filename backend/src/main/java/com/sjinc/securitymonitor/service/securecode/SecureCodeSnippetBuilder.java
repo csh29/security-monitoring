@@ -44,8 +44,8 @@ public class SecureCodeSnippetBuilder {
     static final int CONTEXT_LINES = 5;
 
     /**
-     * 화면용 조각의 최대 줄 수. 조각은 걸린 줄을 감싼 메서드(매퍼 XML이면 구문)를 통째로 보여준다 — 앞뒤 5줄로는 요청값을 받는 줄과 SQL을 실행하는 줄이
-     * 같은 메서드 안에 있어도 잘려, 연계 추적 근거가 가리키는 줄을 화면에서 볼 수 없었다. 긴 메서드는 이 길이만큼 걸린 줄 주변만.
+     * 화면용 조각의 최대 줄 수. 조각은 연계 추적 근거가 가리키는 줄까지 보이게 감싼 메서드(매퍼 XML이면 구문)를 통째로 보여주고,
+     * 긴 메서드는 이 길이만큼 걸린 줄 주변만 보여준다.
      */
     static final int SNIPPET_MAX_LINES = 80;
 
@@ -148,15 +148,9 @@ public class SecureCodeSnippetBuilder {
     }
 
     /**
-     * AI 판별에 탐지 메서드와 함께 보낼 다른 메서드들(2026-10-08). 메서드 하나만 보낼 때 AI가 값이 정해지는 다른 파일을 추측으로 채워 틀렸다
-     * (OWASP Benchmark — 이름은 요청값 같지만 상수를 돌려주는 헬퍼를 "요청 파라미터"로 보고 확신도 high로 취약 판별). 순서대로:
-     * <ol>
-     *   <li>연계 추적 경로의 걸음이 있는 메서드(값이 지나온 컨트롤러·서비스)</li>
-     *   <li>탐지 메서드가 부르는 우리 메서드(한 단계 — 값을 만드는 헬퍼)</li>
-     * </ol>
-     * <b>.java 메서드만</b> 보낸다 — properties·yml·xml 설정은 보내지 않는다. 비밀번호·키·토큰을 문자열로 대입하는 메서드는 통째로 뺀다
-     * (가려서 보내는 대신 아예 안 보낸다 — 키 값을 담은 코드는 판별 근거로도 필요 없다). 보내기 직전 SecretMasker로 한 번 더 가린다.
-     * 메서드당 RELATED_MAX_LINES 줄, 모두 합쳐 RELATED_MAX_ITEMS개·RELATED_MAX_TOTAL_LINES 줄까지.
+     * AI 판별에 탐지 메서드와 함께 보낼 다른 메서드들 — 값이 정해지는 코드를 AI가 추측으로 채워 틀리지 않게 한다.
+     * 연계 추적 걸음의 메서드, 그 줄에서 부르는 메서드, 탐지 메서드가 부르는 메서드 순으로 .java만 상한(RELATED_MAX_*)까지 보낸다.
+     * 비밀값을 문자열로 대입하는 메서드는 판별에 필요 없으니 통째로 뺀다.
      *
      * @param pathsByFileName 파일 이름 → 저장소 기준 경로들(연계 추적 근거는 파일 이름만 적는다)
      */
@@ -168,6 +162,8 @@ public class SecureCodeSnippetBuilder {
         Map<String, AiRelatedCode> related = new LinkedHashMap<>();
         int[] total = {0};
 
+        // 걸음 줄에서 부르는 우리 메서드도 보낸다 — 추적이 들어가지 못하고 멈춘 곳(반환값·객체 필드로 값을 넘기는 서비스)이다.
+        List<String[]> stepLines = new ArrayList<>();
         if (finding.traceEvidence() != null) {
             for (String step : finding.traceEvidence().split("\n")) {
                 Matcher m = STEP_LOCATION.matcher(step);
@@ -180,25 +176,42 @@ public class SecureCodeSnippetBuilder {
                 if (range == null) continue;
                 addRelated(related, total, path, lines, range, mainOverlap(finding, path, range, mainFrom, mainTo),
                         "연계 추적 경로: " + step.strip());
+                stepLines.add(new String[]{path, m.group(2), m.group(1) + ":" + m.group(2)});
             }
         }
         if (java != null) {
+            for (String[] step : stepLines) {
+                int line = Integer.parseInt(step[1]);
+                Optional<CallableDeclaration<?>> method = java.callableAt(step[0], line);
+                if (method.isEmpty()) continue;
+                List<MethodCallExpr> calls = method.get().findAll(MethodCallExpr.class).stream()
+                        .filter(c -> c.getRange().map(r -> r.begin.line == line).orElse(false)).toList();
+                addCallees(related, total, java, calls, method.get(), finding, mainFrom, mainTo, "연계 추적 경로 " + step[2] + "에서 부르는 ");
+            }
             Optional<CallableDeclaration<?>> method = java.callableAt(finding.filePath(), finding.startLine());
             if (method.isPresent()) {
-                for (MethodCallExpr call : method.get().findAll(MethodCallExpr.class)) {
-                    for (MethodDeclaration callee : java.resolve(call)) {
-                        String path = java.pathOf(callee);
-                        if (path == null || callee.getRange().isEmpty() || callee == method.get()) continue;
-                        int[] range = {callee.getRange().get().begin.line, callee.getRange().get().end.line};
-                        String owner = callee.findAncestor(TypeDeclaration.class)
-                                .map(t -> ((TypeDeclaration<?>) t).getNameAsString()).orElse("?");
-                        addRelated(related, total, path, readLines(path), range, mainOverlap(finding, path, range, mainFrom, mainTo),
-                                "탐지 메서드가 부르는 " + owner + "." + callee.getNameAsString() + "()");
-                    }
-                }
+                addCallees(related, total, java, method.get().findAll(MethodCallExpr.class), method.get(), finding, mainFrom, mainTo,
+                        "탐지 메서드가 부르는 ");
             }
         }
         return new ArrayList<>(related.values());
+    }
+
+    /** 호출들이 가리키는 우리 메서드 본문(인터페이스 호출이면 구현 클래스의 것)을 관련 코드로 넣는다. 부르는 메서드 자신은 뺀다. */
+    private void addCallees(Map<String, AiRelatedCode> related, int[] total, JavaSourceIndex java, List<MethodCallExpr> calls,
+                            CallableDeclaration<?> caller, DetectedFinding finding, int mainFrom, int mainTo, String reasonPrefix)
+            throws IOException {
+        for (MethodCallExpr call : calls) {
+            for (MethodDeclaration callee : java.resolve(call)) {
+                String path = java.pathOf(callee);
+                if (path == null || callee.getRange().isEmpty() || callee == caller) continue;
+                int[] range = {callee.getRange().get().begin.line, callee.getRange().get().end.line};
+                String owner = callee.findAncestor(TypeDeclaration.class)
+                        .map(t -> ((TypeDeclaration<?>) t).getNameAsString()).orElse("?");
+                addRelated(related, total, path, readLines(path), range, mainOverlap(finding, path, range, mainFrom, mainTo),
+                        reasonPrefix + owner + "." + callee.getNameAsString() + "()");
+            }
+        }
     }
 
     private static boolean mainOverlap(DetectedFinding finding, String path, int[] range, int mainFrom, int mainTo) {
@@ -222,10 +235,10 @@ public class SecureCodeSnippetBuilder {
     }
 
     /**
-     * 연계 추적 근거의 걸음마다 그 줄 주변 코드(점검 때만 만들 수 있다 — clone은 점검이 끝나면 지운다). 근거와 같은 순서로, 파일·줄이 없는 걸음
-     * ("파라미터 없이 실행" 등)이나 파일을 하나로 정하지 못한 걸음은 null. 코드가 붙은 걸음이 하나도 없으면 null.
+     * 연계 추적 근거의 걸음마다 그 줄 주변 코드(clone이 지워지기 전에만 만들 수 있다). 근거와 같은 순서로, 파일·줄이 없거나
+     * 파일을 하나로 정하지 못한 걸음은 null이며, 코드가 붙은 걸음이 없으면 null.
      *
-     * @param pathsByFileName 파일 이름 → 저장소 기준 경로들. 근거는 파일 이름만 적으므로(화면에서 읽기 좋게) 여기서 경로로 되돌린다.
+     * @param pathsByFileName 파일 이름 → 저장소 기준 경로들(근거는 파일 이름만 적는다)
      */
     public List<TraceStepCode> traceCode(DetectedFinding finding, Map<String, List<String>> pathsByFileName) throws IOException {
         if (finding.traceEvidence() == null || finding.traceEvidence().isBlank()) return null;

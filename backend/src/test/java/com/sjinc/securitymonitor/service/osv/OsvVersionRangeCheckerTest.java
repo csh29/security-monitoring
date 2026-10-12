@@ -15,10 +15,8 @@ class OsvVersionRangeCheckerTest {
     private final OsvVersionRangeChecker checker = new OsvVersionRangeChecker();
 
     /**
-     * 실제로 겪은 케이스를 그대로 재현한다: micrometer-core 1.12.6 / CVE-2026-40984를 NVD
-     * description 프로즈("1.9.x", "1.13.x" 등)만 보고 "1.10~1.12는 공백"이라 잘못 판단했는데,
-     * OSV의 구조화 데이터(GHSA-g3pr-3p32-fp23)엔 introduced:1.10.0, last_affected:1.13.15
-     * 라는 범위가 명시돼 있어 1.12.6이 실제로 그 안에 포함된다.
+     * NVD description 문장만 보면 공백으로 오판하는 버전도, OSV 구조화 범위
+     * (introduced~last_affected)로 보면 영향 범위 안에 든다.
      */
     @Test
     void 실제_micrometer_사례_설치버전이_lastAffected_범위_안이면_취약으로_판정한다() throws Exception {

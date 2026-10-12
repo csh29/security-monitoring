@@ -16,12 +16,8 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 /**
- * 스캔 1회의 실행 기록. ScanSnapshot은 fix-plan용으로 앱당 최신 하나만 덮어쓰기 때문에 "언제 돌았고 무엇이
- * 바뀌었나"가 남지 않는다 — 그 이력을 여기 쌓는다.
- *
- * <p>앱을 {@code @ManyToOne}으로 참조하지 않고 appId와 시스템명·저장소·브랜치를 값으로 복사해 둔다.
- * FK로 묶으면 이력이 한 건이라도 생긴 앱은 앱 관리에서 삭제할 수 없게 되고, 반대로 앱을 지우면서 이력까지
- * 지우면 "그 앱을 언제까지 스캔했나"라는 기록이 사라진다. 이력은 그 시점의 사실이라 앱과 수명을 분리한다.
+ * 스캔 1회의 실행 기록(ScanSnapshot은 앱당 최신 하나만 덮어써서 이력이 남지 않는다).
+ * 앱은 FK가 아니라 값으로 복사해 둔다 — FK면 앱을 못 지우고, 함께 지우면 이력이 사라지므로 수명을 분리한다.
  */
 @Entity
 @Table(name = "scan_histories", indexes = @Index(name = "ix_scan_histories_started_at", columnList = "started_at"))

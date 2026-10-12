@@ -17,18 +17,9 @@ import java.util.regex.Pattern;
 import com.sjinc.securitymonitor.service.securecode.trace.JavaSourceIndex;
 
 /**
- * 점검 대상 저장소의 설정 파일(빌드 파일·web.xml·Spring XML·application.yml/properties·MyBatis/iBatis 설정)과 Java 소스를 읽어
- * 프레임워크 구조(웹·영속성·AOP·인터셉터·필터·세션 저장소)를 근거와 함께 정리한다. 결정론이고 소스는 서버 밖으로 나가지 않는다.
- *
- * <p>두 가지에 쓴다.
- * <ul>
- *   <li><b>구조 기록</b>({@link #profile}) — trace-rules.yml의 frameworks에 시스템별로 남긴다. 판정에는 쓰지 않는다. 사람이 추적 규칙 초안
- *       ("이 어노테이션이 세션 값을 넣는다")을 받아들일지 판단할 때 그 시스템이 어떤 방식으로 요청을 받고 로그인 정보를 다루는지 보는 근거다.</li>
- *   <li><b>XML로 설정한 AOP</b>({@link #xmlAdvices}) — {@code <aop:config>}의 before·around 어드바이스. 어노테이션({@code @Aspect})으로 쓴 AOP만
- *       보던 TraceRuleDrafter가 이것도 세션 덮어쓰기 후보로 만든다(옛 Spring XML 시스템은 대부분 이 방식이다).</li>
- * </ul>
- *
- * <p>설정 값은 기록하지 않는다 — 비밀번호·접속 주소가 섞여 있어서, 정해 둔 키(세션 저장소 종류 등)만 값을 읽고 나머지는 키 이름까지만 본다.
+ * 저장소의 설정 파일과 Java 소스를 읽어 프레임워크 구조(웹·영속성·AOP·인터셉터·필터·세션)를 근거와 함께 정리한다(결정론, 소스는 밖으로 안 나간다).
+ * 구조 기록({@link #profile})은 판정이 아니라 사람이 추적 규칙 초안을 검토할 근거이고, XML AOP({@link #xmlAdvices})는 세션 덮어쓰기 후보가 된다.
+ * 설정 값에는 비밀번호·접속 주소가 섞여 있어 정해 둔 키만 값을 읽고 나머지는 키 이름까지만 본다.
  */
 public final class FrameworkProfiler {
 
@@ -322,7 +313,7 @@ public final class FrameworkProfiler {
         return path.substring(path.lastIndexOf('/') + 1);
     }
 
-    /** "Crc020Service.java:102" → "Crc020Service.java". */
+    /** "UserService.java:102" → "UserService.java". */
     private static String fileOf(String location) {
         return location.replaceFirst(":\\d+$", "");
     }

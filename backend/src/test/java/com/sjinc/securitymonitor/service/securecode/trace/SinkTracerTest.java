@@ -275,7 +275,7 @@ class SinkTracerTest {
 
     /**
      * OWASP Benchmark 함정 모양 — 이름은 요청값 같지만 상수를 돌려주는 헬퍼(getTheValue)를 문자열 메서드(getBytes)로 바꿔 SQL에 붙이고,
-     * 명령은 this.getClass().getClassLoader()로 찾은 클래스패스 파일. 예전엔 getBytes()·getClassLoader()를 "외부 메서드"로 보고 판정 불가였다.
+     * 명령은 this.getClass().getClassLoader()로 찾은 클래스패스 파일. 이런 메서드도 판정 불가로 두지 않고 출처를 따라간다.
      */
     @Test
     void 문자열_메서드와_JVM_클래스_정보도_출처를_따라간다() {
@@ -317,7 +317,7 @@ class SinkTracerTest {
                 .containsExactly(TraceSafety.SERVER_SET, TraceSafety.CLIENT, TraceSafety.SERVER_SET);
     }
 
-    /** OWASP Benchmark cmdi(BenchmarkTest00007) 모양 — 명령은 상수 배열, 환경 변수 배열에 요청 헤더. 예전엔 배열 초기화를 몰라 판정 불가였다. */
+    /** OWASP Benchmark cmdi(BenchmarkTest00007) 모양 — 명령은 상수 배열, 환경 변수 배열에 요청 헤더 — 배열 초기화의 원소를 따라가 판정한다. */
     @Test
     void 배열로_넘긴_명령_인자도_원소의_출처로_판정한다() {
         String servlet = """

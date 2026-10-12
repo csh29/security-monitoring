@@ -131,7 +131,7 @@ class SecureCodeSnippetBuilderTest {
 
     /**
      * AI 관련 코드 — 탐지 메서드가 부르는 헬퍼와 연계 추적 경로의 메서드를 .java만 같이 보낸다. 비밀값을 문자열로 대입하는 메서드와
-     * 설정 파일은 보내지 않는다(이름은 요청값 같지만 상수를 돌려주는 헬퍼를 AI가 못 봐서 틀렸다 — OWASP Benchmark).
+     * 설정 파일은 보내지 않는다(헬퍼 본문을 봐야 이름과 달리 상수를 돌려주는지 판단할 수 있다).
      */
     @Test
     void AI_관련_코드는_부르는_헬퍼와_추적_경로_메서드를_java만_보낸다() throws Exception {
@@ -198,6 +198,63 @@ class SecureCodeSnippetBuilderTest {
         assertThat(related.get(1).startLine()).isEqualTo(3);
         assertThat(related.get(1).reason()).contains("Helper.getTheValue()");
         assertThat(related).noneMatch(r -> r.code().contains("sk-live") || r.code().contains("hunter2"));
+    }
+
+    /** 서비스가 객체 필드에 요청값 경로를 넣어 돌려주면 추적이 멈춘다 — 멈춘 줄에서 부르는 서비스 구현 본문을 함께 보낸다. */
+    @Test
+    void AI_관련_코드에_추적이_멈춘_줄에서_부르는_서비스_본문을_넣는다() throws Exception {
+        Map<String, String> sources = new java.util.LinkedHashMap<>();
+        sources.put("src/main/java/p/Ctl.java", """
+                package p;
+                public class Ctl {
+                    private FileService fileService;
+                    public void upload(Object file, java.util.Map<String, Object> param) {
+                        FileVo info = fileService.saveFileOne(file, param.get("path").toString());
+                        new FileUtil().toTxt(info);
+                    }
+                }
+                """);
+        sources.put("src/main/java/p/FileService.java", """
+                package p;
+                public interface FileService {
+                    FileVo saveFileOne(Object file, String path);
+                }
+                """);
+        sources.put("src/main/java/p/FileServiceImpl.java", """
+                package p;
+                public class FileServiceImpl implements FileService {
+                    public FileVo saveFileOne(Object file, String path) {
+                        FileVo vo = new FileVo();
+                        vo.setFilePath("/upload/" + path);
+                        return vo;
+                    }
+                }
+                """);
+        sources.put("src/main/java/p/FileUtil.java", """
+                package p;
+                public class FileUtil {
+                    public void toTxt(FileVo info) {
+                        java.io.File f = new java.io.File(info.getFilePath() + "a.txt");
+                    }
+                }
+                """);
+        for (Map.Entry<String, String> e : sources.entrySet()) {
+            Path file = dir.resolve(e.getKey());
+            Files.createDirectories(file.getParent());
+            Files.writeString(file, e.getValue(), StandardCharsets.UTF_8);
+        }
+        SecureCodeSnippetBuilder builder = new SecureCodeSnippetBuilder(dir);
+        DetectedFinding f = builder.withAiContext(builder.build(List.of(match("kisa-path-traversal-dynamic-path", "src/main/java/p/FileUtil.java", 4, 4))).get(0))
+                .withTrace("MEDIUM", "UNKNOWN", "Ctl.java:5 fileService.saveFileOne(file, param.get(\"path\").toString()) 반환값을 모름\nFileUtil.java:4 new File(...)");
+
+        List<com.sjinc.securitymonitor.dto.securecode.AiRelatedCode> related = builder.aiRelatedCode(f,
+                com.sjinc.securitymonitor.service.securecode.trace.JavaSourceIndex.fromSources(sources),
+                Map.of("Ctl.java", List.of("src/main/java/p/Ctl.java"), "FileUtil.java", List.of("src/main/java/p/FileUtil.java")));
+
+        assertThat(related).extracting(com.sjinc.securitymonitor.dto.securecode.AiRelatedCode::path)
+                .containsExactly("src/main/java/p/Ctl.java", "src/main/java/p/FileServiceImpl.java");
+        assertThat(related.get(1).code()).contains("vo.setFilePath(\"/upload/\" + path);");
+        assertThat(related.get(1).reason()).contains("Ctl.java:5에서 부르는 FileServiceImpl.saveFileOne()");
     }
 
     private DetectedFinding withAiContext(String content, SemgrepMatch m) throws Exception {

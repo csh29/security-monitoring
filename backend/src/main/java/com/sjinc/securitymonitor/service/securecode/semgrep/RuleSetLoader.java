@@ -21,11 +21,8 @@ import com.sjinc.securitymonitor.exception.SecureCodeScanException;
 import com.sjinc.securitymonitor.service.securecode.trace.TraceSink;
 
 /**
- * 규칙 폴더(securecode/rules)의 규칙 id 목록과 규칙셋 버전을 읽는다. Semgrep 결과 JSON에는 "어떤 규칙을 돌렸는지"가 없어서
- * 직접 읽는다.
- *
- * <p>규칙 id 목록은 재점검 비교에 쓴다 — 규칙 파일에서 지운 규칙의 기존 탐지가 "이번에 안 걸림 = 조치완료"로 집계되면 안 된다.
- * 실행 지점 규칙이 연계 추적에 맡기는 값(metadata.trace — TraceSink)도 여기서 모은다.
+ * 규칙 폴더의 규칙 id 목록·규칙셋 버전·연계 추적 대상(metadata.trace)을 읽는다(Semgrep 결과에는 돌린 규칙이 없다).
+ * 규칙 id 목록은 지운 규칙의 탐지가 재점검에서 조치완료로 집계되지 않게 하는 데 쓴다.
  */
 public class RuleSetLoader {
 
@@ -38,9 +35,7 @@ public class RuleSetLoader {
     }
 
     /**
-     * @param extraContents 규칙셋 버전 해시에 함께 넣을 내용. 연계 추적 규칙(trace-rules.yml의 판정에 쓰는 부분 —
-     *                      TraceRulesFileEditor.judgmentPart)이 바뀌면 같은 코드도 판정이 달라지므로, 점검 이력의 규칙셋 버전으로
-     *                      "판정이 왜 바뀌었는지"를 추적할 수 있게 넣는다.
+     * @param extraContents 버전 해시에 함께 넣을 내용(판정이 바뀐 이유를 이력에서 찾게 추적 규칙의 판정 부분을 넣는다)
      */
     public RuleSet load(Path rulesDir, List<String> extraContents) throws IOException {
         if (!Files.isDirectory(rulesDir)) {

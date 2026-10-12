@@ -168,5 +168,18 @@ class SameOriginTest(unittest.TestCase):
         self.assertIn("B.java:88", prompt)
 
 
+class SystemContextTest(unittest.TestCase):
+
+    def test_시스템_구조를_프롬프트에_싣고_없으면_구역도_없다(self):
+        target = scr.SecureCodeReviewTarget.from_json({
+            "id": 1, "inputHash": "h1", "code": "x", "codeStartLine": 1, "startLine": 1, "filePath": "A.java",
+            "systemContext": ["인터셉터: TokenInterceptor — WebConfig.java addInterceptor(TokenInterceptor)"]})
+        prompt = scr.SecureCodeReviewerClient._build_prompt(target)
+        self.assertIn("[시스템 구조]\n- 인터셉터: TokenInterceptor", prompt)
+
+        bare = scr.SecureCodeReviewTarget.from_json({"id": 2, "inputHash": "h2", "code": "x", "startLine": 1})
+        self.assertNotIn("[시스템 구조]", scr.SecureCodeReviewerClient._build_prompt(bare))
+
+
 if __name__ == "__main__":
     unittest.main()

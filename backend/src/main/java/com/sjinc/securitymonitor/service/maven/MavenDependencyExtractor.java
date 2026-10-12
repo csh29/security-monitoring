@@ -84,10 +84,8 @@ public class MavenDependencyExtractor {
     }
 
     /**
-     * dependency:tree를 프로젝트당 딱 한 번만 실행해서, "groupId:artifactId" → 이를 끌고 들어온
-     * 최상위(depth 1) 직접 의존성의 "groupId:artifactId" 매핑과, fix-plan 배치가 참고할 원문 텍스트를 함께 반환한다.
-     * CVE 건수만큼 매번 mvn 프로세스를 새로 띄우지 않도록 한 번만 실행한다.
-     * 직접 의존성 자신은 스스로를 가리킨다. 실패하면 빈 결과를 반환한다(스캔 자체를 실패시키지 않음).
+     * dependency:tree를 프로젝트당 한 번만 실행해(CVE마다 mvn을 띄우지 않게) 좌표 → 이를 끌고 온 최상위 직접 의존성 매핑과 원문을 반환한다.
+     * 직접 의존성은 스스로를 가리키고, 실패하면 빈 결과다(스캔을 실패시키지 않는다).
      */
     public DependencyTreeResult buildTopLevelCauseMap(File projectDir, String mavenHome) {
         Path outputFile = null;
@@ -152,11 +150,8 @@ public class MavenDependencyExtractor {
     }
 
     /**
-     * dependency:tree 원문에서 targetCoordinates(groupId:artifactId) 각각의 "최상위 직접 의존성부터
-     * 자기 자신까지" 조상 체인을 구해서 돌려준다. fix-plan reasoning의 "경로:" 줄은 이 값을 그대로
-     * 인용하기만 하면 된다 — AI가 dependency:tree 텍스트를 눈으로 다시 훑어 경로를 재구성하다가
-     * 이름이 비슷한 형제 노드(예: spring-security-config vs spring-security-web)를 혼동하는 실수를
-     * 구조적으로 없애기 위한 용도다. 체인 크기가 1이면(자기 자신뿐) 최상위 직접 의존성이라는 뜻이다.
+     * dependency:tree 원문에서 각 대상 좌표의 "최상위 직접 의존성부터 자기 자신까지" 조상 체인을 구한다(크기 1이면 직접 의존성).
+     * AI가 트리를 다시 읽다 이름이 비슷한 형제 노드를 혼동하지 않게, fix-plan의 "경로:" 줄은 이 값을 그대로 인용한다.
      */
     public Map<String, List<String>> resolveChains(String rawText, Set<String> targetCoordinates) {
         Map<String, List<String>> result = new HashMap<>();
