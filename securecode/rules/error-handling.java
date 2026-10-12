@@ -6,6 +6,7 @@ class ErrorHandlingTest {
 
     @GetMapping("/a")
     public ResponseEntity<?> a() {
+        // ruleid: kisa-error-broad-catch
         try {
             return ResponseEntity.ok(load());
         } catch (Exception e) {
@@ -51,6 +52,40 @@ class ErrorHandlingTest {
         }
     }
 
+    void broad() {
+        // ruleid: kisa-error-broad-catch
+        try {
+            load();
+        } catch (Exception e) {
+            log(e);
+        }
+
+        // ruleid: kisa-error-broad-catch
+        try {
+            load();
+        } catch (java.lang.Throwable t) {
+            log(t);
+        }
+
+        // ok: kisa-error-broad-catch
+        try {
+            load();
+        } catch (Exception e) {
+            log(e);
+            throw new IllegalStateException(e);
+        }
+
+        // ok: kisa-error-broad-catch
+        try {
+            load();
+        } catch (IllegalArgumentException e) {
+            log(e);
+        }
+    }
+
+    private void log(Throwable t) {
+    }
+
     private String load() {
         return "x";
     }
@@ -58,6 +93,7 @@ class ErrorHandlingTest {
 
 class NotController {
     String message(Exception e) {
+        // ruleid: kisa-error-broad-catch
         try {
             return "x";
         } catch (Exception ex) {

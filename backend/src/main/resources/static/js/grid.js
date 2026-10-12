@@ -53,6 +53,7 @@
  *                      배선을 없애는 용도라, 이 화면은 /js/com-cd.js를 같이 불러와야 한다.
  *       - 'row-select': 그리드 상단 "삭제" 버튼이 쓰는 행 선택 체크박스 — 값을 저장하지 않고
  *                      change 시 tr에 'selected' 클래스만 토글한다. col.id는 필요 없다.
+ *                      헤더에는 전체 선택/해제 체크박스가 자동으로 붙는다(일부만 고르면 indeterminate).
  *     만들어진 엘리먼트는 col.id가 있으면 tr._fields[col.id]에 저장돼, 기존처럼 저장 로직에서
  *     tr._fields.xxx.value(또는 .checked)로 읽으면 된다. col.disabled(value,row)로 비활성화,
  *     col.readOnly(value,row)로 읽기전용(자연키처럼 값은 보여주되 수정은 막을 때 — disabled는
@@ -274,6 +275,9 @@
             }
             applyColumnStyle(th, col, true);
             th.textContent = col.label || '';
+            if (col.type === 'row-select') {
+                th.insertBefore(createSelectAll(thead), th.firstChild);
+            }
             th.draggable = true;
             tr.appendChild(th);
         });
@@ -293,6 +297,51 @@
             clearAndAppendMessage(tbody, columns.length, options.initialMessage || DEFAULT_INITIAL_MESSAGE);
         }
         scheduleFitScrollHeights();
+    }
+
+    // ── 행 선택 전체 체크/해제 ─────────────────────────────────────────────
+
+    /**
+     * row-select 헤더의 전체 선택 체크박스. 누르면 전체 행(가상 스크롤로 떼어 둔 행 포함)의 선택을 맞추고,
+     * 행을 하나씩 고르면 syncSelectAll이 전체·일부(indeterminate)·없음으로 따라간다. 비활성 체크박스 행은 건드리지 않는다.
+     */
+    function createSelectAll(thead) {
+        const chk = document.createElement('input');
+        chk.type = 'checkbox';
+        chk.className = 'grid-select-all';
+        chk.title = '전체 선택/해제';
+        chk.addEventListener('change', function () {
+            const table = thead.closest('table');
+            const tbody = table && table.tBodies[0];
+            if (!tbody) {
+                return;
+            }
+            dataRows(tbody).forEach(function (tr) {
+                const field = tr._selectField;
+                if (field && !field.disabled) {
+                    field.checked = chk.checked;
+                    tr.classList.toggle('selected', chk.checked);
+                }
+            });
+            syncSelectAll(tbody);
+        });
+        return chk;
+    }
+
+    /** 헤더 전체 선택 체크박스를 행 선택 상태에 맞춘다 — 다시 조회·행 추가·삭제·행 하나 선택 뒤에 부른다. */
+    function syncSelectAll(tbody) {
+        const table = tbody && tbody.closest('table');
+        const chk = table && table.tHead ? table.tHead.querySelector('input.grid-select-all') : null;
+        if (!chk) {
+            return;
+        }
+        const fields = dataRows(tbody)
+            .map(function (tr) { return tr._selectField; })
+            .filter(function (field) { return field && !field.disabled; });
+        const checked = fields.filter(function (field) { return field.checked; }).length;
+        chk.checked = fields.length > 0 && checked === fields.length;
+        chk.indeterminate = checked > 0 && checked < fields.length;
+        chk.disabled = fields.length === 0;
     }
 
     // ── 헤더 드래그로 컬럼 순서 바꾸기 ─────────────────────────────────────
@@ -494,6 +543,7 @@
         } else {
             tbody.insertBefore(tr, tbody.firstChild);
         }
+        syncSelectAll(tbody);
 
         const target = options.focus
             ? (tr._fields || {})[options.focus]
@@ -522,9 +572,10 @@
         if (tbody._gridAllRows) {
             tbody._gridAllRows = tbody._gridAllRows.filter(function (tr) { return targets.indexOf(tr) < 0; });
             windowRows(tbody, true);
-            return;
+        } else {
+            targets.forEach(function (tr) { tr.remove(); });
         }
-        targets.forEach(function (tr) { tr.remove(); });
+        syncSelectAll(tbody);
     }
 
     /**
@@ -655,8 +706,10 @@
                     field.readOnly = typeof col.readOnly === 'function' ? !!col.readOnly(value, row) : !!col.readOnly;
                 }
                 if (col.type === 'row-select') {
+                    tr._selectField = field; // 헤더 전체 선택이 쓴다
                     field.addEventListener('change', function () {
                         tr.classList.toggle('selected', field.checked);
+                        syncSelectAll(tr._gridTbody || tr.parentElement);
                     });
                     if (col.stopPropagation) {
                         field.addEventListener('click', function (e) { e.stopPropagation(); });
@@ -1047,6 +1100,7 @@
 
             if (!rows || rows.length === 0) {
                 clearAndAppendMessage(tbody, columns.length, options.emptyMessage || '조회된 데이터가 없습니다.');
+                syncSelectAll(tbody);
                 return;
             }
 
@@ -1057,11 +1111,12 @@
             });
             if (options.virtual && trs.length >= VIRTUAL_MIN_ROWS) {
                 startVirtual(tbody, trs);
-                return;
+            } else {
+                const fragment = document.createDocumentFragment();
+                trs.forEach(function (tr) { fragment.appendChild(tr); });
+                tbody.appendChild(fragment);
             }
-            const fragment = document.createDocumentFragment();
-            trs.forEach(function (tr) { fragment.appendChild(tr); });
-            tbody.appendChild(fragment);
+            syncSelectAll(tbody); // 다시 조회하면 선택이 풀리므로 헤더도 푼다
         }
 
         // col.optionsQuery가 붙은 select 컬럼은 그리는 것보다 먼저 공통코드에서 옵션을 받아와야

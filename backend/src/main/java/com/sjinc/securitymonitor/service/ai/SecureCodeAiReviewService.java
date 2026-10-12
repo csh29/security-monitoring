@@ -1,15 +1,12 @@
 package com.sjinc.securitymonitor.service.ai;
 
-import com.sjinc.securitymonitor.domain.App;
 import com.sjinc.securitymonitor.domain.SecureCodeFinding;
-import com.sjinc.securitymonitor.domain.SeverityOrder;
 import com.sjinc.securitymonitor.dto.ai.SameOriginMember;
 import com.sjinc.securitymonitor.dto.ai.SameOriginRef;
 import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewFailure;
 import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewRequest;
 import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewTarget;
 import com.sjinc.securitymonitor.dto.securecode.AiRelatedCode;
-import com.sjinc.securitymonitor.repository.AppRepository;
 import com.sjinc.securitymonitor.repository.SecureCodeFindingRepository;
 import com.sjinc.securitymonitor.service.securecode.SameOrigin;
 import com.sjinc.securitymonitor.service.securecode.SecureCodeSnippetBuilder;
@@ -27,7 +24,6 @@ import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -79,7 +75,6 @@ public class SecureCodeAiReviewService {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final SecureCodeFindingRepository findingRepository;
-    private final AppRepository appRepository;
 
     /** AI 판별 대상 등급(쉼표 구분). 코드 점검 등급은 HIGH/MEDIUM/LOW다(공통코드 SC_SEVERITY). */
     @Value("#{'${ai.securecode.severities:HIGH,MEDIUM}'.split(',')}")
@@ -161,15 +156,10 @@ public class SecureCodeAiReviewService {
         return candidates(appId).map(this::pending).anyMatch(Objects::nonNull);
     }
 
-    /** 대기 판단 전 후보 — OPEN·대상·코드 문맥 있음, 높은 등급부터. */
+    /** 대기 판단 전 후보 — OPEN·지워지지 않은 앱·코드 문맥 있음·높은 등급부터는 쿼리가, 판별 대상(설정값) 조건은 여기서. */
     private Stream<SecureCodeFinding> candidates(Long appId) {
-        Set<Long> appIds = appRepository.findAll().stream().map(App::getId).collect(Collectors.toSet());
-        return findingRepository.findByStatus(SecureCodeFinding.OPEN).stream()
-                .filter(f -> appIds.contains(f.getAppId()) && (appId == null || appId.equals(f.getAppId())))
-                .filter(f -> isTarget(f.getRuleId(), f.getSeverity(), f.getTraceSafety()))
-                .filter(f -> f.getAiContext() != null && !f.getAiContext().isBlank())
-                .sorted(Comparator.comparing(SecureCodeFinding::getSeverity, SeverityOrder.HIGH_FIRST)
-                        .thenComparing(SecureCodeFinding::getId, Comparator.nullsLast(Comparator.naturalOrder())));
+        return findingRepository.findAiReviewCandidates(appId).stream()
+                .filter(f -> isTarget(f.getRuleId(), f.getSeverity(), f.getTraceSafety()));
     }
 
     private record Pending(SecureCodeFinding finding, SecureCodeReviewTarget target) {

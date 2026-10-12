@@ -45,7 +45,7 @@ class OsvFixVersionResolverTest {
         Resolution resolution = new OsvFixVersionResolver(osvClient).resolve("com.example", "lib", "2.0.0");
 
         assertThat(resolution.finalVersion()).isEqualTo("2.0.0");
-        assertThat(resolution.isClean()).isTrue();
+        assertThat(resolution.status()).isEqualTo(Status.CLEAN);
         assertThat(resolution.chain()).containsExactly("2.0.0");
     }
 

@@ -43,8 +43,6 @@ import com.sjinc.securitymonitor.service.securecode.trace.JavaSourceIndex.FieldD
 import com.sjinc.securitymonitor.service.securecode.trace.JavaSourceIndex.LocalDecl;
 import com.sjinc.securitymonitor.service.securecode.trace.JavaSourceIndex.ParamDecl;
 
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -56,7 +54,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.stream.Stream;
 import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
 import com.sjinc.securitymonitor.service.securecode.tracerule.TraceRules;
 

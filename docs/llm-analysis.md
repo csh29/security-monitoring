@@ -364,7 +364,15 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
   탐지도 여럿인데 위치·항목이 같아 어느 행이 어느 값의 판정인지 구분되지 않았다. `SecureCodeFindingView.traceTarget`이 근거 마지막 줄에서 꺼낸다)과 모달의 근거 경로 목록(코드가 붙은 걸음은 밑줄 — 누르면 그 줄 앞뒤 3줄을 펼친다), "AI 판별" 열(취약 (AI) 빨강·확인 필요 (AI) 노랑·
   오탐 의심 (AI) 회색·판별 대기 파랑, 대상이 아니면 빈칸)과 모달의 신뢰도·이유·"참고 의견" 안내).
   APP·처리여부는 서버에서, 심각도(여러 값 고르기 — HIGH+MEDIUM처럼)·CWE·파일은 받은 목록을 화면에서 거른다(`search.matches`, 2026-10-08 항목 조건은 뺐다 — 항목별 건수는 "총 N건" 팝업으로 본다). CWE는 번호로 정확히 비교한다("89"·"CWE-89" 모두, 쉼표로 여러 개 — 부분 일치면 89가 CWE-189까지 걸린다). 모달을 열 때 `/findings/{id}/code`로 조각·근거 코드를 받아, 조각은 높이 420px로 묶고 걸린 줄이 보이게 스크롤한다. 코드 조각은 전부 textContent로 그린다.
-- **규칙(45개 / 22개 파일, 행안부 7개 분류 중 시간 및 상태를 뺀 6개 — 2026-10-07 인가 후보 규칙 1개 폐기, iBatis `$값$` 규칙 1개 추가):** 2026-10-02에 아래 기존 규칙에 더해 추가한 것 —
+- **규칙(51개 / 26개 파일, 행안부 7개 분류 중 시간 및 상태를 뺀 6개 — 2026-10-07 인가 후보 규칙 1개 폐기, iBatis `$값$` 규칙 1개 추가,
+  2026-10-08 경로 조작 실행 지점 규칙 `kisa-path-traversal-dynamic-path` 1개 추가, 2026-10-12 가이드 항목 5개 추가):** 가이드(2021) 구현 단계 49개 항목 중
+  36개를 다룬다(Semgrep 규칙 51개 + 연계 추적이 만드는 인가 탐지 2개 — 빠진 항목과 이유는 아래 "패턴으로 확정할 수 없는 항목").
+  **2026-10-12 추가(5개):** 포맷 스트링 삽입(요청값 → `String.format`·`printf`·`MessageFormat`의 형식 자리 taint, ERROR, CWE-134 — `format-string.yml`.
+  첫 인자가 Locale이면 두 번째를 형식으로 본다), 중요한 자원에 대한 잘못된 권한 설정(`setWritable/Readable/Executable(true, false)`, `OTHERS_WRITE`,
+  other 쓰기가 있는 `PosixFilePermissions.fromString`, WARNING, CWE-732 — `permission.yml`), 쿠키를 통한 정보 노출(서블릿 `Cookie.setMaxAge`가 0·-1이
+  아닌 영속 쿠키, WARNING, CWE-539 — `cookie.yml`. "아이디 저장"처럼 중요정보가 아닌 쿠키는 오탐 처리), 무결성 검사 없는 코드 다운로드(`URLClassLoader`
+  생성, WARNING, CWE-494 — `code-download.yml`), 부적절한 예외 처리(`Exception`·`Throwable`을 통째로 잡아 처리 — 다시 던지는 것·빈 catch 제외, INFO(LOW),
+  CWE-396 — `error-handling.yml`의 `kisa-error-broad-catch`). **실측(KGC_CHN 업로드 소스):** 앞 넷 0건, 부적절한 예외 처리 233건(LOW — AI 판별 대상 아님). 2026-10-02에 아래 기존 규칙에 더해 추가한 것 —
   입력데이터 검증: 경로 조작(요청값→파일 경로 taint ERROR, 다운로드 응답 안의 변수 경로 WARNING — `path-traversal.yml`), XXE(외부 개체를 막는 설정 없이
   만든 XML 파서 WARNING — `xxe.yml`), 오픈 리다이렉트(`open-redirect.yml`), LDAP 삽입·XML(XPath) 삽입·코드 삽입(ScriptEngine·SpEL·`Class.forName`)·
   HTTP 응답분할(`injection.yml`, 앞 셋 ERROR·응답분할 WARNING). **모든 taint 규칙**(기존 명령어 삽입·SSRF·`xss-java` 포함)의 출처에
@@ -396,7 +404,8 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
   하드코드된 중요정보(Java, 설정 파일 — `${}` 참조와 Jasypt `ENC(...)`는 제외, 복호화 키 `jasypt.encryptor.password`는 잡음), 취약한 암호, 부적절한 난수.
   규칙 메타데이터에 행안부 분류·항목명·CWE. 행안부 항목 **번호**는 원문 확인 전이라 넣지 않았다.
   taint 규칙은 무료판 Semgrep 한계로 **한 메서드 안에서만** 흐름을 본다 — 다른 메서드를 거친 입력은 WARNING 규칙(위험 호출 지점)으로만 잡힌다.
-  **인증/인가(`authz.yml`, 4개):** 권한을 요청 값으로 판단(`param.get("isAdmin")`, `getParameter("role")` 등 — ERROR, CWE-807),
+  **인증/인가(`authz.yml`, 4개):** 권한을 요청 값으로 판단(`param.get("isAdmin")`, `getParameter("role")` 등 — ERROR, CWE-807. 가이드 분류는
+  입력데이터 검증 및 표현이다 — 2026-10-12 보안기능으로 잘못 적힌 것을 바로잡았고, 재점검하면 기존 탐지의 분류도 바뀐다),
   Spring Security 전체 허용(`anyRequest().permitAll()`)·CSRF 끔·특정 계정명 하드코딩 비교(WARNING). 규칙에 특정 시스템의 어노테이션·클래스 이름을 넣지 않는다.
   사용자 범위(회사·브랜드·사용자) 조건의 값을 클라이언트가 정할 수 있는지는 패턴이 아니라 연계 추적이 판정한다(6-1-b, `kisa-authz-client-user-scope`).
 - **실측(2026-10-01, CRM_BACK, 인증/인가 규칙 추가 후 22개):** 탐지 104건(+18) — 권한 요청 값 판단 3(`Crc020Service`의 `isAdmin`, 결재 분기),
@@ -611,7 +620,9 @@ OPEN만)에서도 빠진다.
 
 **목록 순서:** 취약점이 나오는 화면은 심각도 높은 것부터다(공통 비교기 `domain/SeverityOrder.HIGH_FIRST` — 문자열 정렬이면 LOW가 MEDIUM보다
 앞에 온다, 모르는 값·빈 값은 맨 뒤). 취약점 관리는 서버가(`VulnerabilityService.SCREEN_ORDER`) 심각도 → CVSS 점수 높은 순(없으면 뒤) → 시스템명 → CVE ID로,
-코드 점검 결과는 `SecureCodeFindingService.getFindings`가 심각도로 안정 정렬해 같은 등급 안에서는 앱·파일·줄 순서를 유지한다. 화면 JS는 순서를 바꾸지 않는다.
+코드 점검 결과와 AI 판별 대기열은 쿼리가 정렬한다(`SecureCodeFindingRepository.SEVERITY_HIGH_FIRST` — `case upper(severity)`, 같은 등급
+안에서 화면은 앱·파일·줄, 대기열은 id 순). 지워진 앱 제외도 같은 쿼리가 한다(2026-10-12 — 예전엔 서비스가 전부 읽어 자바로 거르고 정렬했다).
+등급 순서가 자바(`SeverityOrder`)와 쿼리 두 곳에 있으니 등급을 바꾸면 둘 다 고친다. 화면 JS는 순서를 바꾸지 않는다.
 
 앱(`App`)에는 담당자 이름·이메일(`managerName`, `managerEmail`)이 있다. 로그인 계정(`User`)에는 이메일이 없고 담당자가
 계정 없는 개발자일 수 있어 User를 참조하지 않는다. 이메일은 저장할 때 `AppService`가 느슨한 형식 검사만 한다(틀리면 400).
@@ -734,8 +745,10 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `SecureCodeSnippetBuilderTest` — 지문(줄 밀림·들여쓰기 무관, 코드가 바뀌면 다름, 같은 코드 두 번은 순번), 조각(감싼 메서드·80줄 자름, 매퍼 XML은 감싼 구문, 못 찾으면 앞뒤 5줄), 연계 추적 근거 코드(걸음별 앞뒤 3줄, 동명 파일 고르기), 비밀값 가림, MS949 폴백, 저장소 밖 경로 차단,
   AI 판별 문맥(감싼 메서드 전체, 긴 메서드는 걸린 줄 가운데로 80줄·끝이면 당김, 자바가 아니면 앞뒤 15줄·비밀값 가림),
   AI 관련 코드(부르는 헬퍼·추적 경로 메서드, .java만, 키 대입 메서드·설정 파일·탐지 메서드 자신 제외)
-- `SecureCodeAiReviewServiceTest` — AI 판별 대상(HIGH·MEDIUM, 클라이언트 값 확정 HIGH 포함·안전 확정 제외, 판정 불가는 등급 무관, 비밀값 규칙 제외·남은 판별 숨김), 관련 코드(비밀값 가림·입력 해시 반영), 판별 저장(요약·근거·예상 공격·조치 방법, 취약인데 공격·조치가 없으면 거절), 대기열(지워진 앱·판별 완료 제외), 코드가 바뀌면 옛 판별 숨김·재대기,
+- `SecureCodeAiReviewServiceTest` — AI 판별 대상(HIGH·MEDIUM, 클라이언트 값 확정 HIGH 포함·안전 확정 제외, 판정 불가는 등급 무관, 비밀값 규칙 제외·남은 판별 숨김), 관련 코드(비밀값 가림·입력 해시 반영), 판별 저장(요약·근거·예상 공격·조치 방법, 취약인데 공격·조치가 없으면 거절), 대기열(대상 아님·판별 완료 제외), 코드가 바뀌면 옛 판별 숨김·재대기,
   줄 번호만 밀리면 재판별 안 함, 문맥 없으면 조각·비밀값 가림, 판별 값 검증, 처리여부는 그대로
+- `SecureCodeFindingRepositoryTest` — 메모리 H2로 실제 쿼리: 화면 조회·AI 대기열 후보의 지워진 앱 제외, 심각도 정렬(대소문자 무시·모르는 값 맨 뒤),
+  앱·처리여부 조건, 대기열의 OPEN·코드 문맥 있음 조건
 - `SecureCodeReconcilerTest` — 재점검 비교(신규·유지·해결, 분석 실패 파일·빠진 규칙은 해결 안 함, 수동 상태 유지, 재발견 시 OPEN)
 - `RuleSetLoaderTest` — 규칙 id·규칙셋 버전, 규칙 0개·폴더 없음은 실패, 실제 규칙 폴더 읽기
 - `MybatisDollarTracerTest` — `${}` 연계 추적(상수·삼항·모든 분기 상수 반환은 서버 세팅, else 없는 조건부 세팅은 클라이언트 값, XML 상수 비교·bind,

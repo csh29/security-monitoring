@@ -121,7 +121,7 @@ py -m pip install -r ../securecode/requirements.txt
 
 - 그리드가 필요하면 → `Grid.renderHeader` / `Grid.render`. `tr`/`td`를 직접 만들지 않는다.
 - 그리드 값을 읽을 때는 → `Grid.getRows(tbody)` / `Grid.getRow(tbody, rowIndex)`. `tr._fields.xxx.value`나 `tr.dataset.id`를 직접 읽지 않는다. 신규 행 여부는 `row._isNew`, 삭제 선택은 `row._selected`, 저장 전 신규 행 삭제는 `Grid.removeRows`, "신규" 버튼은 `Grid.addRow(tbody)`(안내 행 제거·맨 위 삽입·첫 입력칸 포커스까지 한다).
-- 입력 셀이 필요하면 → 컬럼의 `type`(`text`/`number`/`select`/`checkbox`/`row-select`).
+- 입력 셀이 필요하면 → 컬럼의 `type`(`text`/`number`/`select`/`checkbox`/`row-select`). `row-select` 헤더의 전체 선택/해제는 Grid가 붙인다 — 화면에서 따로 만들지 않는다.
   화면마다 `createInput()` 류 함수를 다시 만들지 않는다.
 - select 옵션이 필요하면 → `ComCd.fillSelect(el, 'GROUP')`. 코드값을 HTML에 하드코딩하지 않는다.
 - 버튼/패널/색상이 필요하면 → `common-ui.css`의 클래스와 `:root` 변수. 화면 `<style>`에는

@@ -5,7 +5,6 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sjinc.securitymonitor.domain.App;
 import com.sjinc.securitymonitor.domain.SecureCodeFinding;
-import com.sjinc.securitymonitor.domain.SeverityOrder;
 import com.sjinc.securitymonitor.dto.securecode.DetectedFinding;
 import com.sjinc.securitymonitor.dto.securecode.SecureCodeDashboard;
 import com.sjinc.securitymonitor.dto.securecode.SecureCodeStatusCount;
@@ -25,7 +24,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -84,11 +82,8 @@ public class SecureCodeFindingService {
     public List<SecureCodeFindingView> getFindings(Long appId, String status) {
         Map<Long, String> systemNames = appRepository.findAll().stream()
                 .collect(Collectors.toMap(App::getId, App::getSystemName));
-        // 심각도 높은 것부터. 같은 등급 안에서는 쿼리 순서(앱·파일·줄)를 그대로 둔다 — sorted는 안정 정렬이다.
-        List<SecureCodeFinding> findings = findingRepository.search(appId, status).stream()
-                .filter(finding -> systemNames.containsKey(finding.getAppId()))
-                .sorted(Comparator.comparing(SecureCodeFinding::getSeverity, SeverityOrder.HIGH_FIRST))
-                .toList();
+        // 지워진 앱 제외·심각도 정렬은 쿼리가 한다.
+        List<SecureCodeFinding> findings = findingRepository.search(appId, status);
         // 같은 출처 묶음 — 조회된 목록 안에서만(처리여부 조건으로 빠진 건은 묶지 않는다).
         Map<String, List<Long>> idsByOrigin = new HashMap<>();
         findings.forEach(f -> {

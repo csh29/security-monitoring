@@ -1,6 +1,5 @@
 package com.sjinc.securitymonitor.service.ai;
 
-import com.sjinc.securitymonitor.domain.App;
 import com.sjinc.securitymonitor.domain.SecureCodeFinding;
 import com.sjinc.securitymonitor.dto.ai.SameOriginMember;
 import com.sjinc.securitymonitor.dto.ai.SameOriginRef;
@@ -8,7 +7,6 @@ import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewFailure;
 import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewRequest;
 import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewTarget;
 import com.sjinc.securitymonitor.dto.securecode.DetectedFinding;
-import com.sjinc.securitymonitor.repository.AppRepository;
 import com.sjinc.securitymonitor.repository.SecureCodeFindingRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -20,6 +18,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -28,19 +27,16 @@ class SecureCodeAiReviewServiceTest {
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 6, 12, 0);
 
     private SecureCodeFindingRepository findingRepository;
-    private AppRepository appRepository;
     private SecureCodeAiReviewService service;
 
     @BeforeEach
     void setUp() {
         findingRepository = mock(SecureCodeFindingRepository.class);
-        appRepository = mock(AppRepository.class);
-        service = new SecureCodeAiReviewService(findingRepository, appRepository);
+        service = new SecureCodeAiReviewService(findingRepository);
         ReflectionTestUtils.setField(service, "severities", List.of("HIGH", "MEDIUM"));
         ReflectionTestUtils.setField(service, "extraRules", List.of("kisa-insecure-random", "kisa-xxe-parser"));
         ReflectionTestUtils.setField(service, "maxFailures", 3);
         ReflectionTestUtils.setField(service, "maxPerRun", 200);
-        when(appRepository.findAll()).thenReturn(List.of(App.builder().id(1L).systemName("CRM").build()));
     }
 
     private static final String RULE = "kisa-os-command-exec";
@@ -62,18 +58,6 @@ class SecureCodeAiReviewServiceTest {
         assertThat(service.isTarget("kisa-xxe-parser", "MEDIUM", null)).isTrue();
         // 추가 규칙이 아닌 LOW는 대상 아님
         assertThat(service.isTarget("kisa-empty-catch", "LOW", null)).isFalse();
-    }
-
-    @Test
-    void 코드_문맥이_없는_탐지는_다음_점검까지_기다린다() {
-        SecureCodeFinding withContext = finding(1L, new DetectedFinding("a", "kisa-insecure-random", "보안기능", "난수", "CWE-330",
-                "MEDIUM", "A.java", 5, 5, "메시지", "snippet", 1, null, null, "ctx", 3));
-        SecureCodeFinding noContext = finding(1L, new DetectedFinding("b", "kisa-insecure-random", "보안기능", "난수", "CWE-330",
-                "MEDIUM", "B.java", 5, 5, "메시지", "snippet", 1, null, null, null, null));
-        when(findingRepository.findByStatus("OPEN")).thenReturn(List.of(withContext, noContext));
-
-        // 조각(5줄)으로 한 번, 문맥이 생긴 뒤 또 한 번 판별(과금)하지 않게
-        assertThat(service.getPendingTargets()).extracting(SecureCodeReviewTarget::filePath).containsExactly("A.java");
     }
 
     @Test
@@ -112,22 +96,21 @@ class SecureCodeAiReviewServiceTest {
         SecureCodeFinding f = finding(1L, new DetectedFinding("s", "kisa-hardcoded-secret-config", "보안기능", "하드코드된 중요정보",
                 "CWE-798", "HIGH", "app.properties", 3, 3, "메시지", "db.password=****", 3, null, null, null, null));
         f.applyAiReview("VULNERABLE", "high", "이유", SecureCodeAiReviewService.toTarget(f).inputHash(), NOW);
-        when(findingRepository.findByStatus("OPEN")).thenReturn(List.of(f));
+        when(findingRepository.findAiReviewCandidates(any())).thenReturn(List.of(f));
 
         assertThat(SecureCodeAiReviewService.isReviewCurrent(f)).isFalse();
         assertThat(service.getPendingTargets()).isEmpty();
     }
 
     @Test
-    void 대기열은_OPEN_대상_중_지워진_앱과_판별을_마친_건을_뺀다() {
+    void 대기열은_후보_중_대상이_아니거나_판별을_마친_건을_뺀다() {
+        // OPEN·지워진 앱·코드 문맥 조건은 쿼리가 한다(SecureCodeFindingRepositoryTest).
         SecureCodeFinding target = finding(1L, detected("a", "HIGH", null, "ctx-a"));
         SecureCodeFinding traced = finding(1L, detected("b", "HIGH", "CLIENT", "ctx-b"));
         SecureCodeFinding serverSet = finding(1L, detected("f", "LOW", "SERVER_SET", "ctx-f"));
-        SecureCodeFinding noContext = finding(1L, detected("c", "MEDIUM", null, null));
-        SecureCodeFinding deletedApp = finding(9L, detected("d", "HIGH", null, "ctx-d"));
         SecureCodeFinding reviewed = finding(1L, detected("e", "HIGH", null, "ctx-e"));
         reviewed.applyAiReview("NOT_VULNERABLE", "high", "이유", SecureCodeAiReviewService.toTarget(reviewed).inputHash(), NOW);
-        when(findingRepository.findByStatus("OPEN")).thenReturn(List.of(target, traced, serverSet, noContext, deletedApp, reviewed));
+        when(findingRepository.findAiReviewCandidates(any())).thenReturn(List.of(target, traced, serverSet, reviewed));
 
         List<SecureCodeReviewTarget> pending = service.getPendingTargets();
 
@@ -144,7 +127,7 @@ class SecureCodeAiReviewServiceTest {
         assertThat(SecureCodeAiReviewService.isReviewCurrent(f)).isTrue();
 
         f.redetect(detected("a", "HIGH", null, "new code"), NOW);
-        when(findingRepository.findByStatus("OPEN")).thenReturn(List.of(f));
+        when(findingRepository.findAiReviewCandidates(any())).thenReturn(List.of(f));
 
         assertThat(SecureCodeAiReviewService.isReviewCurrent(f)).isFalse();
         assertThat(service.getPendingTargets()).hasSize(1);
@@ -196,13 +179,14 @@ class SecureCodeAiReviewServiceTest {
     }
 
     @Test
-    void 점검한_앱의_대기만_높은_등급부터_상한만큼_가져온다() {
-        when(appRepository.findAll()).thenReturn(List.of(App.builder().id(1L).systemName("CRM").build(),
-                App.builder().id(2L).systemName("TEST").build()));
+    void 앱을_넘겨_후보를_받고_상한만큼_가져온다() {
+        // 앱 조건·정렬은 쿼리가 한다(SecureCodeFindingRepositoryTest) — 여기선 넘긴 앱과 건수 상한만 본다.
         SecureCodeFinding medium = finding(1L, detected("m", "MEDIUM", null, "ctx-m"));
         SecureCodeFinding high = finding(1L, detected("h", "HIGH", null, "ctx-h"));
         SecureCodeFinding otherApp = finding(2L, detected("o", "HIGH", null, "ctx-o"));
-        when(findingRepository.findByStatus("OPEN")).thenReturn(List.of(medium, high, otherApp));
+        when(findingRepository.findAiReviewCandidates(1L)).thenReturn(List.of(high, medium));
+        when(findingRepository.findAiReviewCandidates(2L)).thenReturn(List.of(otherApp));
+        when(findingRepository.findAiReviewCandidates(null)).thenReturn(List.of(high, otherApp, medium));
 
         assertThat(service.getPendingTargets(1L, null)).extracting(SecureCodeReviewTarget::code).containsExactly("ctx-h", "ctx-m");
         assertThat(service.getPendingTargets(1L, 1)).extracting(SecureCodeReviewTarget::code).containsExactly("ctx-h");
@@ -216,7 +200,7 @@ class SecureCodeAiReviewServiceTest {
     @Test
     void 같은_입력으로_상한만큼_실패하면_대기에서_빼고_입력이_바뀌면_다시_센다() {
         SecureCodeFinding f = finding(1L, detected("a", "HIGH", null, "ctx-a"));
-        when(findingRepository.findByStatus("OPEN")).thenReturn(List.of(f));
+        when(findingRepository.findAiReviewCandidates(any())).thenReturn(List.of(f));
         when(findingRepository.findById(7L)).thenReturn(Optional.of(f));
         String hash = SecureCodeAiReviewService.toTarget(f).inputHash();
 
@@ -256,7 +240,7 @@ class SecureCodeAiReviewServiceTest {
         ReflectionTestUtils.setField(mkdir, "id", 1L);
         ReflectionTestUtils.setField(write, "id", 2L);
         ReflectionTestUtils.setField(sql, "id", 3L);
-        when(findingRepository.findByStatus("OPEN")).thenReturn(List.of(mkdir, write, sql));
+        when(findingRepository.findAiReviewCandidates(any())).thenReturn(List.of(mkdir, write, sql));
 
         List<SecureCodeReviewTarget> pending = service.getPendingTargets();
 

@@ -1,0 +1,60 @@
+# 행안부 SW 보안약점 진단가이드 — 입력데이터 검증 및 표현 / 포맷 스트링 삽입(CWE-134)
+#
+# 요청값이 형식 문자열 자리(String.format·printf·MessageFormat의 첫 인자)에 그대로 들어가는 경우. %s·%n·{0}을 끼워 넣어
+# 다른 인자 값을 읽거나 예외를 일으킨다. 값 자리(뒤 인자)에 들어가는 것은 정상이라 형식 자리만 본다(focus-metavariable).
+# 출처는 HttpServletRequest 값과 Spring 요청 파라미터. 무료판 Semgrep은 메서드 밖 흐름을 못 본다.
+rules:
+  - id: kisa-format-string-request
+    languages: [java]
+    mode: taint
+    pattern-sources:
+      - pattern: (javax.servlet.http.HttpServletRequest $REQ).$GET(...)
+      - pattern: (jakarta.servlet.http.HttpServletRequest $REQ).$GET(...)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $RET $M(..., @RequestParam $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @RequestParam(...) $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @PathVariable $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @PathVariable(...) $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @RequestHeader(...) $T $P, ...) { ... }
+              - pattern-inside: |
+                  $RET $M(..., @RequestBody $T $P, ...) { ... }
+          - pattern: $P
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              # String은 java.lang이라 import 없이 쓴다 — 짧은 모양과 패키지까지 쓴 모양을 다 둔다.
+              - pattern: String.format($FMT, ...)
+              - pattern: java.lang.String.format($FMT, ...)
+              # 첫 인자가 Locale이면 형식은 두 번째 — Locale.KOREA 같은 상수는 타입 추론이 안 돼 모양으로 고른다.
+              # 첫 인자를 아무 값($L)으로 두면 String.format("%s %s", a, b)의 값 a를 형식으로 잘못 본다.
+              - patterns:
+                  - pattern-either:
+                      - pattern: String.format($L, $FMT, ...)
+                      - pattern: java.lang.String.format($L, $FMT, ...)
+                  - metavariable-pattern:
+                      metavariable: $L
+                      pattern-either:
+                        - pattern: java.util.Locale.$CONST
+                        - pattern: (java.util.Locale $V)
+                        - pattern: new java.util.Locale(...)
+                        - pattern: java.util.Locale.$FACTORY(...)
+              - pattern: (java.io.PrintStream $OUT).printf($FMT, ...)
+              - pattern: (java.io.PrintStream $OUT).format($FMT, ...)
+              - pattern: (java.io.PrintWriter $OUT).printf($FMT, ...)
+              - pattern: (java.io.PrintWriter $OUT).format($FMT, ...)
+              - pattern: (java.util.Formatter $F).format($FMT, ...)
+              - pattern: java.text.MessageFormat.format($FMT, ...)
+              - pattern: new java.text.MessageFormat($FMT, ...)
+          - focus-metavariable: $FMT
+    message: "요청값을 형식 문자열로 씁니다(%s·{0} 등을 끼워 넣어 다른 값 노출·예외 유발). 형식은 상수로 두고 요청값은 값 인자로 넘기세요(String.format(\"%s\", 값))."
+    severity: ERROR
+    metadata:
+      kisa_category: 입력데이터 검증 및 표현
+      kisa_name: 포맷 스트링 삽입
+      cwe: CWE-134

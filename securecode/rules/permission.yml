@@ -1,0 +1,28 @@
+# 행안부 SW 보안약점 진단가이드 — 보안기능 / 중요한 자원에 대한 잘못된 권한 설정(CWE-732)
+#
+# 서버가 만든 파일·폴더를 같은 서버의 다른 계정(other)도 쓰거나 읽게 연다. 설정·업로드·로그 파일이 바뀌거나 새어 나간다.
+# 소유자만 쓰게(other 쓰기 없음) 두면 걸리지 않는다.
+rules:
+  - id: kisa-insecure-file-permission
+    languages: [java]
+    pattern-either:
+      # setXxx(true, false) — 두 번째 인자 false는 "소유자만"이 아니라 "모두"에게 준다.
+      - pattern: (java.io.File $F).setWritable(true, false)
+      - pattern: (java.io.File $F).setReadable(true, false)
+      - pattern: (java.io.File $F).setExecutable(true, false)
+      # other 쓰기 권한
+      - pattern: java.nio.file.attribute.PosixFilePermission.OTHERS_WRITE
+      - patterns:
+          - pattern: java.nio.file.attribute.PosixFilePermissions.fromString("$PERM")
+          - metavariable-regex:
+              metavariable: $PERM
+              # rwxrwxrwx의 8번째 글자(other 쓰기)가 w
+              regex: ^[rwx-]{7}w[rwx-]$
+    paths:
+      exclude: ["**/test/**", "**/*Test.java"]
+    message: "파일·폴더를 다른 계정도 쓰거나 읽을 수 있게 엽니다. 소유자에게만 권한을 주세요(setWritable(true, true), \"rw-------\" 등)."
+    severity: WARNING
+    metadata:
+      kisa_category: 보안기능
+      kisa_name: 중요한 자원에 대한 잘못된 권한 설정
+      cwe: CWE-732

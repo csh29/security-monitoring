@@ -226,10 +226,6 @@ class SecureCodeReviewerClient:
 MAX_CONSECUTIVE_FAILURES = 5
 
 
-class StopBatch(Exception):
-    """배치를 더 돌리면 안 되는 오류(키·권한·모델·잔액)로 멈췄다."""
-
-
 def classify_failure(err: Exception) -> str:
     """판별 실패의 종류.
     - "fatal": 다른 건도 똑같이 실패한다(API 키·권한·모델 없음·잔액 부족, 백엔드 토큰 오류) — 배치를 멈춘다.

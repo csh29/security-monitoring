@@ -45,9 +45,6 @@ public class OsvFixVersionResolver {
     }
 
     public record Resolution(String finalVersion, List<String> chain, Status status) {
-        public boolean isClean() {
-            return status == Status.CLEAN;
-        }
     }
 
     public Resolution resolve(String groupId, String artifactId, String candidateVersion) {

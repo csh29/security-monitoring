@@ -1,0 +1,19 @@
+# 행안부 SW 보안약점 진단가이드 — 보안기능 / 사용자 하드디스크에 저장되는 쿠키를 통한 정보 노출(CWE-539)
+#
+# 만료 시각을 준 쿠키(setMaxAge 양수)는 브라우저 종료 뒤에도 사용자 PC 디스크에 남는다. 공용 PC·탈취된 PC에서 그 값(세션·인증·개인정보)이 읽힌다.
+# 쿠키를 지우는 0과 세션 쿠키(-1)는 뺀다. "아이디 저장"처럼 일부러 오래 두는 쿠키도 걸린다 — 값이 중요정보가 아니면 오탐 처리한다(WARNING).
+rules:
+  - id: kisa-persistent-cookie
+    languages: [java]
+    patterns:
+      - pattern-either:
+          - pattern: (javax.servlet.http.Cookie $C).setMaxAge($AGE)
+          - pattern: (jakarta.servlet.http.Cookie $C).setMaxAge($AGE)
+      - pattern-not: $C.setMaxAge(0)
+      - pattern-not: $C.setMaxAge(-1)
+    message: "쿠키에 만료 시각을 줘 사용자 PC 디스크에 남깁니다. 세션·인증·개인정보가 든 쿠키는 만료를 주지 말고(세션 쿠키) 서버 세션에 두세요."
+    severity: WARNING
+    metadata:
+      kisa_category: 보안기능
+      kisa_name: 사용자 하드디스크에 저장되는 쿠키를 통한 정보 노출
+      cwe: CWE-539

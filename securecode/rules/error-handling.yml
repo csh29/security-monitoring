@@ -76,3 +76,31 @@ rules:
       kisa_category: 에러처리
       kisa_name: 오류상황 대응 부재
       cwe: CWE-390
+
+  # Exception·Throwable을 통째로 잡아 처리한다. 널 참조·권한 오류 같은 예상 못 한 예외까지 같은 방식(로그 후 계속 등)으로 삼켜
+  # 원인이 묻히고 실패한 상태로 처리가 이어진다. 건수가 많아 LOW(INFO)로 둔다 — 감싸서 다시 던지는 것과 빈 catch(위 규칙)는 뺀다.
+  - id: kisa-error-broad-catch
+    languages: [java]
+    patterns:
+      - pattern-either:
+          # java.lang이라 import 없이 쓴다 — 짧은 모양과 패키지까지 쓴 모양을 다 둔다.
+          - pattern: |
+              try { ... } catch (Exception $E) { ... }
+          - pattern: |
+              try { ... } catch (java.lang.Exception $E) { ... }
+          - pattern: |
+              try { ... } catch (Throwable $E) { ... }
+          - pattern: |
+              try { ... } catch (java.lang.Throwable $E) { ... }
+      - pattern-not: |
+          try { ... } catch ($T $E) {}
+      - pattern-not: |
+          try { ... } catch ($T $E) { ... throw $X; }
+    paths:
+      exclude: ["**/test/**", "**/*Test.java"]
+    message: "Exception·Throwable을 통째로 잡아 처리합니다. 예상하지 못한 예외까지 같은 방식으로 삼켜 원인이 묻힙니다. 처리할 수 있는 예외(IOException 등)만 잡고 나머지는 위로 던지세요."
+    severity: INFO
+    metadata:
+      kisa_category: 에러처리
+      kisa_name: 부적절한 예외 처리
+      cwe: CWE-396
