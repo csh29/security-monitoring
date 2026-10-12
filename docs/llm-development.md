@@ -36,10 +36,11 @@ Windows에서는 `mvnw.cmd`를 쓴다.
 py -m pip install -r ../ai/requirements.txt
 ```
 
-파이썬 쪽 테스트는 릴리스 노트 수집기(`ai/release_notes.py`)의 순수 함수만 있다. `ai/` 폴더에서 돌린다(네트워크·AI 호출 없음).
+파이썬 쪽 테스트는 릴리스 노트 수집기(`ai/release_notes.py`)의 순수 함수와, 코드 점검 AI 배치의 안전장치(`ai/secure_code_reviewer.py` —
+실패 분류·중단·실패 보고·실행 잠금·앱 단위 대기)가 있다. `ai/` 폴더에서 돌린다(네트워크·AI 호출 없음, 가짜 판별 클라이언트를 넣는다).
 
 ```bash
-py -m unittest test_release_notes
+py -m unittest test_release_notes test_secure_code_reviewer
 ```
 
 시큐어코딩 점검 규칙(`securecode/rules/*.yml`)을 고쳤으면 규칙 옆 예제 파일로 회귀 테스트를 돌린다. 규칙 파일과 같은 이름의
@@ -246,4 +247,4 @@ DB 스키마 변경, 대량 삭제, 외부로 나가는 호출(Git push, 외부 
 - [ ] 판단 로직을 넣었다면 Spring 없이 테스트 가능한 순수 클래스로 분리하고 테스트를 붙였는가?
 - [ ] 비자명한 선택에 "왜"를 설명하는 한국어 주석을 남겼는가?
 - [ ] 구조를 바꿨다면 관련 주석 / `backend/README.md` / `docs/llm-analysis.md`를 같이 고쳤는가?
-- [ ] `./mvnw test`가 통과하는가? (`ai/release_notes.py`를 고쳤으면 `py -m unittest test_release_notes`도, 코드 점검 규칙을 고쳤으면 `py test_rules.py`(securecode 폴더)도)
+- [ ] `./mvnw test`가 통과하는가? (`ai/` 파이썬을 고쳤으면 `py -m unittest test_release_notes test_secure_code_reviewer`도, 코드 점검 규칙을 고쳤으면 `py test_rules.py`(securecode 폴더)도)

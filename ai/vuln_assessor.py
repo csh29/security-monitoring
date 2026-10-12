@@ -22,7 +22,7 @@ from typing import Callable
 
 import cve_assessor
 import secure_code_reviewer
-from ai_common import BatchReport, print_reports, run_batch
+from ai_common import BatchReport, print_reports, run_batch, stage_lock
 
 # 인자 이름 → (로그에 쓸 기능 이름, 실행). 인자 이름은 서버 AiAssessmentTriggerService.BatchKind.arg와 같아야 한다.
 STAGES: dict[str, tuple[str, Callable[[], BatchReport]]] = {
@@ -47,7 +47,13 @@ def main(names: list[str]) -> None:
     for name in names:
         label, run_stage = STAGES[name]
         try:
-            reports.append(run_stage())
+            with stage_lock(name) as acquired:
+                if not acquired:
+                    # 같은 기능이 이미 돌고 있다(서버 재기동 전에 띄운 배치·사람이 띄운 배치) — 같은 대기를 두 번 판별하지 않는다.
+                    print(f"{label}: 이미 실행 중인 배치가 있어 건너뜁니다.")
+                    reports.append(BatchReport(summary=[f"{label}: 이미 실행 중인 배치가 있어 건너뜀"]))
+                    continue
+                reports.append(run_stage())
         except Exception:
             traceback.print_exc()
             failed.append(label)

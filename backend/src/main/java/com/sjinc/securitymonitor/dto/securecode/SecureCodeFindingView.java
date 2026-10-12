@@ -49,7 +49,8 @@ public record SecureCodeFindingView(
         String statusChangedBy,
         String remark,
         LocalDateTime firstDetectedAt,
-        LocalDateTime lastDetectedAt
+        LocalDateTime lastDetectedAt,
+        List<Long> sameOriginIds
 ) {
     /** 판정 이름 → 화면 표시. 예전 값·모르는 값이면 이름 그대로(화면이 비지 않게). */
     private static String traceLabel(String safety) {
@@ -75,13 +76,19 @@ public record SecureCodeFindingView(
 
     /** AI 판별 대기 표시. 판별 결과 값과 겹치지 않는다. */
     public static final String AI_PENDING = "PENDING";
+    /** 같은 입력으로 상한만큼 실패해 더 보내지 않는다(입력이 바뀌면 다시 대기). 이유 칸에 마지막 실패 이유를 싣는다. */
+    public static final String AI_GIVEN_UP = "GIVEN_UP";
 
     /**
      * @param aiReviewCurrent 저장된 AI 판별이 지금 입력 기준인가
      * @param aiTarget        AI 판별 대상인가(판별이 없을 때 "대기"로 보일지 정한다)
+     * @param aiGivenUp       지금 입력으로 상한만큼 실패해 판별을 포기했는가
+     * @param sameOriginIds   같은 출처(SameOrigin)의 다른 탐지 — 화면이 묶어 보여주고, AI는 이들과 한 번에 판별한다
      */
-    public static SecureCodeFindingView of(SecureCodeFinding f, String systemName, boolean aiReviewCurrent, boolean aiTarget) {
-        String aiVerdict = aiReviewCurrent ? f.getAiVerdict() : (aiTarget ? AI_PENDING : null);
+    public static SecureCodeFindingView of(SecureCodeFinding f, String systemName, boolean aiReviewCurrent, boolean aiTarget,
+                                           boolean aiGivenUp, List<Long> sameOriginIds) {
+        String aiVerdict = aiReviewCurrent ? f.getAiVerdict() : (aiTarget ? (aiGivenUp ? AI_GIVEN_UP : AI_PENDING) : null);
+        boolean givenUp = AI_GIVEN_UP.equals(aiVerdict);
         List<String> evidence = f.getTraceEvidence() == null ? List.of() : List.of(f.getTraceEvidence().split("\n"));
         return new SecureCodeFindingView(f.getId(), f.getAppId(), systemName, f.getRuleId(), f.getKisaCategory(),
                 f.getKisaName(), f.getCwe(), f.getSeverity(), f.getFilePath(), f.getStartLine(), f.getEndLine(),
@@ -90,11 +97,11 @@ public record SecureCodeFindingView(
                 f.getStatus(), aiVerdict,
                 aiReviewCurrent ? f.getAiConfidence() : null,
                 aiReviewCurrent ? f.getAiSummary() : null,
-                aiReviewCurrent ? f.getAiReasoning() : null,
+                aiReviewCurrent ? f.getAiReasoning() : (givenUp ? f.getAiLastError() : null),
                 aiReviewCurrent ? f.getAiAttack() : null,
                 aiReviewCurrent ? f.getAiFix() : null,
                 aiReviewCurrent ? f.getAiReviewedAt() : null,
                 f.getStatusChangedBy(),
-                f.getRemark(), f.getFirstDetectedAt(), f.getLastDetectedAt());
+                f.getRemark(), f.getFirstDetectedAt(), f.getLastDetectedAt(), sameOriginIds);
     }
 }

@@ -492,9 +492,10 @@ public class SecureCodeScanService {
     }
 
     /**
-     * 판별 대기가 있으면 시큐어코딩 AI 배치만 띄운다(로그는 ai-securecode.log — CVE 단계는 돌리지 않는다). 라이브러리 스캔과 같은 자동 실행
-     * 스위치(공통코드 AI_CONFIG/AUTO_TRIGGER)를 따른다 — 배치는 Claude API를 호출해 과금된다. 시큐어코딩 배치가 이미 떠 있으면
-     * triggerAsync가 건너뛰고, 남은 대기는 다음 배치가 가져간다.
+     * 이 앱에 판별 대기가 있으면 시큐어코딩 AI 배치만 띄운다(로그는 ai-securecode.log — CVE 단계는 돌리지 않는다). 점검한 앱의 대기만
+     * 판별한다 — 예전엔 전체 앱 대기를 한꺼번에 가져가 테스트 앱 수천 건까지 과금됐다. 한 번에 최대 ai.securecode.max-per-run건.
+     * 라이브러리 스캔과 같은 자동 실행 스위치(공통코드 AI_CONFIG/AUTO_TRIGGER)를 따른다 — 배치는 Claude API를 호출해 과금된다.
+     * 시큐어코딩 배치가 이미 떠 있으면 이 앱은 차례를 기다렸다가 그 배치가 끝난 뒤 이어서 돈다(triggerAsync).
      * 실패해도 점검 결과는 이미 저장됐으니 로그만 남긴다.
      */
     private void triggerAiReviewIfNeeded(App app) {
@@ -504,10 +505,9 @@ public class SecureCodeScanService {
                         AiAssessmentTriggerService.CONFIG_GROUP, AiAssessmentTriggerService.AUTO_TRIGGER_CODE);
                 return;
             }
-            int pending = aiReviewService.getPendingTargets().size();
-            if (pending > 0) {
-                log.info("[{}] AI 판별 대기 {}건(전체 앱) — AI 배치를 띄웁니다.", app.getSystemName(), pending);
-                aiAssessmentTriggerService.triggerAsync(AiAssessmentTriggerService.BatchKind.SECURE_CODE);
+            if (aiReviewService.hasPendingTargets(app.getId())) {
+                log.info("[{}] AI 판별 대기가 있어 이 앱의 AI 배치를 띄웁니다.", app.getSystemName());
+                aiAssessmentTriggerService.triggerAsync(AiAssessmentTriggerService.BatchKind.SECURE_CODE, app.getId());
             }
         } catch (Exception e) {
             log.warn("[{}] AI 판별 배치 실행 판단/시작 실패(점검 결과는 저장됨): {}", app.getSystemName(), e.toString());

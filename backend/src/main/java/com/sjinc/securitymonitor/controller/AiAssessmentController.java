@@ -6,6 +6,7 @@ import com.sjinc.securitymonitor.dto.ai.AppFixPlanTarget;
 import com.sjinc.securitymonitor.dto.ai.CveSummaryRequest;
 import com.sjinc.securitymonitor.dto.ai.CveSummaryTarget;
 import com.sjinc.securitymonitor.dto.ai.FixPlanRequest;
+import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewFailure;
 import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewRequest;
 import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewTarget;
 import com.sjinc.securitymonitor.dto.ai.UpgradeImpactRequest;
@@ -26,6 +27,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -109,10 +111,13 @@ public class AiAssessmentController {
         upgradeImpactService.saveImpact(request);
     }
 
+    /** appId가 있으면 그 앱만(서버가 점검 뒤 띄운 배치는 점검한 앱을 넘긴다), limit은 ai.securecode.max-per-run을 넘지 못한다. */
     @GetMapping("/secure-code/pending")
-    public List<SecureCodeReviewTarget> getPendingSecureCodeReviews(@RequestHeader("X-Internal-Token") String token) {
+    public List<SecureCodeReviewTarget> getPendingSecureCodeReviews(@RequestHeader("X-Internal-Token") String token,
+                                                                    @RequestParam(required = false) Long appId,
+                                                                    @RequestParam(required = false) Integer limit) {
         verifyToken(token);
-        return secureCodeAiReviewService.getPendingTargets();
+        return secureCodeAiReviewService.getPendingTargets(appId, limit);
     }
 
     @PostMapping("/secure-code/{id}/review")
@@ -123,8 +128,17 @@ public class AiAssessmentController {
         secureCodeAiReviewService.saveReview(id, request);
     }
 
-    @GetMapping("/status")
+    /** 판별 실패(같은 입력으로 다시 해도 실패할 것)를 센다 — 상한에 닿으면 대기에서 빠진다. */
+    @PostMapping("/secure-code/{id}/failure")
+    public void reportSecureCodeFailure(@PathVariable Long id,
+                                        @RequestHeader("X-Internal-Token") String token,
+                                        @RequestBody SecureCodeReviewFailure failure) {
+        verifyToken(token);
+        secureCodeAiReviewService.recordFailure(id, failure);
+    }
+
     /** 배치 종류(CVE / SECURE_CODE)별 실행 상태. 두 종류는 따로 떠서 동시에 돌 수 있다. */
+    @GetMapping("/status")
     public Map<AiAssessmentTriggerService.BatchKind, AiBatchStatus> getStatus(@RequestHeader("X-Internal-Token") String token) {
         verifyToken(token);
         return aiAssessmentTriggerService.getStatus();

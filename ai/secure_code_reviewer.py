@@ -4,21 +4,24 @@ HIGH·MEDIUM 탐지(연계 추적이 요청값으로 확정한 것도 — 그 �
 메서드를 보고 VULNERABLE/NOT_VULNERABLE/UNCERTAIN을 판별해 저장한다. 라이브러리 취약점 단계(cve_assessor.py)와 무관하다.
 판별은 화면 참고용이고 처리여부는 사람이 정한다. 코드는 자바가 비밀값을 가린 뒤 넘겨준다.
 
-보통은 진입점(vuln_assessor.py)이 라이브러리 단계와 함께 돌린다. 이 단계만 돌리려면 `py secure_code_reviewer.py`.
+보통은 서버가 코드 점검 뒤 진입점(`vuln_assessor.py securecode`)으로 그 앱만 띄운다(SECURITY_MONITOR_APP_ID). 사람이 이 단계만 돌리려면
+`py secure_code_reviewer.py`(전체 앱, 한 번에 서버 상한만큼) — 진입점과 같은 실행 잠금을 잡아 이미 돌고 있으면 건너뛴다.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Optional
 
 import anthropic
+import requests
 
 from ai_common import (MODEL, BackendClient, BatchReport, TokenUsageTracker, _extract_text, _reject_if_truncated,
-                       _strip_code_fence, _system_prompt, print_reports, run_batch)
+                       _strip_code_fence, _system_prompt, print_reports, run_batch, stage_lock)
 from prompt_rules import SECURE_CODE_REVIEW_SYSTEM, load_prompt
 
 SECURE_CODE_REVIEW_SCHEMA = {
@@ -69,6 +72,12 @@ class SecureCodeReviewTarget:
     input_hash: str
     # 탐지 메서드와 함께 보는 다른 메서드들(자바 AiRelatedCode — path, startLine, code, reason). .java만, 비밀값은 자바가 가렸다.
     related_code: list[dict] = field(default_factory=list)
+    # 같은 출처의 다른 지점(자바 SameOriginMember — id, inputHash, filePath, startLine, ruleId, sink, code, codeStartLine).
+    # 이 건과 한 번에 판별하고 결과·실패를 함께 보낸다(같은 원인을 두 번 묻지 않게).
+    same_origin: list[dict] = field(default_factory=list)
+
+    def same_origin_refs(self) -> list[dict]:
+        return [{"id": m["id"], "inputHash": m["inputHash"]} for m in self.same_origin]
 
     @staticmethod
     def from_json(data: dict) -> "SecureCodeReviewTarget":
@@ -89,6 +98,7 @@ class SecureCodeReviewTarget:
             trace_evidence=data.get("traceEvidence") or [],
             input_hash=data["inputHash"],
             related_code=data.get("relatedCode") or [],
+            same_origin=data.get("sameOrigin") or [],
         )
 
 
@@ -106,7 +116,15 @@ class SecureCodeBackendClient(BackendClient):
     """시큐어코딩 단계가 부르는 /api/ai/** 호출."""
 
     def fetch_pending_secure_code_reviews(self) -> list[SecureCodeReviewTarget]:
-        return [SecureCodeReviewTarget.from_json(item) for item in self._get("/api/ai/secure-code/pending")]
+        """판별 대기. 서버가 점검 뒤 띄운 배치는 그 앱만(SECURITY_MONITOR_APP_ID), 건수 상한은 서버가 정한다(ai.securecode.max-per-run)."""
+        app_id = os.environ.get("SECURITY_MONITOR_APP_ID")
+        params = {"appId": app_id} if app_id else None
+        return [SecureCodeReviewTarget.from_json(item) for item in self._get("/api/ai/secure-code/pending", params)]
+
+    def report_secure_code_failure(self, target: SecureCodeReviewTarget, reason: str) -> None:
+        """같은 입력으로 다시 해도 실패할 판별을 알린다 — 서버가 세어 상한에 닿으면 대기에서 뺀다(배치마다 재과금하지 않게)."""
+        self._post(f"/api/ai/secure-code/{target.id}/failure", {
+            "inputHash": target.input_hash, "reason": reason[:500], "sameOrigin": target.same_origin_refs()})
 
     def submit_secure_code_review(self, target: SecureCodeReviewTarget, review: SecureCodeReview) -> None:
         self._post(f"/api/ai/secure-code/{target.id}/review", {
@@ -116,6 +134,7 @@ class SecureCodeBackendClient(BackendClient):
             "reasoning": review.reasoning,
             "attack": review.attack,
             "fix": review.fix,
+            "sameOrigin": target.same_origin_refs(),
             "inputHash": target.input_hash,
         })
 
@@ -177,6 +196,19 @@ class SecureCodeReviewerClient:
             related += f"\n--- {item.get('path')} ({item.get('reason')})\n{body}\n"
         related = f"\n[관련 코드]{related}" if related else ""
 
+        same = ""
+        for member in target.same_origin:
+            head = f"\n--- {member.get('filePath')}:{member.get('startLine')} ({member.get('ruleId')})"
+            sink = f"\n    위험 호출: {member.get('sink')}" if member.get("sink") else ""
+            body = ""
+            if member.get("code"):
+                start = member.get("codeStartLine") or 1
+                body = "\n" + "\n".join(
+                    f"{'>>' if start + i == member.get('startLine') else '  '} {start + i:5d} | {line}"
+                    for i, line in enumerate(member["code"].split("\n")))
+            same += head + sink + body + "\n"
+        same = f"\n[같은 출처의 다른 지점]{same}" if same else ""
+
         return f"""[탐지]
 - 규칙: {target.rule_id}
 - 행안부 분류/항목: {target.kisa_category} / {target.kisa_name}
@@ -187,13 +219,45 @@ class SecureCodeReviewerClient:
 {trace}
 [코드]
 {code}
-{related}"""
+{related}{same}"""
+
+
+# 연속으로 이만큼 실패하면 배치를 멈춘다 — 원인이 건마다가 아니라 공통(모델·서버·네트워크)일 가능성이 높고, 계속 보내면 과금만 쌓인다.
+MAX_CONSECUTIVE_FAILURES = 5
+
+
+class StopBatch(Exception):
+    """배치를 더 돌리면 안 되는 오류(키·권한·모델·잔액)로 멈췄다."""
+
+
+def classify_failure(err: Exception) -> str:
+    """판별 실패의 종류.
+    - "fatal": 다른 건도 똑같이 실패한다(API 키·권한·모델 없음·잔액 부족, 백엔드 토큰 오류) — 배치를 멈춘다.
+    - "transient": 잠시 뒤 다시 하면 될 수 있다(요청 한도·연결·서버 오류) — 실패로 세지 않는다(다음 배치가 다시 가져간다).
+    - "content": 같은 입력으로 다시 해도 실패할 것(응답 잘림·형식 오류·서버가 저장 거절) — 서버에 알려 센다."""
+    if isinstance(err, (anthropic.AuthenticationError, anthropic.PermissionDeniedError, anthropic.NotFoundError)):
+        return "fatal"
+    if isinstance(err, anthropic.BadRequestError) and "credit balance" in str(err).lower():
+        return "fatal"
+    if isinstance(err, (anthropic.RateLimitError, anthropic.APIConnectionError, anthropic.InternalServerError,
+                        requests.ConnectionError, requests.Timeout)):
+        return "transient"
+    if isinstance(err, requests.HTTPError) and err.response is not None:
+        status = err.response.status_code
+        if status == 401:
+            return "fatal"
+        if status >= 500:
+            return "transient"
+    return "content"
 
 
 def _review_one(reviewer: SecureCodeReviewerClient, backend: "SecureCodeBackendClient",
-                target: SecureCodeReviewTarget) -> tuple[SecureCodeReviewTarget, Optional[SecureCodeReview], Optional[Exception]]:
+                target: SecureCodeReviewTarget,
+                stop: threading.Event) -> tuple[SecureCodeReviewTarget, Optional[SecureCodeReview], Optional[Exception]]:
     """탐지 하나를 판별하고 저장한다. _assess_one과 같은 이유로 예외를 잡아서 돌려준다 — 한 건 실패가 나머지를 막지 않도록.
-    실패한 건은 판별이 저장되지 않았으니 다음 배치에서 다시 대기로 잡힌다."""
+    실패한 건은 판별이 저장되지 않았으니 다음 배치에서 다시 대기로 잡힌다. 배치가 멈췄으면 보내지 않는다."""
+    if stop.is_set():
+        return target, None, None
     try:
         review = reviewer.review(target)
         backend.submit_secure_code_review(target, review)
@@ -202,33 +266,64 @@ def _review_one(reviewer: SecureCodeReviewerClient, backend: "SecureCodeBackendC
         return target, None, e
 
 
-def run(backend: SecureCodeBackendClient) -> BatchReport:
+def run(backend: SecureCodeBackendClient, reviewer: Optional[SecureCodeReviewerClient] = None) -> BatchReport:
     """판별 대기를 가져와 판별·저장하고 요약을 돌려준다."""
     review_targets = backend.fetch_pending_secure_code_reviews()
-    reviewer = SecureCodeReviewerClient(use_cache=len(review_targets) > 1)
+    # reviewer는 테스트가 가짜를 넣을 때만 받는다(실제 API를 부르지 않고 중단 규칙을 확인).
+    reviewer = reviewer or SecureCodeReviewerClient(use_cache=len(review_targets) > 1)
     print(f"코드 점검 판별할 탐지 {len(review_targets)}건")
 
     skipped_reviews: list[tuple[str, str]] = []
     review_counts: dict[str, int] = {}
+    stop = threading.Event()
+    stop_reason: list[str] = []
+    consecutive_failures = 0
 
     def handle_review(target: SecureCodeReviewTarget, review: Optional[SecureCodeReview], err: Optional[Exception]) -> None:
+        nonlocal consecutive_failures
         label = f"{target.file_path}:{target.start_line} {target.rule_id}"
-        if err is not None:
-            skipped_reviews.append((label, str(err)))
-            print(f"[{label}] 판별 실패, 건너뜀: {err}")
-        else:
+        if target.same_origin:
+            label += f" (+같은 출처 {len(target.same_origin)}건)"
+        if review is None and err is None:
+            return  # 배치가 멈춰 보내지 않은 건 — 대기로 남는다
+        if err is None:
+            consecutive_failures = 0
             review_counts[review.verdict] = review_counts.get(review.verdict, 0) + 1
             print(f"[{label}] verdict={review.verdict} confidence={review.confidence}")
+            return
+        kind = classify_failure(err)
+        consecutive_failures += 1
+        skipped_reviews.append((label, f"[{kind}] {err}"))
+        print(f"[{label}] 판별 실패({kind}), 건너뜀: {err}")
+        if kind == "content":
+            try:
+                backend.report_secure_code_failure(target, f"{type(err).__name__}: {err}")
+            except Exception as report_err:  # 실패 보고가 실패해도 배치는 계속 — 다음 배치에서 다시 센다
+                print(f"[{label}] 실패 보고 실패: {report_err}")
+        if kind == "fatal" and not stop.is_set():
+            stop_reason.append(f"더 보내도 같은 오류라 멈춤: {type(err).__name__}: {err}")
+            stop.set()
+        elif consecutive_failures >= MAX_CONSECUTIVE_FAILURES and not stop.is_set():
+            stop_reason.append(f"연속 {consecutive_failures}건 실패로 멈춤(마지막: {type(err).__name__})")
+            stop.set()
 
     if review_targets:
-        handle_review(*_review_one(reviewer, backend, review_targets[0]))
-        if len(review_targets) > 1:
+        handle_review(*_review_one(reviewer, backend, review_targets[0], stop))
+        if len(review_targets) > 1 and not stop.is_set():
             with ThreadPoolExecutor(max_workers=REVIEW_MAX_WORKERS) as executor:
-                futures = [executor.submit(_review_one, reviewer, backend, t) for t in review_targets[1:]]
+                futures = [executor.submit(_review_one, reviewer, backend, t, stop) for t in review_targets[1:]]
                 for future in as_completed(futures):
+                    if future.cancelled():
+                        continue
                     handle_review(*future.result())
+                    if stop.is_set():
+                        for pending in futures:
+                            pending.cancel()  # 아직 시작 안 한 건은 보내지 않는다(시작한 건은 stop을 보고 바로 돌아온다)
 
     report = BatchReport()
+    if stop_reason:
+        print(f"!! 코드 점검 판별 중단: {stop_reason[0]}")
+        report.summary.append(f"코드 점검 판별 중단: {stop_reason[0]} — 남은 건은 대기로 남는다")
     report.summary.append(f"코드 점검 판별: {review_counts or '없음'} / 건너뜀 {len(skipped_reviews)}건")
     report.summary += [f"  - {label}: {reason}" for label, reason in skipped_reviews]
     report.usages.append(("코드 점검 판별", MODEL, reviewer.usage))
@@ -236,7 +331,11 @@ def run(backend: SecureCodeBackendClient) -> BatchReport:
 
 
 def main() -> None:
-    print_reports([run(SecureCodeBackendClient())])
+    with stage_lock("securecode") as acquired:
+        if not acquired:
+            print("시큐어코딩: 이미 실행 중인 배치가 있어 건너뜁니다.")
+            return
+        print_reports([run(SecureCodeBackendClient())])
 
 
 if __name__ == "__main__":

@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+
+# 배치 실행 잠금·PID(ai_common.stage_lock) — 실행 중에만 의미가 있다.
+.batch-*.lock
+.batch-*.pid

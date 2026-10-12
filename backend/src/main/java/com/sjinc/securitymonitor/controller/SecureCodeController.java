@@ -1,6 +1,8 @@
 package com.sjinc.securitymonitor.controller;
 
 import com.sjinc.securitymonitor.domain.SecureCodeScan;
+import com.sjinc.securitymonitor.dto.ai.AiBatchStatus;
+import com.sjinc.securitymonitor.service.ai.AiAssessmentTriggerService;
 import com.sjinc.securitymonitor.security.RequiresProgram;
 import com.sjinc.securitymonitor.dto.securecode.SecureCodeFindingCode;
 import com.sjinc.securitymonitor.dto.securecode.SecureCodeFindingView;
@@ -42,6 +44,22 @@ public class SecureCodeController {
 
     private final SecureCodeScanService scanService;
     private final SecureCodeFindingService findingService;
+    private final AiAssessmentTriggerService aiAssessmentTriggerService;
+
+    /** 시큐어코딩 AI 판별 배치가 돌고 있는가(화면 위쪽 표시). */
+    @GetMapping("/ai-batch")
+    public AiBatchStatus getAiBatchStatus() {
+        return aiAssessmentTriggerService.getStatus(AiAssessmentTriggerService.BatchKind.SECURE_CODE);
+    }
+
+    /** 돌고 있는 AI 판별 배치를 끈다(화면 [중지]). 저장된 판별은 남고 나머지는 대기로 남는다. */
+    @PostMapping("/ai-batch/stop")
+    public AiBatchStatus stopAiBatch(Principal principal) {
+        boolean stopped = aiAssessmentTriggerService.stop(AiAssessmentTriggerService.BatchKind.SECURE_CODE);
+        log.info("AI 판별 배치 중지 요청: {} (사용자 {})", stopped ? "중지함" : "돌고 있는 배치 없음",
+                principal != null ? principal.getName() : null);
+        return aiAssessmentTriggerService.getStatus(AiAssessmentTriggerService.BatchKind.SECURE_CODE);
+    }
 
     /** 화면의 "점검" 버튼. clone·Semgrep이 끝날 때까지 기다린다(라이브러리 스캔과 같다). */
     @PostMapping("/scan")

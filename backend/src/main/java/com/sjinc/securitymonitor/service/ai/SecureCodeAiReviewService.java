@@ -2,11 +2,16 @@ package com.sjinc.securitymonitor.service.ai;
 
 import com.sjinc.securitymonitor.domain.App;
 import com.sjinc.securitymonitor.domain.SecureCodeFinding;
+import com.sjinc.securitymonitor.domain.SeverityOrder;
+import com.sjinc.securitymonitor.dto.ai.SameOriginMember;
+import com.sjinc.securitymonitor.dto.ai.SameOriginRef;
+import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewFailure;
 import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewRequest;
 import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewTarget;
 import com.sjinc.securitymonitor.dto.securecode.AiRelatedCode;
 import com.sjinc.securitymonitor.repository.AppRepository;
 import com.sjinc.securitymonitor.repository.SecureCodeFindingRepository;
+import com.sjinc.securitymonitor.service.securecode.SameOrigin;
 import com.sjinc.securitymonitor.service.securecode.SecureCodeSnippetBuilder;
 import com.sjinc.securitymonitor.dto.securecode.TraceSafety;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -20,10 +25,17 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 /**
@@ -73,6 +85,17 @@ public class SecureCodeAiReviewService {
     @Value("#{'${ai.securecode.severities:HIGH,MEDIUM}'.split(',')}")
     private List<String> severities;
 
+    /** 같은 입력으로 이만큼 실패하면 대기에서 뺀다(입력이 바뀌면 다시 대기). 응답이 늘 잘리거나 저장이 거절되는 건을 배치마다 재과금하지 않게. */
+    @Value("${ai.securecode.max-failures:3}")
+    private int maxFailures;
+
+    /**
+     * 배치 한 번에 판별하는 최대 건수. 대상 기준을 넓히거나 큰 앱을 처음 점검하면 대기가 수천 건이 된다 — 한 번에 다 보내지 않고
+     * 높은 등급부터 이만큼만, 나머지는 다음 실행(다음 점검 뒤 자동 실행)이 가져간다.
+     */
+    @Value("${ai.securecode.max-per-run:200}")
+    private int maxPerRun;
+
     /** 등급과 무관하게 AI 판별 대상으로 넣는 규칙(쉼표 구분, 비우면 없음). 위 클래스 설명의 "추가 규칙". */
     @Value("#{'${ai.securecode.extra-rules:kisa-insecure-random,kisa-weak-crypto-hash,kisa-hash-without-salt,kisa-xxe-parser}'.split(',')}")
     private List<String> extraRules;
@@ -108,18 +131,125 @@ public class SecureCodeAiReviewService {
      */
     @Transactional(readOnly = true)
     public List<SecureCodeReviewTarget> getPendingTargets() {
+        return getPendingTargets(null, null);
+    }
+
+    /**
+     * 대기 중 이번에 판별할 것 — appId가 있으면 그 앱만(점검한 앱의 대기만 판별한다. 예전엔 앱 하나를 점검해도 모든 앱의 대기를 한꺼번에
+     * 판별해 테스트 앱 대기 수천 건이 과금됐다), 높은 등급부터 limit(최대 ai.securecode.max-per-run)건. 같은 입력으로 상한만큼 실패한 건은 뺀다.
+     * <b>같은 출처(SameOrigin)의 대기는 한 건으로 묶는다</b> — 가장 높은 등급이 대표가 되고 나머지 지점은 sameOrigin으로 실려 한 번에 판별된다
+     * (한 요청값이 폴더 만들기·파일 쓰기 두 지점에 들어가면 같은 원인을 두 번 묻지 않게). 건수 상한은 묶음 기준이다.
+     */
+    @Transactional(readOnly = true)
+    public List<SecureCodeReviewTarget> getPendingTargets(Long appId, Integer limit) {
+        int max = limit == null || limit <= 0 ? maxPerRun : Math.min(limit, maxPerRun);
+        Map<Object, List<Pending>> groups = new LinkedHashMap<>();
+        candidates(appId).map(this::pending).filter(Objects::nonNull).forEach(p -> {
+            String key = SameOrigin.key(p.finding());
+            groups.computeIfAbsent(key == null ? p.finding() : key, k -> new ArrayList<>()).add(p);
+        });
+        return groups.values().stream()
+                .limit(max)
+                .map(group -> group.get(0).target().withSameOrigin(
+                        IntStream.range(1, group.size()).mapToObj(i -> member(group.get(i), i <= MAX_SAME_ORIGIN_WITH_CODE)).toList()))
+                .toList();
+    }
+
+    /** 이 앱에 판별할 대기가 있는가(배치를 띄울지 — 대상 전체를 만들지 않고 첫 건에서 멈춘다). */
+    @Transactional(readOnly = true)
+    public boolean hasPendingTargets(Long appId) {
+        return candidates(appId).map(this::pending).anyMatch(Objects::nonNull);
+    }
+
+    /** 대기 판단 전 후보 — OPEN·대상·코드 문맥 있음, 높은 등급부터. */
+    private Stream<SecureCodeFinding> candidates(Long appId) {
         Set<Long> appIds = appRepository.findAll().stream().map(App::getId).collect(Collectors.toSet());
         return findingRepository.findByStatus(SecureCodeFinding.OPEN).stream()
-                .filter(f -> appIds.contains(f.getAppId()))
+                .filter(f -> appIds.contains(f.getAppId()) && (appId == null || appId.equals(f.getAppId())))
                 .filter(f -> isTarget(f.getRuleId(), f.getSeverity(), f.getTraceSafety()))
                 .filter(f -> f.getAiContext() != null && !f.getAiContext().isBlank())
-                .flatMap(f -> {
-                    SecureCodeReviewTarget target = toTarget(f);
-                    boolean pending = target.code() != null && !target.code().isBlank()
-                            && !target.inputHash().equals(f.getAiInputHash());
-                    return pending ? Stream.of(target) : Stream.<SecureCodeReviewTarget>empty();
-                })
-                .toList();
+                .sorted(Comparator.comparing(SecureCodeFinding::getSeverity, SeverityOrder.HIGH_FIRST)
+                        .thenComparing(SecureCodeFinding::getId, Comparator.nullsLast(Comparator.naturalOrder())));
+    }
+
+    private record Pending(SecureCodeFinding finding, SecureCodeReviewTarget target) {
+    }
+
+    /** 판별할 대기면 입력과 함께, 아니면 null(이미 지금 입력으로 판별함·상한만큼 실패함·코드 없음). */
+    private Pending pending(SecureCodeFinding f) {
+        SecureCodeReviewTarget target = toTarget(f);
+        boolean pending = target.code() != null && !target.code().isBlank()
+                && !target.inputHash().equals(f.getAiInputHash())
+                && !gaveUp(f, target.inputHash());
+        return pending ? new Pending(f, target) : null;
+    }
+
+    /** 같은 출처 지점 — 위험 호출 주변 코드만(메서드 전체를 다 실으면 묶음이 클 때 입력이 커진다). 앞의 몇 개만 코드를 싣는다. */
+    private static SameOriginMember member(Pending p, boolean withCode) {
+        SecureCodeReviewTarget t = p.target();
+        String sink = t.traceEvidence().isEmpty() ? null : t.traceEvidence().get(t.traceEvidence().size() - 1);
+        String code = null;
+        int codeStart = t.startLine();
+        if (withCode && t.code() != null) {
+            String[] lines = t.code().split("\n", -1);
+            int hit = t.startLine() - t.codeStartLine();
+            int from = Math.max(0, hit - SAME_ORIGIN_CONTEXT_LINES);
+            int to = Math.min(lines.length, hit + SAME_ORIGIN_CONTEXT_LINES + 1);
+            if (from < to) {
+                code = String.join("\n", Arrays.asList(lines).subList(from, to));
+                codeStart = t.codeStartLine() + from;
+            }
+        }
+        return new SameOriginMember(t.id(), t.inputHash(), t.filePath(), t.startLine(), t.ruleId(), sink, code, codeStart);
+    }
+
+    /** 같은 출처 지점마다 싣는 위험 호출 앞뒤 줄 수와, 코드를 싣는 지점 수(넘으면 위치만). */
+    static final int SAME_ORIGIN_CONTEXT_LINES = 8;
+    static final int MAX_SAME_ORIGIN_WITH_CODE = 5;
+
+    /** 같은 입력으로 상한만큼 실패해 더 보내지 않는가. */
+    private boolean gaveUp(SecureCodeFinding f, String inputHash) {
+        return f.getAiFailCount() != null && f.getAiFailCount() >= maxFailures && inputHash.equals(f.getAiFailInputHash());
+    }
+
+    /** 화면용 — 판별을 포기했는가(지금 입력 기준으로 상한만큼 실패). 실패가 상한에 닿은 건만 해시를 계산한다. */
+    public boolean isReviewGivenUp(SecureCodeFinding f) {
+        return f.getAiFailCount() != null && f.getAiFailCount() >= maxFailures && gaveUp(f, toTarget(f).inputHash());
+    }
+
+    /** 배치가 알린 판별 실패를 센다. 이유는 500자(컬럼 길이)로 자른다. */
+    @Transactional
+    public void recordFailure(Long findingId, SecureCodeReviewFailure failure) {
+        if (failure.inputHash() == null || failure.inputHash().isBlank()) {
+            throw new IllegalArgumentException("inputHash가 없습니다: id=" + findingId);
+        }
+        SecureCodeFinding finding = findingRepository.findById(findingId)
+                .orElseThrow(() -> new IllegalArgumentException("탐지 건을 찾을 수 없습니다: id=" + findingId));
+        String reason = failure.reason() == null ? "" : failure.reason().strip();
+        String trimmed = reason.length() > 500 ? reason.substring(0, 500) : reason;
+        finding.recordAiFailure(failure.inputHash(), trimmed);
+        sameOriginMembers(finding, failure.sameOrigin()).forEach(m -> m.finding().recordAiFailure(m.inputHash(), trimmed));
+    }
+
+    private record Member(SecureCodeFinding finding, String inputHash) {
+    }
+
+    /**
+     * 대표와 함께 판별·실패를 저장할 같은 출처 지점. 배치가 돌려준 id라도 대표와 같은 앱·같은 출처일 때만 받는다 —
+     * 엉뚱한 탐지에 판별이 붙지 않게(재점검으로 그사이 출처가 바뀌었으면 그 지점은 다음 배치에서 따로 판별된다).
+     */
+    private List<Member> sameOriginMembers(SecureCodeFinding representative, List<SameOriginRef> refs) {
+        if (refs == null || refs.isEmpty()) return List.of();
+        String key = SameOrigin.key(representative);
+        if (key == null) return List.of();
+        List<Member> members = new ArrayList<>();
+        for (SameOriginRef ref : refs) {
+            if (ref == null || ref.id() == null || ref.inputHash() == null || ref.inputHash().isBlank()) continue;
+            findingRepository.findById(ref.id())
+                    .filter(f -> key.equals(SameOrigin.key(f)))
+                    .ifPresent(f -> members.add(new Member(f, ref.inputHash())));
+        }
+        return members;
     }
 
     @Transactional
@@ -143,8 +273,11 @@ public class SecureCodeAiReviewService {
         }
         SecureCodeFinding finding = findingRepository.findById(findingId)
                 .orElseThrow(() -> new IllegalArgumentException("탐지 건을 찾을 수 없습니다: id=" + findingId));
-        finding.applyAiReview(request.verdict(), request.confidence(), summary, reasoning, attack, fix, request.inputHash(),
-                LocalDateTime.now());
+        LocalDateTime now = LocalDateTime.now();
+        finding.applyAiReview(request.verdict(), request.confidence(), summary, reasoning, attack, fix, request.inputHash(), now);
+        // 같은 출처 지점에도 같은 판별을 저장한다 — 각자 자기 입력 해시로(나중에 한 지점의 코드만 바뀌면 그 지점만 다시 대기가 된다).
+        sameOriginMembers(finding, request.sameOrigin()).forEach(m -> m.finding()
+                .applyAiReview(request.verdict(), request.confidence(), summary, reasoning, attack, fix, m.inputHash(), now));
     }
 
     private static String required(String value, String name, int maxLength, Long findingId) {
@@ -196,7 +329,7 @@ public class SecureCodeAiReviewService {
                 traceLabel == null ? "" : traceLabel, String.join("\n", evidence)) + (relatedText.isEmpty() ? "" : "\u0000" + relatedText));
         return new SecureCodeReviewTarget(f.getId(), f.getRuleId(), f.getKisaCategory(), f.getKisaName(), f.getCwe(),
                 f.getSeverity(), f.getMessage(), f.getFilePath(), nz(f.getStartLine()), nz(f.getEndLine()),
-                code, codeStart, traceLabel, evidence, related, hash);
+                code, codeStart, traceLabel, evidence, related, hash, List.of());
     }
 
     /** 점검 때 저장한 관련 코드(JSON)를 읽고 비밀값을 가린다. 못 읽으면 없는 것으로(탐지 메서드만 보낸다). */

@@ -168,6 +168,20 @@ public class SecureCodeFinding {
     @Column(name = "ai_reviewed_at")
     private LocalDateTime aiReviewedAt;
 
+    /**
+     * 같은 입력(aiFailInputHash)으로 판별에 실패한 횟수 — 응답이 잘림·형식 오류·서버가 저장을 거절(취약인데 공격·조치 없음 등).
+     * 상한(ai.securecode.max-failures)에 닿으면 대기에서 뺀다. 빼지 않으면 배치마다 같은 건을 다시 보내 계속 과금된다.
+     * 재점검으로 입력이 바뀌면 횟수는 처음부터 다시 센다. 판별이 저장되면 지운다.
+     */
+    @Column(name = "ai_fail_count")
+    private Integer aiFailCount;
+
+    @Column(name = "ai_fail_input_hash", length = 64)
+    private String aiFailInputHash;
+
+    @Column(name = "ai_last_error", length = 500)
+    private String aiLastError;
+
     @Column(nullable = false, length = 20)
     private String status;
 
@@ -270,6 +284,16 @@ public class SecureCodeFinding {
         aiFix = fix;
         aiInputHash = inputHash;
         aiReviewedAt = now;
+        aiFailCount = null;
+        aiFailInputHash = null;
+        aiLastError = null;
+    }
+
+    /** 판별 실패를 센다 — 입력이 바뀌었으면(재점검) 처음부터. */
+    public void recordAiFailure(String inputHash, String error) {
+        aiFailCount = inputHash.equals(aiFailInputHash) && aiFailCount != null ? aiFailCount + 1 : 1;
+        aiFailInputHash = inputHash;
+        aiLastError = error;
     }
 
     /** 요약·공격·조치 없이(테스트). */

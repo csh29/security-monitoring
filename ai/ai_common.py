@@ -11,6 +11,7 @@ import sys
 import threading
 import traceback
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable
@@ -35,14 +36,68 @@ class BackendClient:
         self._base_url = base_url.rstrip("/")
         self._headers = {"X-Internal-Token": token}
 
-    def _get(self, path: str):
-        response = requests.get(f"{self._base_url}{path}", headers=self._headers, timeout=30)
+    def _get(self, path: str, params: dict | None = None):
+        response = requests.get(f"{self._base_url}{path}", headers=self._headers, params=params, timeout=30)
         response.raise_for_status()
         return response.json()
 
     def _post(self, path: str, body: dict, timeout: int = 30) -> None:
         response = requests.post(f"{self._base_url}{path}", headers=self._headers, json=body, timeout=timeout)
         response.raise_for_status()
+
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+@contextmanager
+def stage_lock(name: str):
+    """기능(cve·securecode)별 실행 잠금. 이미 같은 기능이 돌고 있으면 False를 낸다 — 두 배치가 같은 대기를 동시에 판별하면 이중 과금이다
+    (서버 재기동 뒤 남은 배치, 사람이 직접 띄운 배치). 잠금은 OS 파일 잠금이라 프로세스가 강제 종료돼도 풀린다.
+    잡는 동안 PID를 ai/.batch-이름.pid에 적는다 — 서버(AiAssessmentTriggerService)가 자기가 띄우지 않은 배치도 보고 끌 수 있게."""
+    lock_path = os.path.join(_HERE, f".batch-{name}.lock")
+    pid_path = os.path.join(_HERE, f".batch-{name}.pid")
+    handle = open(lock_path, "a+")
+    try:
+        try:
+            _lock_file(handle)
+        except OSError:
+            yield False
+            return
+        with open(pid_path, "w", encoding="ascii") as f:
+            f.write(str(os.getpid()))
+        try:
+            yield True
+        finally:
+            try:
+                os.remove(pid_path)
+            except OSError:
+                pass
+            _unlock_file(handle)
+    finally:
+        handle.close()
+
+
+def _lock_file(handle) -> None:
+    if os.name == "nt":
+        import msvcrt
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock_file(handle) -> None:
+    try:
+        if os.name == "nt":
+            import msvcrt
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
 
 
 def _system_prompt(text: str, use_cache: bool) -> list[dict]:

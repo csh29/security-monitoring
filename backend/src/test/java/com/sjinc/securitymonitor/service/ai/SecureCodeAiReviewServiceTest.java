@@ -2,6 +2,9 @@ package com.sjinc.securitymonitor.service.ai;
 
 import com.sjinc.securitymonitor.domain.App;
 import com.sjinc.securitymonitor.domain.SecureCodeFinding;
+import com.sjinc.securitymonitor.dto.ai.SameOriginMember;
+import com.sjinc.securitymonitor.dto.ai.SameOriginRef;
+import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewFailure;
 import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewRequest;
 import com.sjinc.securitymonitor.dto.ai.SecureCodeReviewTarget;
 import com.sjinc.securitymonitor.dto.securecode.DetectedFinding;
@@ -35,6 +38,8 @@ class SecureCodeAiReviewServiceTest {
         service = new SecureCodeAiReviewService(findingRepository, appRepository);
         ReflectionTestUtils.setField(service, "severities", List.of("HIGH", "MEDIUM"));
         ReflectionTestUtils.setField(service, "extraRules", List.of("kisa-insecure-random", "kisa-xxe-parser"));
+        ReflectionTestUtils.setField(service, "maxFailures", 3);
+        ReflectionTestUtils.setField(service, "maxPerRun", 200);
         when(appRepository.findAll()).thenReturn(List.of(App.builder().id(1L).systemName("CRM").build()));
     }
 
@@ -188,6 +193,91 @@ class SecureCodeAiReviewServiceTest {
 
     private static SecureCodeReviewRequest req(String verdict, String confidence, String reasoning, String hash) {
         return new SecureCodeReviewRequest(verdict, confidence, "요약", reasoning, "pgmID=../../x 로 상위 폴더에 쓴다", "pgmID를 영숫자로 검증", hash);
+    }
+
+    @Test
+    void 점검한_앱의_대기만_높은_등급부터_상한만큼_가져온다() {
+        when(appRepository.findAll()).thenReturn(List.of(App.builder().id(1L).systemName("CRM").build(),
+                App.builder().id(2L).systemName("TEST").build()));
+        SecureCodeFinding medium = finding(1L, detected("m", "MEDIUM", null, "ctx-m"));
+        SecureCodeFinding high = finding(1L, detected("h", "HIGH", null, "ctx-h"));
+        SecureCodeFinding otherApp = finding(2L, detected("o", "HIGH", null, "ctx-o"));
+        when(findingRepository.findByStatus("OPEN")).thenReturn(List.of(medium, high, otherApp));
+
+        assertThat(service.getPendingTargets(1L, null)).extracting(SecureCodeReviewTarget::code).containsExactly("ctx-h", "ctx-m");
+        assertThat(service.getPendingTargets(1L, 1)).extracting(SecureCodeReviewTarget::code).containsExactly("ctx-h");
+        assertThat(service.getPendingTargets(null, null)).hasSize(3);   // 앱을 안 주면(사람이 직접 돌림) 전체
+        // 요청한 건수가 커도 1회 상한을 넘지 않는다.
+        ReflectionTestUtils.setField(service, "maxPerRun", 2);
+        assertThat(service.getPendingTargets(null, 100)).hasSize(2);
+        assertThat(service.hasPendingTargets(2L)).isTrue();
+    }
+
+    @Test
+    void 같은_입력으로_상한만큼_실패하면_대기에서_빼고_입력이_바뀌면_다시_센다() {
+        SecureCodeFinding f = finding(1L, detected("a", "HIGH", null, "ctx-a"));
+        when(findingRepository.findByStatus("OPEN")).thenReturn(List.of(f));
+        when(findingRepository.findById(7L)).thenReturn(Optional.of(f));
+        String hash = SecureCodeAiReviewService.toTarget(f).inputHash();
+
+        service.recordFailure(7L, new SecureCodeReviewFailure(hash, "응답이 잘렸습니다"));
+        service.recordFailure(7L, new SecureCodeReviewFailure(hash, "응답이 잘렸습니다"));
+        assertThat(service.getPendingTargets()).hasSize(1);     // 2회 — 아직 다시 보낸다
+        service.recordFailure(7L, new SecureCodeReviewFailure(hash, "취약 판별에 예상 공격·조치 방법이 없습니다"));
+
+        assertThat(f.getAiFailCount()).isEqualTo(3);
+        assertThat(service.getPendingTargets()).isEmpty();      // 3회 — 배치마다 재과금하지 않게 뺀다
+        assertThat(service.isReviewGivenUp(f)).isTrue();
+        assertThat(f.getAiLastError()).contains("예상 공격");
+
+        // 재점검으로 입력이 바뀐 실패는 처음부터 센다.
+        service.recordFailure(7L, new SecureCodeReviewFailure("other-hash", "x"));
+        assertThat(f.getAiFailCount()).isEqualTo(1);
+        // 판별이 저장되면 실패 기록을 지운다.
+        f.applyAiReview("VULNERABLE", "high", "요약", "이유", "공격", "조치", hash, NOW);
+        assertThat(f.getAiFailCount()).isNull();
+        assertThatThrownBy(() -> service.recordFailure(7L, new SecureCodeReviewFailure(" ", "x")))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    /** CKEditor pgmID 모양 — 한 요청값이 폴더 만들기·파일 쓰기 두 지점에 들어간다. AI는 한 번만, 결과는 두 지점 모두에. */
+    @Test
+    void 같은_출처는_한_번만_판별하고_결과를_함께_저장한다() {
+        String evidence = "CkEditorController.java:51 요청 값 request.getParameter(\"pgmID\")\nFrameFileUtil.java:46 new File(dir)";
+        SecureCodeFinding mkdir = finding(1L, new DetectedFinding("d", "kisa-path-traversal-dynamic-path", "입력", "경로", "CWE-22", "HIGH",
+                "F.java", 46, 46, "m", "s", 40, "CLIENT", evidence, "ctx-mkdir", 40));
+        SecureCodeFinding write = finding(1L, new DetectedFinding("w", "kisa-path-traversal-dynamic-path", "입력", "경로", "CWE-22", "HIGH",
+                "F.java", 88, 88, "m", "s", 80, "CLIENT",
+                evidence.replace("FrameFileUtil.java:46 new File(dir)", "FrameFileUtil.java:88 new File(path)"),
+                String.join("\n", java.util.Collections.nCopies(20, "line")), 80));
+        // 출처는 같지만 CWE가 다르면(같은 값이 SQL에도) 따로 판별한다.
+        SecureCodeFinding sql = finding(1L, new DetectedFinding("q", "kisa-sql-injection-java-concat", "입력", "SQL", "CWE-89", "HIGH",
+                "Q.java", 9, 9, "m", "s", 1, "CLIENT", evidence, "ctx-sql", 1));
+        ReflectionTestUtils.setField(mkdir, "id", 1L);
+        ReflectionTestUtils.setField(write, "id", 2L);
+        ReflectionTestUtils.setField(sql, "id", 3L);
+        when(findingRepository.findByStatus("OPEN")).thenReturn(List.of(mkdir, write, sql));
+
+        List<SecureCodeReviewTarget> pending = service.getPendingTargets();
+
+        assertThat(pending).extracting(SecureCodeReviewTarget::id).containsExactly(1L, 3L);
+        SameOriginMember member = pending.get(0).sameOrigin().get(0);
+        assertThat(member.id()).isEqualTo(2L);
+        assertThat(member.sink()).isEqualTo("FrameFileUtil.java:88 new File(path)");
+        // 위험 호출 앞뒤 줄만 싣는다(메서드 전체가 아니라).
+        assertThat(member.code().split("\n")).hasSize(SecureCodeAiReviewService.SAME_ORIGIN_CONTEXT_LINES * 2 + 1);
+        assertThat(pending.get(1).sameOrigin()).isEmpty();
+
+        when(findingRepository.findById(1L)).thenReturn(Optional.of(mkdir));
+        when(findingRepository.findById(2L)).thenReturn(Optional.of(write));
+        when(findingRepository.findById(3L)).thenReturn(Optional.of(sql));
+        service.saveReview(1L, new SecureCodeReviewRequest("VULNERABLE", "high", "요약", "- 근거", "공격", "조치",
+                pending.get(0).inputHash(), List.of(new SameOriginRef(2L, member.inputHash()), new SameOriginRef(3L, "h-sql"))));
+
+        assertThat(write.getAiVerdict()).isEqualTo("VULNERABLE");
+        assertThat(SecureCodeAiReviewService.isReviewCurrent(write)).isTrue();   // 자기 입력 해시로 저장
+        assertThat(sql.getAiVerdict()).isNull();                                 // 출처가 다른 id는 받지 않는다
+        assertThat(service.getPendingTargets()).extracting(SecureCodeReviewTarget::id).containsExactly(3L);
     }
 
     @Test

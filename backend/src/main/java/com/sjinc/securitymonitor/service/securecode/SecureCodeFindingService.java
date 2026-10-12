@@ -24,7 +24,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -83,13 +85,27 @@ public class SecureCodeFindingService {
         Map<Long, String> systemNames = appRepository.findAll().stream()
                 .collect(Collectors.toMap(App::getId, App::getSystemName));
         // 심각도 높은 것부터. 같은 등급 안에서는 쿼리 순서(앱·파일·줄)를 그대로 둔다 — sorted는 안정 정렬이다.
-        return findingRepository.search(appId, status).stream()
+        List<SecureCodeFinding> findings = findingRepository.search(appId, status).stream()
                 .filter(finding -> systemNames.containsKey(finding.getAppId()))
                 .sorted(Comparator.comparing(SecureCodeFinding::getSeverity, SeverityOrder.HIGH_FIRST))
-                .map(finding -> SecureCodeFindingView.of(finding, systemNames.get(finding.getAppId()),
-                        SecureCodeAiReviewService.isReviewCurrent(finding),
-                        SecureCodeFinding.OPEN.equals(finding.getStatus())
-                                && aiReviewService.isTarget(finding.getRuleId(), finding.getSeverity(), finding.getTraceSafety())))
+                .toList();
+        // 같은 출처 묶음 — 조회된 목록 안에서만(처리여부 조건으로 빠진 건은 묶지 않는다).
+        Map<String, List<Long>> idsByOrigin = new HashMap<>();
+        findings.forEach(f -> {
+            String key = SameOrigin.key(f);
+            if (key != null) idsByOrigin.computeIfAbsent(key, k -> new ArrayList<>()).add(f.getId());
+        });
+        return findings.stream()
+                .map(finding -> {
+                    String key = SameOrigin.key(finding);
+                    List<Long> others = key == null ? List.of() : idsByOrigin.get(key).stream()
+                            .filter(id -> !Objects.equals(id, finding.getId())).toList();
+                    return SecureCodeFindingView.of(finding, systemNames.get(finding.getAppId()),
+                            SecureCodeAiReviewService.isReviewCurrent(finding),
+                            SecureCodeFinding.OPEN.equals(finding.getStatus())
+                                    && aiReviewService.isTarget(finding.getRuleId(), finding.getSeverity(), finding.getTraceSafety()),
+                            aiReviewService.isReviewGivenUp(finding), others);
+                })
                 .toList();
     }
 

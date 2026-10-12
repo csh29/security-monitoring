@@ -269,7 +269,9 @@ NVD 조회는 CVE 건수만큼 반복되는 외부 호출이라 한도 초과(42
 7. `SecureCodeReconciler`(순수) → `SecureCodeFindingService.applyScan`(트랜잭션) — 새 지문은 OPEN, 있던 지문은 위치·조각 갱신(스캔이 해결한 건은 다시 OPEN),
    이번에 안 걸린 OPEN은 RESOLVED. **단 분석 실패 파일의 탐지와, 이번 규칙셋에 없는 규칙의 탐지는 해결 처리하지 않는다**
 8. 이력 SUCCESS(파일·탐지·신규·해결·분석 실패 수, 엔진·규칙셋 버전) / 실패면 FAILED. 성공하면 `triggerAiReviewIfNeeded` — 자동 실행 스위치(`AI_CONFIG`/`AUTO_TRIGGER`)가
-   켜져 있고 판별 대기(전체 앱)가 있으면 **시큐어코딩 단계만** 띄운다(`triggerAsync(BatchKind.SECURE_CODE)` → `vuln_assessor.py securecode`, 로그 `ai-securecode.log`).
+   켜져 있고 **이 앱에** 판별 대기가 있으면(`hasPendingTargets(appId)`) **시큐어코딩 단계만, 이 앱만** 띄운다(`triggerAsync(BatchKind.SECURE_CODE, appId)` →
+   `vuln_assessor.py securecode` + 환경변수 `SECURITY_MONITOR_APP_ID`, 로그 `ai-securecode.log`). 예전엔 전체 앱 대기를 한꺼번에 가져가 테스트 앱 하나 점검에
+   1,427건이 잡혔다(2026-10-08). 이미 돌고 있으면 이 앱은 차례를 기다렸다가 그 배치가 끝나면 이어서 뜬다(`queuedAppIds`).
    예전엔 배치 하나로 전체를 돌려 코드 점검 뒤 로그에도 할 일 없는 CVE 단계(CVE 판단 0건, fix-plan …)가 찍혔다. 두 종류는 따로 떠서 동시에 돌 수 있고 "이미 떠 있으면 건너뜀"도 종류별이다. 화면 오류 문구는 `IllegalArgumentException`·`SecureCodeScanException`만
    메시지를 그대로, 나머지는 종류만(내부 경로 노출 방지). clone은 finally에서 지운다
 
@@ -477,6 +479,19 @@ AI에게 넘기는 근거도 마찬가지다. OSV에서 뽑은 `knownFixedVersio
   근거가 부족하고 다음 점검에서 문맥이 생기면 입력이 바뀌어 다시 판별(과금)된다. 화면은 이런 건도 "판별 대기"로 보이고 모달에 "코드 문맥이 아직 없으면 다음 코드 점검 뒤"라고 적는다.
   코드는 보내기 직전에 `SecretMasker`로 가린다(되돌릴 원문이 없어 대응표는 버린다). **소스 코드가 AI로 나가는 유일한 곳이다**(사내 정책 예외, 2026-10-06 승인,
   2026-10-07 추가 규칙, 2026-10-08 판정 불가 전체·관련 코드·HIGH·MEDIUM 전체(추적 확정 포함)까지 확대).
+- **한 번에 판별하는 양(2026-10-08):** pending(`getPendingTargets(appId, limit)`)은 앱을 주면 그 앱만, **높은 등급부터 최대 `ai.securecode.max-per-run`(기본 200)건**.
+  나머지는 다음 실행이 가져간다.
+- **같은 출처 묶음(2026-10-08, `SameOrigin`):** 한 요청값이 여러 위험 지점에 들어가면(CKEditor `pgmID` → `FrameFileUtil:46` 폴더 만들기·`:88` 파일 쓰기)
+  지점마다 탐지가 따로 생긴다 — 지점은 각각 실제 위험이라 탐지는 그대로 두고, 같은 앱·같은 CWE·연계 추적 첫 걸음(값이 처음 들어온 곳)이 같은 것을 묶는다.
+  pending은 묶음당 한 건(가장 높은 등급이 대표)만 내고 나머지 지점은 `sameOrigin`(`SameOriginMember` — 위험 호출 앞뒤 8줄, 앞의 5개 지점만 코드)으로 싣는다.
+  배치는 프롬프트 `[같은 출처의 다른 지점]`으로 한 번에 판별하고(하나라도 취약하면 VULNERABLE, 조치는 출처에서 막는 방법 먼저) 결과·실패를 `sameOrigin`(id·inputHash)과
+  함께 보낸다 — 서버는 대표와 같은 출처인 지점에만 각자의 입력 해시로 저장한다(한 지점 코드만 바뀌면 그 지점만 다시 대기). 건수 상한은 묶음 기준.
+  화면은 목록 파일 칸에 "같은 출처 +N", 상세보기에 다른 지점 목록(누르면 그 건으로)을 보인다(조회된 목록 안에서만 묶는다).
+- **실패 상한(2026-10-08):** 배치가 실패를 세 종류로 나눈다(`classify_failure`) — 치명(API 키·권한·모델 없음·잔액 부족, 백엔드 토큰 401)이면 **배치를 멈추고**,
+  일시(요청 한도·연결·5xx)는 세지 않고, 내용(응답 잘림·형식 오류·서버가 저장 거절 400)은 `POST /api/ai/secure-code/{id}/failure`로 알린다. 서버는 같은 입력 해시로
+  센 횟수(`aiFailCount`·`aiFailInputHash`·`aiLastError`)가 `ai.securecode.max-failures`(기본 3)에 닿으면 대기에서 뺀다 — 늘 잘리거나 저장이 거절되는 건을 배치마다
+  재과금하지 않게. 입력이 바뀌면(재점검) 처음부터 세고, 판별이 저장되면 지운다. 화면은 "판별 실패"와 마지막 이유를 보인다(`AI_GIVEN_UP`).
+  종류와 무관하게 연속 5건(`MAX_CONSECUTIVE_FAILURES`)이 실패해도 멈춘다. 멈춘 뒤 남은 건은 보내지 않고 대기로 남는다.
 - **재판별 기준:** 입력(가린 코드·규칙·경로·연계 추적)의 SHA-256(`aiInputHash`)이 저장된 값과 다를 때만. 줄 번호는 넣지 않는다(위에 한 줄 추가로 재과금되지 않게).
   배치는 pending에서 받은 해시를 그대로 돌려준다(CveSummary와 같은 방식). 재점검으로 입력이 바뀌면 옛 판별은 화면에서 숨기고(`isReviewCurrent`) 다시 대기가 된다.
 - **결과:** `aiVerdict`(VULNERABLE/NOT_VULNERABLE/UNCERTAIN)·`aiConfidence`·`aiSummary`(결론 한 문장, 300자)·`aiReasoning`(근거 글머리, 2000자)·
@@ -669,6 +684,8 @@ OPEN만)에서도 빠진다.
 | `ai.assessment.severities` | AI 판단 대상 등급 (기본 `HIGH,CRITICAL`) |
 | `ai.securecode.severities` | 선택. 코드 점검 탐지 중 AI 판별 대상 등급 (기본 `HIGH,MEDIUM`, 코드 점검 등급은 HIGH/MEDIUM/LOW). 연계 추적이 안전으로 확정한 건과 하드코드된 비밀값 규칙은 등급과 무관하게 빠지고, 연계 추적이 판정 불가로 남긴 건은 등급과 무관하게 들어간다. 클라이언트 값으로 확정한 HIGH는 들어간다 |
 | `ai.securecode.extra-rules` | 선택. 등급과 무관하게 AI 판별 대상에 넣는 규칙 id(쉼표 구분, 기본 `kisa-insecure-random,kisa-weak-crypto-hash,kisa-hash-without-salt,kisa-xxe-parser`, 비우면 없음). 연계 추적 판정·비밀값 규칙 제외는 같다 |
+| `ai.securecode.max-per-run` | 선택. 코드 점검 AI 판별 배치 한 번에 판별하는 최대 건수(기본 200, 높은 등급부터). 나머지는 다음 실행 |
+| `ai.securecode.max-failures` | 선택. 같은 입력으로 이만큼 판별에 실패하면 대기에서 뺀다(기본 3, 입력이 바뀌면 다시 센다) |
 | `github.token` | 선택. 영향 분석이 GitHub Releases를 받을 때 쓰는 읽기 전용 토큰. 배치에 `GITHUB_TOKEN`으로 넘긴다. 없으면 토큰 없이 부른다 |
 | `ai.auto-trigger.enabled` | 스캔 후 AI 배치 자동 실행 스위치의 **초기값**(기본 `true`, DB를 처음 만들 때만 쓰인다). 실제 스위치는 공통코드 `AI_CONFIG`/`AUTO_TRIGGER`의 사용여부로, 공통코드 관리 화면에서 바꾸면 재기동 없이 다음 스캔부터 적용된다(`ComCdService.isEnabled`). DB를 처음 만들 때만 이 값으로 심는다(파일 DB라 재기동해도 공통코드 값이 유지된다). 로컬은 `false`로 두면 과금 없이 스캔할 수 있다 |
 | `securecode.semgrep.command` | 선택. semgrep 실행 파일(기본 `semgrep`). 기본값인데 PATH에 없으면 `ai.python.command`로 파이썬 Scripts 폴더를 물어 거기서 찾는다(`SemgrepRunner.findInPythonScripts` — 이 PC는 PATH에 없다). 직접 준 경로는 그대로 쓴다. `py -m semgrep`은 지원 중단됐다 |
@@ -681,7 +698,12 @@ OPEN만)에서도 빠진다.
 
 AI 배치 실행 로그는 종류별 파일에 이어 쌓인다(gitignore 대상) — 라이브러리 취약점 `backend/ai-assessor.log`, 시큐어코딩 `backend/ai-securecode.log`
 (`AiAssessmentTriggerService.BatchKind` — 동시에 돌 수 있어 한 파일이면 두 실행의 줄이 섞인다). 진입점 인자: `vuln_assessor.py cve|securecode`(인자 없으면 둘 다, 사람이 직접 돌릴 때).
-`/api/ai/status`는 종류별 상태 맵을 준다. 줄마다 `[YYYY-MM-DD HH:MM:SS][traceId]`가 붙는다(`_TimestampedStream`, traceback 포함). traceId는 실행마다 하나 — 서버가 띄우면 `AiAssessmentTriggerService`가 만들어 `SECURITY_MONITOR_TRACE_ID`로 넘기고 서버 로그의 "배치 실행 시작/종료" 줄에도 찍는다(사람이 직접 돌리면 파이썬이 만든다). 실행마다 `===== AI 배치 시작(시큐어코딩) =====`(괄호에 기능 이름) / `===== AI 배치 종료(exit=N) =====` 줄과 끝의 빈 줄이 남는다. 서버가 `PYTHONIOENCODING=utf-8`로 띄워 로그는 UTF-8이다(예전엔 윈도우 기본 cp949라 IDE에서 한글이 깨졌다).
+`/api/ai/status`는 종류별 상태 맵을 준다(돌고 있는지·판별 중인 앱·차례를 기다리는 앱).
+**실행 잠금·중지(2026-10-08):** 진입점이 기능별로 OS 파일 잠금(`ai_common.stage_lock` → `ai/.batch-이름.lock`)을 잡고 PID를 `ai/.batch-이름.pid`에 적는다 —
+같은 기능이 이미 돌고 있으면 그 기능은 건너뛴다(서버 재기동 전에 띄운 배치·사람이 띄운 배치와 같은 대기를 두 번 판별하지 않게). 잠금은 프로세스가 강제 종료돼도 OS가 푼다.
+서버는 자기가 띄운 프로세스가 없어도 PID 파일의 프로세스가 파이썬으로 살아 있으면 "실행 중"으로 보고(재사용 PID는 실행 파일로 거른다), 트리거를 건너뛴다.
+코드 점검 결과 화면 위쪽에 배치가 돌 때만 상태 줄과 **[AI 판별 중지]**가 보인다(`GET /api/secure-code/ai-batch`, `POST /api/secure-code/ai-batch/stop` —
+`AiAssessmentTriggerService.stop`이 하위 프로세스까지 끄고 차례 대기도 비운다). 서버가 내려갈 때 서버가 띄운 배치도 끈다(`@PreDestroy`). 줄마다 `[YYYY-MM-DD HH:MM:SS][traceId]`가 붙는다(`_TimestampedStream`, traceback 포함). traceId는 실행마다 하나 — 서버가 띄우면 `AiAssessmentTriggerService`가 만들어 `SECURITY_MONITOR_TRACE_ID`로 넘기고 서버 로그의 "배치 실행 시작/종료" 줄에도 찍는다(사람이 직접 돌리면 파이썬이 만든다). 실행마다 `===== AI 배치 시작(시큐어코딩) =====`(괄호에 기능 이름) / `===== AI 배치 종료(exit=N) =====` 줄과 끝의 빈 줄이 남는다. 서버가 `PYTHONIOENCODING=utf-8`로 띄워 로그는 UTF-8이다(예전엔 윈도우 기본 cp949라 IDE에서 한글이 깨졌다).
 
 ---
 
