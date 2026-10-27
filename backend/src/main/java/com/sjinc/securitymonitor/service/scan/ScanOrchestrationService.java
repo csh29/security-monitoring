@@ -6,9 +6,7 @@ import com.sjinc.securitymonitor.domain.ScanHistory;
 import com.sjinc.securitymonitor.domain.ScanSnapshot;
 import com.sjinc.securitymonitor.dto.osv.OsvBatchResultItem;
 import com.sjinc.securitymonitor.dto.osv.OsvVulnRef;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sjinc.securitymonitor.dto.scan.ScanResult;
-import com.sjinc.securitymonitor.dto.scan.SourceUsage;
 import com.sjinc.securitymonitor.dto.scan.ScanResult.DependencyFinding;
 import com.sjinc.securitymonitor.repository.AppRepository;
 import com.sjinc.securitymonitor.repository.ScanSnapshotRepository;
@@ -53,8 +51,6 @@ public class ScanOrchestrationService {
     private final CveSummaryService cveSummaryService;
     private final ScanHistoryService scanHistoryService;
     private final UpgradeImpactService upgradeImpactService;
-    private final SourceUsageExtractor sourceUsageExtractor;
-    private final ObjectMapper objectMapper;
 
 
     @Value("${maven.home}")
@@ -177,7 +173,7 @@ public class ScanOrchestrationService {
                 String pomXml = Files.readString(new File(projectDir, "pom.xml").toPath());
                 ScanSnapshot snapshot = scanSnapshotRepository.findByAppId(appId)
                         .orElseGet(() -> ScanSnapshot.builder().app(app).build());
-                snapshot.updateSnapshot(pomXml, treeResult.rawText(), extractSourceUsage(projectDir, systemName));
+                snapshot.updateSnapshot(pomXml, treeResult.rawText());
                 scanSnapshotRepository.save(snapshot);
             }
 
@@ -221,22 +217,6 @@ public class ScanOrchestrationService {
             }
         } catch (Exception e) {
             log.warn("AI 배치 실행 판단/시작에 실패했습니다(스캔 결과는 저장됨): {}", e.toString());
-        }
-    }
-
-    /**
-     * import·설정 키 목록을 JSON으로. 영향 분석의 "우리 코드" 대조용 부가 정보라, 실패해도 스캔은 계속하고 null을 남긴다 —
-     * 화면은 null을 "판단 불가"로 보여준다(없는 걸 "안 보임"으로 보이면 영향 없음처럼 읽힌다).
-     */
-    private String extractSourceUsage(File projectDir, String systemName) {
-        try {
-            SourceUsage usage = sourceUsageExtractor.extract(projectDir.toPath());
-            log.info("[{}] 소스 사용 목록 추출: java 파일 {}개, import {}종, 설정 키 {}개",
-                    systemName, usage.javaFileCount(), usage.imports().size(), usage.configKeys().size());
-            return objectMapper.writeValueAsString(usage);
-        } catch (Exception e) {
-            log.warn("[{}] 소스 사용 목록 추출 실패(스캔은 계속 진행): {}", systemName, e.toString());
-            return null;
         }
     }
 

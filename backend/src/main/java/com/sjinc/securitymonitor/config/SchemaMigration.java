@@ -29,11 +29,31 @@ public class SchemaMigration implements CommandLineRunner {
             new String[]{"SECURE_CODE_SCANS", "REPO_URL"},
             new String[]{"SECURE_CODE_SCANS", "BRANCH"});
 
+    /** (테이블, 컬럼) — 기능을 없애 더는 쓰지 않는 컬럼(영향 분석 신뢰도, 우리 코드 대조용 소스 사용 목록). */
+    private static final List<String[]> DROPPED_COLUMNS = List.of(
+            new String[]{"UPGRADE_IMPACTS", "CONFIDENCE"},
+            new String[]{"SCAN_SNAPSHOT", "SOURCE_USAGE_JSON"});
+
     @Override
     public void run(String... args) {
         for (String[] column : NULLABLE_COLUMNS) {
             dropNotNull(column[0], column[1]);
         }
+        for (String[] column : DROPPED_COLUMNS) {
+            dropColumn(column[0], column[1]);
+        }
+    }
+
+    private void dropColumn(String table, String column) {
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ? AND COLUMN_NAME = ?",
+                Integer.class, table, column);
+        if (count == null || count == 0) {
+            return;
+        }
+        // 테이블·컬럼 이름은 위 상수에서만 온다(사용자 입력 아님).
+        jdbc.execute("ALTER TABLE " + table + " DROP COLUMN " + column);
+        log.info("스키마 변경: 쓰지 않는 컬럼 {}.{}를 지웠습니다.", table, column);
     }
 
     private void dropNotNull(String table, String column) {

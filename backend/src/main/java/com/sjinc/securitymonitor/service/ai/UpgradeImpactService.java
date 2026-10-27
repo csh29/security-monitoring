@@ -42,12 +42,8 @@ public class UpgradeImpactService {
     private static final Set<String> STATUSES =
             Set.of(UpgradeImpact.ANALYZED, UpgradeImpact.NO_SOURCE, UpgradeImpact.FETCH_FAILED);
     private static final Set<String> RISKS = Set.of("LOW", "MEDIUM", "HIGH");
-    private static final Set<String> CONFIDENCES = Set.of("high", "medium", "low");
     private static final Set<String> SOURCE_KINDS =
             Set.of("GITHUB_RELEASE", "GITLAB_RELEASE", "CHANGELOG", "JIRA", "OFFICIAL_DOC");
-
-    private static final int MAX_SYMBOLS = 10;
-    private static final int MAX_SYMBOL_LENGTH = 200;
 
     private final FixPlanChangeRepository fixPlanChangeRepository;
     private final UpgradeImpactRepository upgradeImpactRepository;
@@ -74,14 +70,14 @@ public class UpgradeImpactService {
         UpgradeImpact impact = upgradeImpactRepository
                 .findByCoordinateAndFromVersionAndToVersion(request.coordinate(), request.fromVersion(), request.toVersion())
                 .orElseGet(() -> UpgradeImpact.of(request.coordinate(), request.fromVersion(), request.toVersion()));
-        impact.apply(normalized.status(), normalized.risk(), normalized.confidence(),
+        impact.apply(normalized.status(), normalized.risk(),
                 toJson(normalized.breakingChanges()), toJson(normalized.requiredActions()),
                 toJson(normalized.testFocus()), toJson(normalized.sources()), normalized.note());
         upgradeImpactRepository.save(impact);
     }
 
     /** 분석 결과를 정규화한 값. DB 저장 전 단계라 Spring 없이 테스트할 수 있게 분리했다. */
-    record Normalized(String status, String risk, String confidence, List<BreakingChange> breakingChanges,
+    record Normalized(String status, String risk, List<BreakingChange> breakingChanges,
                       List<String> requiredActions, List<String> testFocus, List<Source> sources, String note) {
     }
 
@@ -95,7 +91,7 @@ public class UpgradeImpactService {
         String note = isBlank(request.note()) ? null : request.note().trim();
         if (!UpgradeImpact.ANALYZED.equals(request.status())) {
             // 근거를 못 모은 건에 위험도·조치가 붙어 있으면 모델 추측이 섞인 것이다 — 분석 필드를 모두 비운다.
-            return new Normalized(request.status(), null, null, List.of(), List.of(), List.of(), List.of(), note);
+            return new Normalized(request.status(), null, List.of(), List.of(), List.of(), List.of(), note);
         }
 
         List<Source> sources = nullToEmpty(request.sources()).stream()
@@ -105,8 +101,8 @@ public class UpgradeImpactService {
         if (sources.isEmpty()) {
             throw new IllegalArgumentException("근거 문서 없이 분석 결과를 저장할 수 없습니다.");
         }
-        if (!RISKS.contains(request.risk()) || !CONFIDENCES.contains(request.confidence())) {
-            throw new IllegalArgumentException("위험도·신뢰도 값이 올바르지 않습니다: " + request.risk() + "/" + request.confidence());
+        if (!RISKS.contains(request.risk())) {
+            throw new IllegalArgumentException("위험도 값이 올바르지 않습니다: " + request.risk());
         }
 
         // 근거 목록에 없는 URL을 출처로 단 breaking change는 모델이 지어냈을 수 있다. 파이썬도 거르지만 한 번 더 막는다.
@@ -115,7 +111,7 @@ public class UpgradeImpactService {
         List<BreakingChange> breakingChanges = requestedChanges.stream()
                 .filter(Objects::nonNull)
                 .filter(c -> !isBlank(c.summary()) && sourceUrls.contains(c.sourceUrl()))
-                .map(c -> new BreakingChange(c.summary().trim(), c.sourceUrl(), normalizeSymbols(c.symbols())))
+                .map(c -> new BreakingChange(c.summary().trim(), c.sourceUrl()))
                 .toList();
         int dropped = requestedChanges.size() - breakingChanges.size();
         if (dropped > 0) {
@@ -124,22 +120,12 @@ public class UpgradeImpactService {
 
         return new Normalized(UpgradeImpact.ANALYZED,
                 adjustRisk(request.risk(), request.fromVersion(), request.toVersion()),
-                adjustConfidence(request.confidence(), sources),
                 breakingChanges, trimAll(request.requiredActions()), trimAll(request.testFocus()), sources, note);
     }
 
     /** 메이저 점프는 릴리스 노트에 breaking change가 안 보여도 HIGH로 본다 — 노트가 빠뜨렸을 가능성이 가장 큰 경우다. */
     static String adjustRisk(String risk, String fromVersion, String toVersion) {
         return VersionJumpClassifier.classify(fromVersion, toVersion) == VersionJump.MAJOR ? "HIGH" : risk;
-    }
-
-    /**
-     * 근거가 JIRA 이슈 목록뿐이면 신뢰도를 medium 이하로 낮춘다. 이슈 목록은 "무엇이 고쳐졌나"는 알려주지만
-     * "무엇이 깨지나"(하위 호환이 깨지는 변경)는 따로 표시되지 않는 경우가 많다.
-     */
-    static String adjustConfidence(String confidence, List<Source> sources) {
-        boolean jiraOnly = sources.stream().allMatch(s -> "JIRA".equals(s.kind()));
-        return jiraOnly && "high".equals(confidence) ? "medium" : confidence;
     }
 
     /** fix-plan 조회용 — 변경 항목들에 해당하는 분석 결과를 (좌표|from|to) 키로 돌려준다. */
@@ -160,7 +146,7 @@ public class UpgradeImpactService {
     }
 
     private UpgradeImpactView toView(UpgradeImpact impact) {
-        return new UpgradeImpactView(impact.getStatus(), impact.getRisk(), impact.getConfidence(),
+        return new UpgradeImpactView(impact.getStatus(), impact.getRisk(),
                 fromJson(impact.getBreakingChangesJson(), new TypeReference<>() {}),
                 fromJson(impact.getRequiredActionsJson(), new TypeReference<>() {}),
                 fromJson(impact.getTestFocusJson(), new TypeReference<>() {}),
@@ -187,17 +173,6 @@ public class UpgradeImpactService {
             log.warn("영향 분석 JSON을 읽지 못했습니다: {}", e.getMessage());
             return List.of();
         }
-    }
-
-    /** 대조용 이름. 공백을 떼고 중복을 없애고, 한 항목에 너무 많거나 긴 이름은 모델이 문장을 넣은 것이라 자른다. */
-    static List<String> normalizeSymbols(List<String> symbols) {
-        return nullToEmpty(symbols).stream()
-                .filter(s -> !isBlank(s))
-                .map(String::trim)
-                .filter(s -> s.length() <= MAX_SYMBOL_LENGTH && !s.contains(" "))
-                .distinct()
-                .limit(MAX_SYMBOLS)
-                .toList();
     }
 
     private static List<String> trimAll(List<String> values) {

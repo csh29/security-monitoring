@@ -586,30 +586,20 @@ fix-plan이 올리는 라이브러리마다 "올리면 무엇이 깨지나"를 �
   AI 호출·저장이 실패하면 저장하지 않으므로 역시 다음 배치에서 다시 대기가 된다.
 - **AI(`prompts/impact.system.md`, `MODEL`):** 근거 문서에 없는 내용을 쓰지 않게 하고, breaking change마다 근거 문서 URL을 `source_url`로 달게 한다.
 - **자바의 정규화(`UpgradeImpactService.normalize`):** 출처가 근거 목록에 없는 breaking change는 버린다(파이썬도 거른다). 메이저 점프는 risk를
-  `HIGH`로 올린다. 근거가 JIRA뿐이면 confidence `high`를 `medium`으로 낮춘다. `ANALYZED`인데 근거가 없거나, 상태·위험도·신뢰도 값이 틀리거나,
+  `HIGH`로 올린다. `ANALYZED`인데 근거가 없거나, 상태·위험도 값이 틀리거나,
   fix-plan에 없는 `(좌표, from, to)`면 400. `NO_SOURCE`/`FETCH_FAILED`는 분석 필드를 모두 비운다(모델 추측이 남지 않게).
 - **API:** `GET /api/ai/impacts/pending`, `POST /api/ai/impacts`. 결과는 `GET /api/fix-plans/{appId}`의 각 change에 `impact`로 붙는다(없으면 null).
 - **화면:** **조치안**(`program/fix-plan.html`, API는 로그인만 필요 — `FixPlanController`에 `@RequiresProgram`이 없다). 판단 근거·수정된 pom.xml 팝업은 90vh, 내용 상자 우상단 복사 아이콘(공통 `.copy-box`/`.copy-btn`, 누르면 잠깐 체크 아이콘)으로 복사한다. 시스템을 고르면
-  요약(전략·검토 상태·미해결/제외 CVE, 판단 근거·수정된 pom.xml은 모달)과 변경 그리드(점프·호환성 위험·신뢰도·breaking 수·분석 상태)를 보여주고,
+  요약(전략·검토 상태·미해결/제외 CVE, 판단 근거·수정된 pom.xml은 모달)과 변경 그리드(점프·호환성 위험·분석 상태)를 보여주고,
   AI가 판단한 값에는 `(AI)`를 붙이고 "조치 전 원문 확인" 안내를 둔다. **호환성 위험(`UpgradeImpact.risk`)은 CVE 심각도가 아니라 그 버전으로 올릴 때
   앱이 깨질 위험**이다(HIGH: 코드·설정 수정 필수 / MEDIUM: 동작 변경 가능 / LOW: 근거상 breaking change 없음 — `impact.system.md`의 risk 기준).
-  신뢰도는 모델이 스스로 매긴 값이라 측정된 정확도가 아니다.
+  (2026-10-27 신뢰도(AI)·우리 코드 칸과 그 저장·추출·대조 로직을 없앴다 — `UpgradeImpact.confidence`·`ScanSnapshot.sourceUsageJson` 컬럼은
+  `SchemaMigration`이 기동 때 지운다. 영향 분석 AI 응답에도 `confidence`·`symbols`가 없다.)
   행을 클릭하면(상세 버튼 칸 없음 — 표가 넘쳐 밀려났다) breaking change(출처 링크)·조치·테스트 영역·근거 문서·메모를 연다. 분석 상태는 PATCH면
   "분석 제외", UNKNOWN이면 "확인 필요(버전)", impact가 없으면 "분석 대기", NO_SOURCE는 **"확인 필요(문서 없음)"**, FETCH_FAILED는 "수집 실패"다
   (패치를 "대기"로 보이면 영원히 기다리는 것처럼 읽히고, NO_SOURCE를 "근거 없음"이라 하면 "문제될 근거가 없다(안전)"로 읽힌다 — 실제로는 영향을 모른다).
   뱃지 색은 노랑=사람이 확인해야 함, 파랑=배치가 알아서 처리함. fix-plan이 없는 앱은 404를 오류가 아니라
   "아직 조치안이 없음"으로 보여준다. AI 문자열은 전부 textContent로 넣고 링크는 http(s)만 만든다.
-- **우리 코드 대조(앱별, AI 없음):** AI가 breaking change마다 가리키는 이름(`symbols` — 클래스 전체 이름·영향받는 패키지·설정 키)을 내고,
-  서버가 조회 시점에 앱의 소스 사용 목록과 대조한다(`CodeUsageMatcher`). **코드도 목록도 AI로 보내지 않는다.**
-  - 목록: 스캔 때 clone을 지우기 전에 `SourceUsageExtractor`가 `.java`의 import 줄(정규식, static은 클래스까지)과 `application*.properties/yml`의
-    **키 이름만**(값은 버림, YAML은 SafeConstructor) 뽑아 `ScanSnapshot.sourceUsageJson`에 둔다. target/build 등은 건너뛴다. 실패해도 스캔은 계속(null).
-  - 판정: `USED` = 정확한 클래스(중첩 포함)·영향받는 패키지·설정 키(정확히 또는 이름이 바뀐 접두어, relaxed binding) 일치.
-    `POSSIBLE` = 짧은 클래스 이름·와일드카드 import(p.*)에 대상 클래스로만 걸림(이름만 같은 다른 클래스일 수 있어 낮춘다).
-    `NOT_FOUND` = import·설정 키에 없음 — **영향 없음이 아니다**(전체 이름 사용·리플렉션·XML·다른 라이브러리 경유는 못 잡는다).
-    `UNKNOWN` = 이름이 없는 변경, symbols가 없는 예전 분석 결과, 소스 목록이 없는 스냅샷(다시 스캔하면 채워짐).
-    전체는 하나라도 USED면 USED, 아니면 POSSIBLE, 판단 불가가 섞이면 UNKNOWN이다. 점 없는 이름·클래스처럼 보이는 이름은 설정 키와 대조하지 않는다.
-  - 결과는 `GET /api/fix-plans/{appId}` 각 change의 `codeUsage`(impact 분석 완료이고 breaking이 있을 때만). 화면 "우리 코드" 칸은
-    "사용 발견 1/3"처럼 건수를 함께 보여주고(그래서 breaking 건수 칸을 없앴다), 상세에는 항목별 결과와 걸린 import(파일 수)를 보여준다.
 
 ### 판정 결과가 이상할 때 보는 필드
 
@@ -771,9 +761,7 @@ Spring 컨텍스트 없이 도는 **순수 단위 테스트**뿐이다(JUnit 5 +
 - `ComCdServiceTest` — 설정 스위치 공통코드의 켜짐 판단(사용여부 Y/N, 코드 없으면 기본값)
 - `VersionJumpClassifierTest` — fix-plan 버전 변경의 점프 폭(접미사·캘린더 버전·자리 부족·다운그레이드·해석 불가)
 - `FixPlanServiceTest` — fix-plan 변경 목록 중 형식이 틀린 항목만 버리기
-- `UpgradeImpactServiceTest` — 영향 분석 결과 정규화(출처 없는 항목 버리기, 메이저→HIGH, JIRA만이면 신뢰도 하향, 근거 없는 ANALYZED 거절, NO_SOURCE는 분석 필드 비우기, 대조용 이름 정리)
-- `CodeUsageMatcherTest` — 우리 코드 대조(정확한 클래스·패키지·설정 키는 사용 발견, 짧은 이름·와일드카드는 가능성, 점 없는 이름은 설정 키와 비교 안 함, 메서드가 붙은 이름, 판단 불가 섞이면 전체 판단 불가, 소스 목록 없음)
-- `SourceUsageExtractorTest` — import 추출(static·와일드카드·중복), properties/yml 키만 추출(값 버림, 깨진 파일 건너뜀), 빌드 폴더 제외·파일 수 집계
+- `UpgradeImpactServiceTest` — 영향 분석 결과 정규화(출처 없는 항목 버리기, 메이저→HIGH, 근거 없는 ANALYZED 거절, NO_SOURCE는 분석 필드 비우기)
 - `ScanHistoryServiceTest` — 스캔 이력의 신규 건수 계산(전후 OPEN 키 비교), 시작·성공·실패 기록, 오류 문구에 내부 메시지 미노출, 이력 저장 실패가 스캔을 막지 않음
 - `SeverityOrderTest` / `VulnerabilityScreenOrderTest` — 심각도 정렬(알파벳순 아님, 모르는 값은 뒤), 취약점 관리 화면 순서(심각도 → CVSS → 시스템명 → CVE ID)
 - `CveSummaryServiceTest` — 설명 요약 대기 판단(CVE ID 단위, 해시 비교, 최신 설명 선택)과 저장 검증

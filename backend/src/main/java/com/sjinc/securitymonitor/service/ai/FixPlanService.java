@@ -9,10 +9,6 @@ import com.sjinc.securitymonitor.dto.ai.AppFixPlanTarget.CveFinding;
 import com.sjinc.securitymonitor.dto.ai.FixPlanRequest;
 import com.sjinc.securitymonitor.dto.ai.FixPlanResponse;
 import com.sjinc.securitymonitor.dto.ai.UpgradeImpactView;
-import com.sjinc.securitymonitor.dto.ai.CodeUsageView;
-import com.sjinc.securitymonitor.dto.scan.SourceUsage;
-import com.sjinc.securitymonitor.domain.UpgradeImpact;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sjinc.securitymonitor.repository.AppRepository;
 import com.sjinc.securitymonitor.repository.FixPlanRepository;
 import com.sjinc.securitymonitor.repository.ScanSnapshotRepository;
@@ -47,7 +43,6 @@ public class FixPlanService {
     private final AppRepository appRepository;
     private final MavenDependencyExtractor mavenDependencyExtractor;
     private final UpgradeImpactService upgradeImpactService;
-    private final ObjectMapper objectMapper;
 
     /** fix-plan 변경 항목의 via 허용값. 파이썬 FIX_PLAN_SCHEMA의 enum과 같아야 한다. */
     private static final Set<String> CHANGE_VIA = Set.of("PARENT", "BOM", "PROPERTY", "DIRECT");
@@ -225,27 +220,6 @@ public class FixPlanService {
                 lowSeverity.size(), String.join("/", aiAssessmentSeverities), detail);
     }
 
-    private static CodeUsageView codeUsage(UpgradeImpactView impact, SourceUsage sourceUsage) {
-        if (impact == null || !UpgradeImpact.ANALYZED.equals(impact.status()) || impact.breakingChanges().isEmpty()) {
-            return null; // 대조할 breaking change가 없다
-        }
-        return CodeUsageMatcher.match(impact.breakingChanges(), sourceUsage);
-    }
-
-    /** 스냅샷의 소스 사용 목록. 없거나 읽을 수 없으면 null — 대조 결과가 "판단 불가"가 된다. */
-    private SourceUsage loadSourceUsage(Long appId) {
-        String json = scanSnapshotRepository.findByAppId(appId).map(ScanSnapshot::getSourceUsageJson).orElse(null);
-        if (json == null || json.isBlank()) {
-            return null;
-        }
-        try {
-            return objectMapper.readValue(json, SourceUsage.class);
-        } catch (Exception e) {
-            log.warn("appId={} 소스 사용 목록을 읽지 못했습니다: {}", appId, e.getMessage());
-            return null;
-        }
-    }
-
     /** 사람이 화면/API로 완성된 fix-plan(수정된 pom.xml 등)을 조회할 때 사용. */
     @Transactional(readOnly = true) // changes는 지연 로딩이라 트랜잭션 안에서 읽어야 한다
     public FixPlanResponse getFixPlan(Long appId) {
@@ -254,12 +228,11 @@ public class FixPlanService {
                         "아직 fix-plan이 생성되지 않았습니다: appId=" + appId));
 
         Map<String, UpgradeImpactView> impacts = upgradeImpactService.findImpacts(plan.getChanges());
-        SourceUsage sourceUsage = loadSourceUsage(appId);
         List<FixPlanResponse.Change> changes = plan.getChanges().stream()
                 .map(c -> {
                     UpgradeImpactView impact = impacts.get(UpgradeImpactService.key(c.getCoordinate(), c.getFromVersion(), c.getToVersion()));
                     return new FixPlanResponse.Change(c.getCoordinate(), c.getPropertyName(), c.getFromVersion(),
-                            c.getToVersion(), c.getVia(), c.getJump(), impact, codeUsage(impact, sourceUsage));
+                            c.getToVersion(), c.getVia(), c.getJump(), impact);
                 })
                 .toList();
         return new FixPlanResponse(

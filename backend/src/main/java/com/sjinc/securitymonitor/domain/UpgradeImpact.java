@@ -59,10 +59,6 @@ public class UpgradeImpact {
     @Column(length = 10)
     private String risk;
 
-    /** high / medium / low. ANALYZED일 때만 값이 있다. */
-    @Column(length = 10)
-    private String confidence;
-
     /** [{summary, sourceUrl}] */
     @Lob
     @Column(name = "breaking_changes", columnDefinition = "CLOB")
@@ -95,11 +91,10 @@ public class UpgradeImpact {
         return UpgradeImpact.builder().coordinate(coordinate).fromVersion(fromVersion).toVersion(toVersion).build();
     }
 
-    public void apply(String status, String risk, String confidence, String breakingChangesJson,
+    public void apply(String status, String risk, String breakingChangesJson,
                       String requiredActionsJson, String testFocusJson, String sourcesJson, String note) {
         this.status = status;
         this.risk = risk;
-        this.confidence = confidence;
         this.breakingChangesJson = breakingChangesJson;
         this.requiredActionsJson = requiredActionsJson;
         this.testFocusJson = testFocusJson;

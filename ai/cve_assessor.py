@@ -101,7 +101,6 @@ IMPACT_SCHEMA = {
     "type": "object",
     "properties": {
         "risk": {"type": "string", "enum": ["LOW", "MEDIUM", "HIGH"]},
-        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
         "breaking_changes": {
             "type": "array",
             "items": {
@@ -109,10 +108,8 @@ IMPACT_SCHEMA = {
                 "properties": {
                     "summary": {"type": "string"},
                     "source_url": {"type": "string"},
-                    # 이 변경이 가리키는 클래스·패키지·설정 키 이름. 코드를 AI로 보내지 않고 서버가 앱의 import와 대조한다.
-                    "symbols": {"type": "array", "items": {"type": "string"}},
                 },
-                "required": ["summary", "source_url", "symbols"],
+                "required": ["summary", "source_url"],
                 "additionalProperties": False,
             },
         },
@@ -120,7 +117,7 @@ IMPACT_SCHEMA = {
         "test_focus": {"type": "array", "items": {"type": "string"}},
         "note": {"type": "string"},
     },
-    "required": ["risk", "confidence", "breaking_changes", "required_actions", "test_focus", "note"],
+    "required": ["risk", "breaking_changes", "required_actions", "test_focus", "note"],
     "additionalProperties": False,
 }
 
@@ -308,9 +305,7 @@ class CveBackendClient(BackendClient):
             "toVersion": target.to_version,
             "status": status,
             "risk": analysis.risk if analysis else None,
-            "confidence": analysis.confidence if analysis else None,
-            "breakingChanges": [{"summary": c["summary"], "sourceUrl": c["source_url"],
-                                 "symbols": c.get("symbols", [])}
+            "breakingChanges": [{"summary": c["summary"], "sourceUrl": c["source_url"]}
                                 for c in analysis.breaking_changes] if analysis else [],
             "requiredActions": analysis.required_actions if analysis else [],
             "testFocus": analysis.test_focus if analysis else [],
@@ -485,8 +480,7 @@ class UpgradeImpactTarget:
 @dataclass
 class UpgradeImpact:
     risk: str
-    confidence: str
-    breaking_changes: list[dict]  # [{summary, source_url, symbols}]
+    breaking_changes: list[dict]  # [{summary, source_url}]
     required_actions: list[str]
     test_focus: list[str]
     note: str
@@ -544,7 +538,6 @@ class UpgradeImpactAnalyzerClient:
         changes = [c for c in requested if c.get("summary", "").strip() and c.get("source_url") in source_urls]
         return UpgradeImpact(
             risk=data["risk"],
-            confidence=data["confidence"],
             breaking_changes=changes,
             required_actions=data.get("required_actions", []),
             test_focus=data.get("test_focus", []),
@@ -571,7 +564,7 @@ def _analyze_impact(analyzer: UpgradeImpactAnalyzerClient, backend: "CveBackendC
     if analysis.note:
         notes.insert(0, analysis.note)
     backend.submit_impact(target, "ANALYZED", collected.documents, "\n".join(notes), analysis)
-    return (f"ANALYZED risk={analysis.risk} confidence={analysis.confidence} "
+    return (f"ANALYZED risk={analysis.risk} "
             f"breaking={len(analysis.breaking_changes)} 근거={len(collected.documents)}건")
 
 

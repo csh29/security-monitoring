@@ -49,7 +49,6 @@
         <!-- 호환성 위험은 CVE 심각도(취약점 점검 결과 화면)가 아니라 "이 버전으로 올리면 앱이 깨질 위험"이다. 같은 화면에 취약점 이야기가
              섞여 있어 헷갈리기 쉬워 여기서 한 번 더 밝힌다. 제목 옆에 두면 제목까지 줄이 꺾여서 제목 아래 줄에 둔다. -->
         <div class="ai-note"><b>(AI)</b> 컬럼은 AI가 릴리스 노트를 읽고 판단한 값이다. 호환성 위험은 취약점 심각도가 아니라 버전을 올릴 때 앱이 깨질 위험이다.
-            우리 코드는 breaking change가 가리키는 이름을 이 앱의 import·설정 키와 대조한 결과이고, "import에 없음"은 영향 없음이 아니다.
             라이브러리~방식도 AI가 만든 수정안에서 온 값이니, 조치 전에 상세(행 클릭)의 출처 원문과 수정된 pom.xml을 확인할 것.</div>
         <section>
             <table class="grid">
@@ -99,15 +98,6 @@
         const VIA_LABELS = { PARENT: 'parent', BOM: 'BOM', PROPERTY: '프로퍼티', DIRECT: '직접 선언' };
         const JUMP_LABELS = { PATCH: '패치', MINOR: '마이너', MAJOR: '메이저', UNKNOWN: '확인 필요' };
         const RISK_LABELS = { HIGH: '높음', MEDIUM: '보통', LOW: '낮음' };
-        const CONFIDENCE_LABELS = { high: '높음', medium: '보통', low: '낮음' };
-        // "우리 코드" 대조 결과(CodeUsageMatcher). NOT_FOUND를 "영향 없음"이라 쓰지 않는다 — import에 안 보일 뿐이다.
-        const CODE_USAGE_LABELS = { USED: '사용 발견', POSSIBLE: '사용 가능성', NOT_FOUND: 'import에 없음', UNKNOWN: '판단 불가' };
-        const CODE_USAGE_NOTE = 'import 문·설정 키 이름으로만 대조한 결과다. "import에 없음"은 영향이 없다는 뜻이 아니다 — import 없이 전체 이름으로 쓰거나, '
-            + '리플렉션·XML·어노테이션 문자열로 쓰거나, 다른 라이브러리를 거쳐 영향받는 경우는 잡지 못한다.';
-
-        function codeUsageBadge(status) {
-            return badge(CODE_USAGE_LABELS[status] || status, 'code_' + String(status).toLowerCase());
-        }
 
         function badge(text, cssClass) {
             const span = document.createElement('span');
@@ -152,31 +142,6 @@
                     const risk = row.impact && row.impact.risk;
                     return risk ? badge(RISK_LABELS[risk] || risk, risk.toLowerCase()) : '';
                 }
-            },
-            {
-                id: 'confidence', label: '신뢰도 (AI)', width: 75, align: 'center',
-                render: function (value, row) {
-                    const confidence = row.impact && row.impact.confidence;
-                    return confidence ? (CONFIDENCE_LABELS[confidence] || confidence) : '';
-                }
-            },
-            {
-                // breaking change 건수 칸 대신 둔다 — "사용 발견 1/3"처럼 건수도 같이 보인다(칸이 모자라 둘 다 둘 수 없었다).
-                id: 'codeUsage', label: '우리 코드', width: 110, align: 'center',
-                render: function (value, row) {
-                    const usage = row.codeUsage;
-                    if (!usage) {
-                        // 분석 완료인데 대조 결과가 없으면 breaking change가 0건이라 대조할 게 없는 것이다.
-                        return row.impact && row.impact.status === 'ANALYZED' ? 'breaking 없음' : '';
-                    }
-                    const hits = usage.items.filter(function (i) { return i.status === usage.status; }).length;
-                    const span = codeUsageBadge(usage.status);
-                    if (usage.status === 'USED' || usage.status === 'POSSIBLE') {
-                        span.textContent += ' ' + hits + '/' + usage.items.length;
-                    }
-                    return span;
-                },
-                title: function (value, row) { return row.codeUsage ? CODE_USAGE_NOTE : ''; }
             },
             {
                 id: 'impactStatus', label: '분석 상태', width: 135, align: 'center',
@@ -292,30 +257,12 @@
 
             if (impact && impact.status === 'ANALYZED') {
                 addRow(dl, '호환성 위험 (AI)', badge(RISK_LABELS[impact.risk] || impact.risk, (impact.risk || '').toLowerCase()));
-                addRow(dl, '신뢰도 (AI)', CONFIDENCE_LABELS[impact.confidence] || impact.confidence);
-                const usage = change.codeUsage;
-                addRow(dl, 'Breaking change (AI)', list(impact.breakingChanges, function (li, item, index) {
+                addRow(dl, 'Breaking change (AI)', list(impact.breakingChanges, function (li, item) {
                     li.appendChild(document.createTextNode(item.summary + ' '));
                     const source = link(item.sourceUrl);
                     if (source.tagName === 'A') source.textContent = '[출처]';
                     li.appendChild(source);
-                    // 이 앱 코드와의 대조(항목 순서가 breakingChanges와 같다). 걸린 import·설정 키를 같이 보여준다.
-                    const itemUsage = usage && usage.items[index];
-                    if (itemUsage) {
-                        const line = document.createElement('div');
-                        line.appendChild(codeUsageBadge(itemUsage.status));
-                        if (itemUsage.matches.length) {
-                            line.appendChild(document.createTextNode(' ' + itemUsage.matches.join(', ')));
-                        }
-                        li.appendChild(line);
-                    }
                 }));
-                if (usage) {
-                    const box = document.createElement('div');
-                    box.appendChild(codeUsageBadge(usage.status));
-                    box.appendChild(document.createTextNode(' ' + (usage.reason ? usage.reason + ' ' : '') + CODE_USAGE_NOTE));
-                    addRow(dl, '우리 코드', box);
-                }
                 addRow(dl, '필요한 조치 (AI)', list(impact.requiredActions, function (li, item) { li.textContent = item; }));
                 addRow(dl, '테스트 영역 (AI)', list(impact.testFocus, function (li, item) { li.textContent = item; }));
                 addRow(dl, '근거 문서', list(impact.sources, function (li, item) {

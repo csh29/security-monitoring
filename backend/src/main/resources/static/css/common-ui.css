@@ -244,11 +244,6 @@ body{
 .badge.fetch_failed{ background:#e3ecff; color:#2f5bd3; }
 .badge.pending{ background:#e3ecff; color:#2f5bd3; }
 .badge.needs_check{ background:#fff3d6; color:#8a6400; }
-/* 조치안 "우리 코드" 대조 결과. "import에 없음"을 초록으로 칠하면 안전하다는 뜻으로 읽혀서 판단 불가와 같은 회색으로 둔다. */
-.badge.code_used{ background:var(--accent-soft); color:var(--accent); }
-.badge.code_possible{ background:#fff3d6; color:#8a6400; }
-.badge.code_not_found{ background:#ececf4; color:var(--text-sub); }
-.badge.code_unknown{ background:#ececf4; color:var(--text-sub); }
 /* 코드 점검 처리여부(공통코드 SC_STATUS). OPEN/RESOLVED는 위의 처리여부 뱃지를 같이 쓴다. */
 .badge.false_positive{ background:#ececf4; color:var(--text-sub); }
 .badge.accepted{ background:#e3ecff; color:#2f5bd3; }

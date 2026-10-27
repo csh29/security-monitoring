@@ -10,7 +10,6 @@ import java.util.List;
 public record UpgradeImpactView(
         String status,
         String risk,
-        String confidence,
         List<BreakingChange> breakingChanges,
         List<String> requiredActions,
         List<String> testFocus,
